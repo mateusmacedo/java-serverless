@@ -1,0 +1,22 @@
+name: mmda-serverless
+
+services:
+  floci:
+    image: floci/floci:2.4.0
+    # root para usar o socket do Docker: as Lambdas rodam em containers reais
+    user: root
+    ports:
+      - "4566:4566"
+    environment:
+      # Faz o Floci injetar AWS_ENDPOINT_URL=http://floci:4566 nas Lambdas e devolver URLs com esse host
+      FLOCI_HOSTNAME: floci
+      # O padrão de 10s não cobre o cold start do Spring na JVM
+      FLOCI_SERVICES_LAMBDA_INIT_TIMEOUT_SECONDS: "120"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - floci
+
+networks:
+  floci:
+    name: floci

@@ -1,0 +1,5 @@
+allowBuilds:
+  aws-sdk: false
+  es5-ext: false
+  esbuild: false
+  serverless: false
