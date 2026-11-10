@@ -6,6 +6,7 @@ import java.io.UncheckedIOException;
 import java.util.function.Function;
 import org.springframework.stereotype.Component;
 import software.amazon.awssdk.services.eventbridge.EventBridgeClient;
+import software.amazon.awssdk.services.eventbridge.model.PutEventsRequestEntry;
 import software.amazon.awssdk.services.eventbridge.model.PutEventsResponse;
 import software.amazon.awssdk.services.sns.SnsClient;
 
@@ -38,11 +39,13 @@ class NotifyFunction implements Function<RequestContext, RequestContext> {
 
         sns.publish(builder -> builder.topicArn(properties.topicArn()).message(json));
 
-        PutEventsResponse response = eventBridge.putEvents(builder -> builder.entries(entry -> entry
+        PutEventsRequestEntry entry = PutEventsRequestEntry.builder()
                 .eventBusName(properties.eventBusName())
                 .source(EVENT_SOURCE)
                 .detailType(EVENT_DETAIL_TYPE)
-                .detail(json)));
+                .detail(json)
+                .build();
+        PutEventsResponse response = eventBridge.putEvents(builder -> builder.entries(entry));
         if (response.failedEntryCount() > 0) {
             throw new IllegalStateException("EventBridge rejected the event: " + response.entries());
         }

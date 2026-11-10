@@ -11,6 +11,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -152,7 +153,7 @@ class RequestFlowE2E {
                                 .messages().stream()
                                 .filter(message -> message.body().contains(requestId))
                                 .findFirst().orElse(null),
-                        found -> found != null);
+                        Objects::nonNull);
         SQS.deleteMessage(builder -> builder.queueUrl(queueUrl).receiptHandle(match.receiptHandle()));
         try {
             return JSON.readTree(match.body());

@@ -20,10 +20,13 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.dynamodb.model.AttributeDefinition;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.KeySchemaElement;
 import software.amazon.awssdk.services.dynamodb.model.KeyType;
 import software.amazon.awssdk.services.dynamodb.model.ScalarAttributeType;
 import software.amazon.awssdk.services.eventbridge.EventBridgeClient;
+import software.amazon.awssdk.services.eventbridge.model.Target;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
 import software.amazon.awssdk.services.sfn.SfnClient;
@@ -66,8 +69,10 @@ class RequestFlowFunctionsIT extends FlociIntegrationTest {
         DYNAMO_DB.createTable(builder -> builder
                 .tableName(TABLE)
                 .billingMode("PAY_PER_REQUEST")
-                .attributeDefinitions(a -> a.attributeName("requestId").attributeType(ScalarAttributeType.S))
-                .keySchema(k -> k.attributeName("requestId").keyType(KeyType.HASH)));
+                .attributeDefinitions(AttributeDefinition.builder()
+                        .attributeName("requestId").attributeType(ScalarAttributeType.S).build())
+                .keySchema(KeySchemaElement.builder()
+                        .attributeName("requestId").keyType(KeyType.HASH).build()));
         try (SsmClient ssm = SsmClient.create(); SecretsManagerClient secrets = SecretsManagerClient.create()) {
             ssm.putParameter(builder -> builder.name(MAX_PAYLOAD_PARAMETER).type(ParameterType.STRING).value("4096"));
             secrets.createSecret(builder -> builder.name(SIGNING_SECRET).secretString(SIGNING_KEY));
@@ -89,7 +94,7 @@ class RequestFlowFunctionsIT extends FlociIntegrationTest {
             events.putTargets(builder -> builder
                     .rule("it-request-completed")
                     .eventBusName(EVENT_BUS)
-                    .targets(target -> target.id("audit").arn(queueArn(AUDIT_QUEUE_URL))));
+                    .targets(Target.builder().id("audit").arn(queueArn(AUDIT_QUEUE_URL)).build()));
         }
 
         STATE_MACHINE_ARN = SFN.createStateMachine(builder -> builder
