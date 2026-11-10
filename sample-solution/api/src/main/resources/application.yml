@@ -1,0 +1,8 @@
+sample:
+  bucket-name: ${BUCKET_NAME}
+  state-machine-arn: ${STATE_MACHINE_ARN}
+
+mmda:
+  aws:
+    s3:
+      path-style-access: ${S3_PATH_STYLE_ACCESS:false}

@@ -1,0 +1,274 @@
+service: sample-solution
+
+frameworkVersion: "4"
+
+plugins:
+  - serverless-step-functions
+  - serverless-localstack
+  - serverless-offline
+
+params:
+  local:
+    awsEndpointUrl: http://floci:4566
+    s3PathStyleAccess: "true"
+
+custom:
+  names:
+    bucket: ${self:service}-${sls:stage}-payloads
+    table: ${self:service}-${sls:stage}-requests
+    topic: ${self:service}-${sls:stage}-notifications
+    eventBus: ${self:service}-${sls:stage}-events
+    deadLetterQueue: ${self:service}-${sls:stage}-dlq
+    auditQueue: ${self:service}-${sls:stage}-audit
+    stateMachine: ${self:service}-${sls:stage}-request-flow
+    maxPayloadParameter: /${self:service}/${sls:stage}/max-payload-bytes
+    signingSecret: ${self:service}/${sls:stage}/signing-key
+  stateMachineArn: arn:aws:states:${aws:region}:${aws:accountId}:stateMachine:${self:custom.names.stateMachine}
+  functionsPackage: functions/target/functions-lambda.zip
+  functionsHandler: org.springframework.cloud.function.adapter.aws.FunctionInvoker::handleRequest
+  functionsMainClass: com.mmda.serverless.sample.functions.FunctionsApplication
+  localstack:
+    stages:
+      - local
+    host: http://localhost
+    edgePort: 4566
+    autostart: false
+  serverless-offline:
+    useDocker: true
+    dockerNetwork: floci
+    httpPort: 3000
+
+provider:
+  name: aws
+  runtime: java21
+  region: us-east-1
+  stage: ${opt:stage, 'local'}
+  memorySize: 1024
+  timeout: 60
+  environment:
+    AWS_ENDPOINT_URL: ${param:awsEndpointUrl}
+    # O Serverless v4 exporta AWS_ENDPOINT_URL_S3 do LocalStack quando o serverless-localstack
+    # está ativo, e o serverless-offline repassa essa variável ao container da Lambda
+    AWS_ENDPOINT_URL_S3: ${param:awsEndpointUrl}
+    S3_PATH_STYLE_ACCESS: ${param:s3PathStyleAccess}
+    BUCKET_NAME: ${self:custom.names.bucket}
+    TABLE_NAME: ${self:custom.names.table}
+    TOPIC_ARN: arn:aws:sns:${aws:region}:${aws:accountId}:${self:custom.names.topic}
+    EVENT_BUS_NAME: ${self:custom.names.eventBus}
+    DEAD_LETTER_QUEUE_NAME: ${self:custom.names.deadLetterQueue}
+    STATE_MACHINE_ARN: ${self:custom.stateMachineArn}
+    MAX_PAYLOAD_PARAMETER: ${self:custom.names.maxPayloadParameter}
+    SIGNING_SECRET_ID: ${self:custom.names.signingSecret}
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - s3:GetObject
+            - s3:PutObject
+          Resource: arn:aws:s3:::${self:custom.names.bucket}/*
+        - Effect: Allow
+          Action: dynamodb:PutItem
+          Resource: !GetAtt RequestsTable.Arn
+        - Effect: Allow
+          Action: sns:Publish
+          Resource: !Ref NotificationsTopic
+        - Effect: Allow
+          Action: events:PutEvents
+          Resource: !GetAtt RequestsEventBus.Arn
+        - Effect: Allow
+          Action: ssm:GetParameter
+          Resource: arn:aws:ssm:${aws:region}:${aws:accountId}:parameter${self:custom.names.maxPayloadParameter}
+        - Effect: Allow
+          Action: secretsmanager:GetSecretValue
+          Resource: !Ref SigningSecret
+        - Effect: Allow
+          Action:
+            - sqs:GetQueueUrl
+            - sqs:ReceiveMessage
+            - sqs:DeleteMessage
+          Resource: !GetAtt DeadLetterQueue.Arn
+        # ARN montado por nome: um Ref à máquina de estado criaria ciclo com as Lambdas que ela invoca
+        - Effect: Allow
+          Action: states:StartExecution
+          Resource: ${self:custom.stateMachineArn}
+
+package:
+  individually: true
+
+functions:
+  api:
+    handler: com.mmda.serverless.sample.api.StreamLambdaHandler::handleRequest
+    timeout: 29
+    package:
+      artifact: api/target/api-lambda.zip
+    events:
+      - http:
+          path: requests
+          method: post
+
+  validate:
+    handler: ${self:custom.functionsHandler}
+    package:
+      artifact: ${self:custom.functionsPackage}
+    environment:
+      MAIN_CLASS: ${self:custom.functionsMainClass}
+      SPRING_CLOUD_FUNCTION_DEFINITION: validate
+
+  persist:
+    handler: ${self:custom.functionsHandler}
+    package:
+      artifact: ${self:custom.functionsPackage}
+    environment:
+      MAIN_CLASS: ${self:custom.functionsMainClass}
+      SPRING_CLOUD_FUNCTION_DEFINITION: persist
+
+  notify:
+    handler: ${self:custom.functionsHandler}
+    package:
+      artifact: ${self:custom.functionsPackage}
+    environment:
+      MAIN_CLASS: ${self:custom.functionsMainClass}
+      SPRING_CLOUD_FUNCTION_DEFINITION: notify
+
+  reprocess:
+    handler: ${self:custom.functionsHandler}
+    package:
+      artifact: ${self:custom.functionsPackage}
+    environment:
+      MAIN_CLASS: ${self:custom.functionsMainClass}
+      SPRING_CLOUD_FUNCTION_DEFINITION: reprocess
+    events:
+      - schedule:
+          method: scheduler
+          rate: rate(5 minutes)
+          input:
+            maxMessages: 10
+
+stepFunctions:
+  stateMachines:
+    requestFlow:
+      id: RequestFlowStateMachine
+      name: ${self:custom.names.stateMachine}
+      definition:
+        Comment: Validates, persists and notifies a request; any failure goes to the dead letter queue
+        StartAt: Validate
+        States:
+          Validate:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [validate, Arn]
+            Catch: &sendToDeadLetterQueue
+              - ErrorEquals:
+                  - States.ALL
+                ResultPath: $.error
+                Next: SendToDeadLetterQueue
+            Next: Persist
+          Persist:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [persist, Arn]
+            Catch: *sendToDeadLetterQueue
+            Next: Notify
+          Notify:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [notify, Arn]
+            Catch: *sendToDeadLetterQueue
+            End: true
+          SendToDeadLetterQueue:
+            Type: Task
+            Resource: arn:aws:states:::sqs:sendMessage
+            Parameters:
+              QueueUrl: !Ref DeadLetterQueue
+              MessageBody.$: $
+            Next: RequestFailed
+          RequestFailed:
+            Type: Fail
+            Error: RequestFailed
+            Cause: The request was sent to the dead letter queue
+
+resources:
+  Resources:
+    PayloadBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.names.bucket}
+
+    RequestsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.names.table}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: requestId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: requestId
+            KeyType: HASH
+
+    DeadLetterQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.names.deadLetterQueue}
+
+    AuditQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.names.auditQueue}
+
+    AuditQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref AuditQueue
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: events.amazonaws.com
+              Action: sqs:SendMessage
+              Resource: !GetAtt AuditQueue.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !GetAtt RequestCompletedRule.Arn
+
+    NotificationsTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:custom.names.topic}
+
+    RequestsEventBus:
+      Type: AWS::Events::EventBus
+      Properties:
+        Name: ${self:custom.names.eventBus}
+
+    # source e detail-type precisam bater com as constantes de NotifyFunction
+    RequestCompletedRule:
+      Type: AWS::Events::Rule
+      Properties:
+        EventBusName: !Ref RequestsEventBus
+        EventPattern:
+          source:
+            - mmda.sample
+          detail-type:
+            - RequestCompleted
+        Targets:
+          - Id: audit-queue
+            Arn: !GetAtt AuditQueue.Arn
+
+    MaxPayloadParameter:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: ${self:custom.names.maxPayloadParameter}
+        Type: String
+        Value: "4096"
+
+    SigningSecret:
+      Type: AWS::SecretsManager::Secret
+      Properties:
+        Name: ${self:custom.names.signingSecret}
+        GenerateSecretString:
+          PasswordLength: 32
+          ExcludePunctuation: true
