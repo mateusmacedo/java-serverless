@@ -1,0 +1,291 @@
+asyncapi: 3.1.0
+info:
+  title: sample-solution eventos e mensagens
+  version: 0.1.0
+  description: |
+    Contratos assíncronos da solução de referência: o estado que atravessa a máquina de estado
+    `request-flow`, a notificação no SNS, o evento `RequestCompleted` no EventBridge, as mensagens
+    das filas `audit` e `dlq` e a invocação agendada do reprocessamento.
+
+    Os nomes seguem o padrão `sample-solution-{stage}-<sufixo>`. Os exemplos foram capturados no
+    Floci, stage `local`, exceto a mensagem do SNS, que foi descrita a partir do código de
+    `NotifyFunction` (o tópico não tem assinante no exemplo).
+servers:
+  floci-sqs:
+    host: localhost:4566
+    protocol: sqs
+    description: SQS emulado pelo Floci.
+  floci-sns:
+    host: localhost:4566
+    protocol: sns
+    description: SNS emulado pelo Floci.
+channels:
+  notifications:
+    address: sample-solution-{stage}-notifications
+    title: Tópico SNS de notificações
+    servers:
+      - $ref: '#/servers/floci-sns'
+    parameters:
+      stage:
+        $ref: '#/components/parameters/stage'
+    messages:
+      requestCompletedNotification:
+        $ref: '#/components/messages/RequestCompletedNotification'
+  requestEvents:
+    address: sample-solution-{stage}-events
+    title: Barramento EventBridge
+    description: Barramento próprio da solução. A regra `RequestCompletedRule` encaminha o evento para a fila `audit`.
+    parameters:
+      stage:
+        $ref: '#/components/parameters/stage'
+    messages:
+      requestCompleted:
+        $ref: '#/components/messages/RequestCompleted'
+  audit:
+    address: sample-solution-{stage}-audit
+    title: Fila SQS de auditoria
+    servers:
+      - $ref: '#/servers/floci-sqs'
+    parameters:
+      stage:
+        $ref: '#/components/parameters/stage'
+    messages:
+      requestCompleted:
+        $ref: '#/components/messages/RequestCompleted'
+  deadLetter:
+    address: sample-solution-{stage}-dlq
+    title: Fila SQS de mensagens com falha
+    servers:
+      - $ref: '#/servers/floci-sqs'
+    parameters:
+      stage:
+        $ref: '#/components/parameters/stage'
+    messages:
+      failedRequest:
+        $ref: '#/components/messages/FailedRequest'
+  reprocessInvocation:
+    address: sample-solution-{stage}-reprocess
+    title: Invocação agendada da Lambda reprocess
+    description: O EventBridge Scheduler invoca a Lambda a cada 5 minutos com um payload fixo.
+    parameters:
+      stage:
+        $ref: '#/components/parameters/stage'
+    messages:
+      reprocessCommand:
+        $ref: '#/components/messages/ReprocessCommand'
+operations:
+  publishNotification:
+    action: send
+    title: notify publica a notificação
+    channel:
+      $ref: '#/channels/notifications'
+    messages:
+      - $ref: '#/channels/notifications/messages/requestCompletedNotification'
+  emitRequestCompleted:
+    action: send
+    title: notify emite RequestCompleted no barramento
+    channel:
+      $ref: '#/channels/requestEvents'
+    messages:
+      - $ref: '#/channels/requestEvents/messages/requestCompleted'
+  receiveAudit:
+    action: receive
+    title: Consumidores de auditoria leem os eventos
+    description: Não há consumidor no exemplo; a fila acumula os eventos para inspeção.
+    channel:
+      $ref: '#/channels/audit'
+    messages:
+      - $ref: '#/channels/audit/messages/requestCompleted'
+  sendToDeadLetter:
+    action: send
+    title: Step Functions envia a execução que falhou
+    description: Estado `SendToDeadLetterQueue`, integração `arn:aws:states:::sqs:sendMessage` com `MessageBody.$ = $`.
+    channel:
+      $ref: '#/channels/deadLetter'
+    messages:
+      - $ref: '#/channels/deadLetter/messages/failedRequest'
+  consumeDeadLetter:
+    action: receive
+    title: reprocess lê e apaga as mensagens da DLQ
+    channel:
+      $ref: '#/channels/deadLetter'
+    messages:
+      - $ref: '#/channels/deadLetter/messages/failedRequest'
+  triggerReprocess:
+    action: receive
+    title: reprocess recebe o comando agendado
+    channel:
+      $ref: '#/channels/reprocessInvocation'
+    messages:
+      - $ref: '#/channels/reprocessInvocation/messages/reprocessCommand'
+components:
+  parameters:
+    stage:
+      description: Stage do Serverless Framework.
+      default: local
+      examples:
+        - local
+  messages:
+    RequestCompletedNotification:
+      name: RequestCompletedNotification
+      title: Notificação de requisição concluída
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/RequestContext'
+    RequestCompleted:
+      name: RequestCompleted
+      title: Evento RequestCompleted
+      summary: Envelope do EventBridge com o RequestContext em `detail`.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/RequestCompletedEvent'
+      examples:
+        - name: capturado-no-floci
+          payload:
+            version: '0'
+            id: ec75beae-f676-4c87-9d2f-f5ca51c19922
+            source: mmda.sample
+            detail-type: RequestCompleted
+            account: '000000000000'
+            time: '2026-11-10T22:17:38.929524150Z'
+            region: us-east-1
+            resources: []
+            detail:
+              requestId: 8b2f674a-770f-4982-a3d1-c0141eeed347
+              s3Key: requests/8b2f674a-770f-4982-a3d1-c0141eeed347.json
+              attempt: 1
+              signature: ab877cff32c371f6472dbd3ccee3a1aee327d49a71135bea1073a5fe050fd9f7
+              payloadBytes: 31
+            event-bus-name: sample-solution-local-events
+    FailedRequest:
+      name: FailedRequest
+      title: Execução que falhou
+      summary: Entrada do estado que falhou, acrescida do erro capturado pelo Catch.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/FailedRequest'
+      examples:
+        - name: payload-acima-do-limite
+          payload:
+            requestId: ec78fb7e-dc0f-4ff6-aacb-b022d0dfa327
+            s3Key: requests/ec78fb7e-dc0f-4ff6-aacb-b022d0dfa327.json
+            attempt: 1
+            error:
+              Error: com.mmda.serverless.sample.functions.InvalidRequestException
+              Cause: '{"errorMessage":"Payload of 5012 bytes exceeds the limit of 4096 bytes","errorType":"com.mmda.serverless.sample.functions.InvalidRequestException","stackTrace":["..."]}'
+    ReprocessCommand:
+      name: ReprocessCommand
+      title: Comando de reprocessamento
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ReprocessCommand'
+      examples:
+        - name: agendado
+          payload:
+            maxMessages: 10
+  schemas:
+    RequestContext:
+      type: object
+      description: |
+        Estado que atravessa `Validate`, `Persist` e `Notify`. A API inicia a execução só com
+        `requestId`, `s3Key` e `attempt`; o `validate` acrescenta `signature` e `payloadBytes`.
+        É também o payload da notificação no SNS e o `detail` do evento `RequestCompleted`.
+      required:
+        - requestId
+        - s3Key
+        - attempt
+      properties:
+        requestId:
+          type: string
+          format: uuid
+        s3Key:
+          type: string
+          description: Chave do payload no bucket, no formato `requests/<requestId>.json`.
+        attempt:
+          type: integer
+          minimum: 1
+          description: Tentativa atual; o reprocessamento soma 1 a cada reinício.
+        signature:
+          type:
+            - string
+            - 'null'
+          description: HMAC-SHA256 do payload em hexadecimal, calculado pelo `validate`.
+        payloadBytes:
+          type:
+            - integer
+            - 'null'
+          description: Tamanho do payload em bytes, calculado pelo `validate`.
+    RequestCompletedEvent:
+      type: object
+      description: |
+        Envelope do EventBridge. `source` e `detail-type` são fixos e precisam bater com o padrão
+        da regra `RequestCompletedRule`. O campo `event-bus-name` foi observado no Floci e não faz
+        parte do envelope documentado pela AWS.
+      required:
+        - source
+        - detail-type
+        - detail
+      properties:
+        version:
+          type: string
+        id:
+          type: string
+        source:
+          const: mmda.sample
+        detail-type:
+          const: RequestCompleted
+        account:
+          type: string
+        time:
+          type: string
+          format: date-time
+        region:
+          type: string
+        resources:
+          type: array
+          items:
+            type: string
+        detail:
+          $ref: '#/components/schemas/RequestContext'
+        event-bus-name:
+          type: string
+    FailedRequest:
+      allOf:
+        - $ref: '#/components/schemas/RequestContext'
+        - type: object
+          required:
+            - error
+          properties:
+            error:
+              type: object
+              required:
+                - Error
+                - Cause
+              properties:
+                Error:
+                  type: string
+                  description: Tipo do erro; para exceções Java, o nome completo da classe.
+                Cause:
+                  type: string
+                  description: JSON de erro do runtime da Lambda, como texto (`errorMessage`, `errorType`, `stackTrace`).
+    ReprocessCommand:
+      type: object
+      properties:
+        maxMessages:
+          type: integer
+          minimum: 1
+          maximum: 10
+          description: Quantas mensagens ler da DLQ; ausente equivale a 10, valores fora da faixa são ajustados para 1..10.
+    ReprocessResult:
+      type: object
+      description: Retorno da Lambda `reprocess`.
+      required:
+        - restarted
+        - discarded
+      properties:
+        restarted:
+          type: integer
+          minimum: 0
+        discarded:
+          type: integer
+          minimum: 0
