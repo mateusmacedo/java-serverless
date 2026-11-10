@@ -45,6 +45,9 @@
                     <artifactId>maven-dependency-plugin</artifactId>
                     <executions>
                         <execution>
+                            <!-- WHY: no build da IDE (m2e) o shared resolve para target/classes, uma pasta que o
+                                 copy-dependencies recusa (MDEP-187); o zip da Lambda sai do mvn package -->
+                            <?m2e ignore?>
                             <id>copy-lambda-dependencies</id>
                             <phase>package</phase>
                             <goals>
