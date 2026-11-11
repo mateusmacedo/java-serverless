@@ -213,7 +213,8 @@ aws configure set aws_secret_access_key test --profile localstack
 
 ## Pontos de atenção
 
-- O Floci roda em modo memória: se o container reiniciar, os recursos somem e é preciso refazer o deploy.
+- O Floci roda em modo persistente, com os dados no volume `floci-data`: os recursos sobrevivem a
+  reinícios do container. Para começar do zero, use `docker compose down -v` e refaça o deploy.
 - Quando o `serverless-localstack` está ativo, o Serverless v4 exporta `AWS_ENDPOINT_URL_S3` apontando
   para o host do LocalStack, e o `serverless-offline` repassa essa variável ao container. Por isso o
   `serverless.yml` declara `AWS_ENDPOINT_URL_S3` apontando para o Floci.

@@ -24,7 +24,8 @@ comunitária do LocalStack foi encerrada em março de 2026 e passou a exigir tok
 
 - O mesmo `serverless.yml` serve ao Floci e, com outros `params`, à AWS.
 - O Serverless v4 exige login válido até para `package`; sem ele, o comando falha com `Forbidden`.
-- O Floci roda em memória: reiniciar o container apaga os recursos e exige novo deploy.
+- O Floci rodava em memória: reiniciar o container apagava os recursos e exigia novo deploy. Desde
+  2026-11-11 ele roda em modo persistente, com os dados no volume `floci-data` do `compose.yaml`.
 - A combinação Serverless v4, `serverless-localstack` e Floci não é documentada oficialmente; ela foi
   validada neste projeto com deploy, execução e remoção da stack.
 - O Serverless v4 injeta variáveis próprias do LocalStack quando o plugin está ativo

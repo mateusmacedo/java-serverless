@@ -12,10 +12,17 @@ services:
       FLOCI_HOSTNAME: floci
       # O padrão de 10s não cobre o cold start do Spring na JVM
       FLOCI_SERVICES_LAMBDA_INIT_TIMEOUT_SECONDS: "120"
+      # Grava cada escrita em disco: os recursos sobrevivem a reinícios sem novo deploy
+      FLOCI_STORAGE_MODE: persistent
+      FLOCI_STORAGE_PERSISTENT_PATH: /app/data
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - floci-data:/app/data
     networks:
       - floci
+
+volumes:
+  floci-data:
 
 networks:
   floci:
