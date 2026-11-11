@@ -220,7 +220,8 @@ aws configure set aws_secret_access_key test --profile localstack
 - Os parâmetros de ambiente (`params`) do `serverless.yml` existem só para o stage `local`.
 - O `pnpm-workspace.yaml` nega os scripts de instalação de `serverless`, `aws-sdk`, `es5-ext` e
   `esbuild`; nenhum deles é necessário para o uso atual.
-- Os pacotes das Lambdas têm entre 38 e 61 MB, dos quais 22 a 23 MB são do `aws-crt` completo (libs
-  nativas de todas as plataformas). O deploy funciona porque sobe via S3.
+- Os pacotes das Lambdas têm entre 21 e 43 MB. O `aws-crt` entra só com os nativos de Linux, para
+  x86_64 e arm64; os testes usam o jar completo, com os nativos de todas as plataformas
+  ([ADR 0012](docs/decisions/0012-aws-crt-com-nativos-linux-no-pacote.md)).
 - O EventBridge Scheduler dispara o `reprocess` no Floci a cada 5 minutos (observado nos logs da
   função às 20:08:56 e 20:14:02 de 10/11/2026); para testar sem esperar, invoque a função direto.

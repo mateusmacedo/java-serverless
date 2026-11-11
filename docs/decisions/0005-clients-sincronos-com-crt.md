@@ -1,6 +1,6 @@
 # 0005. Clients síncronos do AWS SDK com CRT e SDKs opcionais
 
-- Status: aceita
+- Status: aceita; o item do jar completo do `aws-crt` foi substituído pelo [0012](0012-aws-crt-com-nativos-linux-no-pacote.md)
 - Data: 2026-11-10
 
 ## Contexto

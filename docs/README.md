@@ -24,13 +24,14 @@ dia, comece pelo [README da raiz](../README.md).
 | [0002](decisions/0002-spring-mvc-e-spring-cloud-function.md) | Spring MVC na API e Spring Cloud Function nos passos |
 | [0003](decisions/0003-spring-boot-3-5.md) | Spring Boot 3.5 pela adoção de mercado (substituída pelo 0009) |
 | [0004](decisions/0004-sem-graalvm-native.md) | Sem imagem nativa GraalVM |
-| [0005](decisions/0005-clients-sincronos-com-crt.md) | Clients síncronos do AWS SDK com CRT e SDKs opcionais |
+| [0005](decisions/0005-clients-sincronos-com-crt.md) | Clients síncronos do AWS SDK com CRT e SDKs opcionais (o item do jar do `aws-crt` foi substituído pelo 0012) |
 | [0006](decisions/0006-payload-no-s3.md) | Payload no S3, com só a chave na máquina de estado |
 | [0007](decisions/0007-dlq-e-reprocessamento.md) | Falhas para a DLQ e reprocessamento com limite de tentativas |
 | [0008](decisions/0008-aws-endpoint-url-s3-no-offline.md) | `AWS_ENDPOINT_URL_S3` explícito para o serverless-offline |
 | [0009](decisions/0009-spring-boot-4-0.md) | Spring Boot 4.0 com Jackson 3 |
 | [0010](decisions/0010-raiz-neutra-e-parents-por-framework.md) | Raiz neutra e um parent por framework (Spring e Quarkus) |
 | [0011](decisions/0011-integracao-entre-solucoes-por-eventbridge.md) | Soluções se acionam pelo EventBridge, com a máquina de estado como alvo nativo |
+| [0012](decisions/0012-aws-crt-com-nativos-linux-no-pacote.md) | Pacote da Lambda com os jars Linux do `aws-crt` (substitui um item do 0005) |
 
 Um novo ADR recebe o próximo número, com as seções Status, Data, Contexto, Decisão, Consequências e
 Alternativas consideradas. Uma decisão substituída continua no histórico, com o status apontando

@@ -214,6 +214,10 @@ receipt-api-lambda.zip / receipt-functions-lambda.zip
 └── lib/                              dependências de runtime
 ```
 
+Nos dois frameworks, o `lib/` leva o `aws-crt` só com os nativos de Linux, nos jars `linux-x86_64` e
+`linux-aarch_64`, no lugar do jar completo com os nativos de todas as plataformas. Os testes
+continuam com o jar completo ([ADR 0012](decisions/0012-aws-crt-com-nativos-linux-no-pacote.md)).
+
 ## Ambiente local
 
 ```mermaid
