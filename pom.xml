@@ -15,6 +15,7 @@
         <module>platform/quarkus-parent</module>
         <module>platform/spring-aws</module>
         <module>sample-solution</module>
+        <module>receipt-solution</module>
     </modules>
 
     <properties>

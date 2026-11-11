@@ -1,0 +1,145 @@
+asyncapi: 3.1.0
+info:
+  title: receipt-solution eventos
+  version: 0.1.0
+  description: |
+    Contratos assíncronos da `receipt-solution`, em Quarkus: o evento `RequestCompleted` que ela
+    consome do barramento da `sample-solution` e o evento `ReceiptIssued` que ela publica no próprio
+    barramento ([ADR 0011](../decisions/0011-integracao-entre-solucoes-por-eventbridge.md)).
+
+    O `RequestCompleted` é da `sample-solution` e está descrito no AsyncAPI dela; este documento só
+    o referencia. Os nomes seguem o padrão `<service>-{stage}-<sufixo>`. O exemplo do `ReceiptIssued`
+    foi capturado no Floci, stage `local`.
+channels:
+  sampleRequestEvents:
+    address: sample-solution-{stage}-events
+    title: Barramento EventBridge da sample-solution
+    description: |
+      A regra criada pela `receipt-solution` neste barramento filtra `source` `mmda.sample` e
+      `detail-type` `RequestCompleted` e inicia a máquina de estado `receipt-solution-{stage}-receipt-flow`.
+    parameters:
+      stage:
+        $ref: '#/components/parameters/stage'
+    messages:
+      requestCompleted:
+        $ref: './asyncapi.yaml#/components/messages/RequestCompleted'
+  receiptEvents:
+    address: receipt-solution-{stage}-events
+    title: Barramento EventBridge da receipt-solution
+    description: Barramento próprio da solução. Não há regra no exemplo; outras soluções assinam o `ReceiptIssued` aqui.
+    parameters:
+      stage:
+        $ref: '#/components/parameters/stage'
+    messages:
+      receiptIssued:
+        $ref: '#/components/messages/ReceiptIssued'
+operations:
+  startReceiptFlow:
+    action: receive
+    title: A máquina de estado receipt-flow inicia a cada RequestCompleted
+    description: |
+      O alvo da regra é a própria máquina de estado. O primeiro passo, `issue`, recebe só o `detail`
+      (`InputPath: $.detail`) e é idempotente por `requestId`, porque o EventBridge entrega pelo menos
+      uma vez.
+    channel:
+      $ref: '#/channels/sampleRequestEvents'
+    messages:
+      - $ref: '#/channels/sampleRequestEvents/messages/requestCompleted'
+  emitReceiptIssued:
+    action: send
+    title: announce emite ReceiptIssued no barramento
+    channel:
+      $ref: '#/channels/receiptEvents'
+    messages:
+      - $ref: '#/channels/receiptEvents/messages/receiptIssued'
+components:
+  parameters:
+    stage:
+      description: Stage do Serverless Framework.
+      default: local
+      examples:
+        - local
+  messages:
+    ReceiptIssued:
+      name: ReceiptIssued
+      title: Evento ReceiptIssued
+      summary: Envelope do EventBridge com o comprovante em `detail`.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ReceiptIssuedEvent'
+      examples:
+        - name: capturado-no-floci
+          payload:
+            version: '0'
+            id: e44f202d-2660-4cac-8c24-ec991c462ed4
+            source: mmda.receipt
+            detail-type: ReceiptIssued
+            account: '000000000000'
+            time: '2026-11-11T01:17:46.355338752Z'
+            region: us-east-1
+            resources: []
+            detail:
+              requestId: 38ebf89b-523a-4a68-92b3-2d87dbff5a4a
+              signature: ab877cff32c371f6472dbd3ccee3a1aee327d49a71135bea1073a5fe050fd9f7
+              payloadBytes: 31
+              issuedAt: '2026-11-11T01:17:46.339567103Z'
+            event-bus-name: receipt-solution-local-events
+  schemas:
+    Receipt:
+      type: object
+      description: |
+        Comprovante gravado na tabela `receipt-solution-{stage}-receipts`, com `requestId` como chave.
+        Os campos `signature` e `payloadBytes` vêm do `detail` do `RequestCompleted`.
+      required:
+        - requestId
+        - signature
+        - payloadBytes
+        - issuedAt
+      properties:
+        requestId:
+          type: string
+          format: uuid
+          description: Identificador do pedido na sample-solution.
+        signature:
+          type: string
+          description: HMAC-SHA256 do payload, em hexadecimal, calculado pelo `validate` da sample-solution.
+        payloadBytes:
+          type: integer
+          minimum: 1
+        issuedAt:
+          type: string
+          format: date-time
+          description: Instante da primeira emissão; um evento repetido devolve o mesmo valor.
+    ReceiptIssuedEvent:
+      type: object
+      description: |
+        Envelope do EventBridge. `source` e `detail-type` são fixos e estão em `AnnounceReceiptHandler`.
+        O campo `event-bus-name` foi observado no Floci e não faz parte do envelope documentado pela AWS.
+      required:
+        - source
+        - detail-type
+        - detail
+      properties:
+        version:
+          type: string
+        id:
+          type: string
+        source:
+          const: mmda.receipt
+        detail-type:
+          const: ReceiptIssued
+        account:
+          type: string
+        time:
+          type: string
+          format: date-time
+        region:
+          type: string
+        resources:
+          type: array
+          items:
+            type: string
+        detail:
+          $ref: '#/components/schemas/Receipt'
+        event-bus-name:
+          type: string

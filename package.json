@@ -3,7 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "test:e2e": "mvn -B -q package -DskipTests && cd sample-solution && AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1 sls deploy --stage local && cd .. && mvn -B verify -Pe2e -pl sample-solution/e2e"
+    "deploy:local": "mvn -B -q package -DskipTests && pnpm run deploy:sample && pnpm run deploy:receipt",
+    "deploy:sample": "cd sample-solution && AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1 sls deploy --stage local",
+    "deploy:receipt": "cd receipt-solution && AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1 sls deploy --stage local",
+    "test:e2e": "pnpm run deploy:local && mvn -B verify -Pe2e -pl sample-solution/e2e,receipt-solution/e2e"
   },
   "devDependencies": {
     "serverless": "4.46.0",

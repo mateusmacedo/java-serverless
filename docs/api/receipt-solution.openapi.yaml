@@ -1,0 +1,178 @@
+openapi: 3.1.0
+info:
+  title: receipt-solution API
+  version: 0.1.0
+  description: |
+    API HTTP da `receipt-solution`, em Quarkus. Consulta o comprovante de um pedido e permite emitir
+    um comprovante manualmente.
+
+    A emissão normal acontece sem a API: o evento `RequestCompleted` da `sample-solution` inicia a
+    máquina de estado `receipt-flow` ([ADR 0011](../decisions/0011-integracao-entre-solucoes-por-eventbridge.md)).
+    A emissão manual inicia a mesma máquina com a entrada no mesmo formato do evento; como o passo
+    `issue` é idempotente por `requestId`, emitir de novo devolve o comprovante já existente e
+    publica `ReceiptIssued` mais uma vez.
+
+    A API não tem autenticação. Métodos não mapeados são respondidos pelo próprio API Gateway com
+    `403` e `{"message":"Missing Authentication Token"}`.
+servers:
+  - url: http://localhost:4566/restapis/{apiId}/local/_user_request_
+    description: API Gateway no Floci, stage local
+    variables:
+      apiId:
+        default: replace-with-api-id
+        description: >-
+          Id da API REST. Obtenha com
+          `aws --profile localstack apigateway get-rest-apis --query "items[?name=='local-receipt-solution'].id" --output text`.
+tags:
+  - name: receipts
+    description: Comprovantes de pedidos concluídos
+paths:
+  /receipts:
+    post:
+      tags:
+        - receipts
+      operationId: issueReceipt
+      summary: Emite um comprovante manualmente
+      description: |
+        Inicia uma execução da máquina de estado `receipt-flow` com a entrada
+        `{"detail": <corpo da requisição>}`, o mesmo formato do evento `RequestCompleted`. A resposta
+        `202` só confirma o início da execução; o comprovante aparece na consulta quando o passo
+        `issue` termina.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IssueReceiptRequest'
+            examples:
+              emissao:
+                summary: Pedido de emissão
+                value:
+                  requestId: 8b2f674a-770f-4982-a3d1-c0141eeed347
+                  signature: ab877cff32c371f6472dbd3ccee3a1aee327d49a71135bea1073a5fe050fd9f7
+                  payloadBytes: 31
+      responses:
+        '202':
+          description: Execução iniciada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IssueAccepted'
+              examples:
+                aceita:
+                  value:
+                    requestId: 8b2f674a-770f-4982-a3d1-c0141eeed347
+                    executionArn: arn:aws:states:us-east-1:000000000000:execution:receipt-solution-local-receipt-flow:4f0d6a2e-1c7b-4b8e-9a51-0e7c3d2b9f11
+        '400':
+          description: Corpo ausente ou campo inválido. O corpo lista as violações.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ViolationReport'
+        '415':
+          description: '`Content-Type` diferente de `application/json`. A resposta não tem corpo.'
+  /receipts/{requestId}:
+    get:
+      tags:
+        - receipts
+      operationId: findReceipt
+      summary: Consulta o comprovante de um pedido
+      security: []
+      parameters:
+        - name: requestId
+          in: path
+          required: true
+          description: Identificador do pedido na `sample-solution`.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Comprovante emitido.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Receipt'
+              examples:
+                comprovante:
+                  value:
+                    requestId: 38ebf89b-523a-4a68-92b3-2d87dbff5a4a
+                    signature: ab877cff32c371f6472dbd3ccee3a1aee327d49a71135bea1073a5fe050fd9f7
+                    payloadBytes: 31
+                    issuedAt: '2026-11-11T01:17:46.339567103Z'
+        '404':
+          description: Não há comprovante para o pedido. A resposta não tem corpo.
+components:
+  schemas:
+    IssueReceiptRequest:
+      type: object
+      required:
+        - requestId
+        - signature
+        - payloadBytes
+      properties:
+        requestId:
+          type: string
+          minLength: 1
+          description: Identificador do pedido; é a chave do comprovante.
+        signature:
+          type: string
+          minLength: 1
+          description: Assinatura do payload, como o `validate` da `sample-solution` calcula.
+        payloadBytes:
+          type: integer
+          minimum: 1
+    IssueAccepted:
+      type: object
+      required:
+        - requestId
+        - executionArn
+      properties:
+        requestId:
+          type: string
+        executionArn:
+          type: string
+          description: ARN da execução iniciada na máquina de estado `receipt-flow`.
+    Receipt:
+      type: object
+      required:
+        - requestId
+        - signature
+        - payloadBytes
+        - issuedAt
+      properties:
+        requestId:
+          type: string
+        signature:
+          type: string
+        payloadBytes:
+          type: integer
+          minimum: 1
+        issuedAt:
+          type: string
+          format: date-time
+          description: Instante da primeira emissão.
+    ViolationReport:
+      type: object
+      description: Formato de erro de validação do Quarkus (Hibernate Validator).
+      required:
+        - title
+        - status
+        - violations
+      properties:
+        title:
+          type: string
+        status:
+          type: integer
+        violations:
+          type: array
+          items:
+            type: object
+            required:
+              - field
+              - message
+            properties:
+              field:
+                type: string
+              message:
+                type: string

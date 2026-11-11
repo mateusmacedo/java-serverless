@@ -1,0 +1,146 @@
+service: receipt-solution
+
+frameworkVersion: "4"
+
+plugins:
+  - serverless-step-functions
+  - serverless-localstack
+
+params:
+  local:
+    awsEndpointUrl: http://floci:4566
+
+custom:
+  names:
+    table: ${self:service}-${sls:stage}-receipts
+    eventBus: ${self:service}-${sls:stage}-events
+    stateMachine: ${self:service}-${sls:stage}-receipt-flow
+  # Barramento da solution produtora, pela convenção de nomes: a sample-solution é implantada antes (ADR 0011)
+  sourceEventBus: sample-solution-${sls:stage}-events
+  stateMachineArn: arn:aws:states:${aws:region}:${aws:accountId}:stateMachine:${self:custom.names.stateMachine}
+  functionsPackage: functions/target/receipt-functions-lambda.zip
+  # Handler das duas extensões usadas (quarkus-amazon-lambda e quarkus-amazon-lambda-rest)
+  quarkusHandler: io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest
+  localstack:
+    stages:
+      - local
+    host: http://localhost
+    edgePort: 4566
+    autostart: false
+
+provider:
+  name: aws
+  runtime: java21
+  region: us-east-1
+  stage: ${opt:stage, 'local'}
+  memorySize: 512
+  timeout: 30
+  environment:
+    AWS_ENDPOINT_URL: ${param:awsEndpointUrl}
+    TABLE_NAME: ${self:custom.names.table}
+    EVENT_BUS_NAME: ${self:custom.names.eventBus}
+    STATE_MACHINE_ARN: ${self:custom.stateMachineArn}
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - dynamodb:PutItem
+            - dynamodb:GetItem
+          Resource: !GetAtt ReceiptsTable.Arn
+        - Effect: Allow
+          Action: events:PutEvents
+          Resource: !GetAtt ReceiptsEventBus.Arn
+        # ARN montado por nome: um Ref à máquina de estado criaria ciclo com as Lambdas que ela invoca
+        - Effect: Allow
+          Action: states:StartExecution
+          Resource: ${self:custom.stateMachineArn}
+
+package:
+  individually: true
+
+functions:
+  api:
+    handler: ${self:custom.quarkusHandler}
+    timeout: 29
+    package:
+      artifact: api/target/receipt-api-lambda.zip
+    events:
+      - http:
+          path: receipts
+          method: post
+      - http:
+          path: receipts/{requestId}
+          method: get
+
+  issue:
+    handler: ${self:custom.quarkusHandler}
+    package:
+      artifact: ${self:custom.functionsPackage}
+    environment:
+      QUARKUS_LAMBDA_HANDLER: issue
+
+  announce:
+    handler: ${self:custom.quarkusHandler}
+    package:
+      artifact: ${self:custom.functionsPackage}
+    environment:
+      QUARKUS_LAMBDA_HANDLER: announce
+
+stepFunctions:
+  stateMachines:
+    receiptFlow:
+      id: ReceiptFlowStateMachine
+      name: ${self:custom.names.stateMachine}
+      # source e detail-type precisam bater com as constantes de NotifyFunction, na sample-solution
+      events:
+        - eventBridge:
+            eventBusName: ${self:custom.sourceEventBus}
+            event:
+              source:
+                - mmda.sample
+              detail-type:
+                - RequestCompleted
+      definition:
+        Comment: Issues and announces a receipt for each request completed by the sample-solution
+        StartAt: Issue
+        States:
+          Issue:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [issue, Arn]
+            InputPath: $.detail
+            # O issue é idempotente por requestId, então repetir é seguro
+            Retry: &retryTransientFailures
+              - ErrorEquals:
+                  - States.ALL
+                IntervalSeconds: 2
+                MaxAttempts: 2
+                BackoffRate: 2
+            Next: Announce
+          Announce:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [announce, Arn]
+            Retry: *retryTransientFailures
+            End: true
+
+resources:
+  Resources:
+    ReceiptsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.names.table}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: requestId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: requestId
+            KeyType: HASH
+
+    # source e detail-type do ReceiptIssued estão em AnnounceReceiptHandler
+    ReceiptsEventBus:
+      Type: AWS::Events::EventBus
+      Properties:
+        Name: ${self:custom.names.eventBus}
