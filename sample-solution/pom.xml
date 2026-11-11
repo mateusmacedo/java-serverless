@@ -7,7 +7,7 @@
     <parent>
         <groupId>com.mmda.serverless</groupId>
         <artifactId>spring-parent</artifactId>
-        <version>0.1.0-SNAPSHOT</version>
+        <version>1.0.0</version>
         <relativePath>../platform/spring-parent/pom.xml</relativePath>
     </parent>
 

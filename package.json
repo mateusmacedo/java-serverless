@@ -1,6 +1,6 @@
 {
   "name": "mmda-serverless",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "deploy:local": "mvn -B -q package -DskipTests && pnpm run deploy:sample && pnpm run deploy:receipt",
