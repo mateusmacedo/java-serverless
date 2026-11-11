@@ -1,8 +1,5 @@
 package com.mmda.serverless.sample.functions;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import java.io.UncheckedIOException;
 import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -10,6 +7,7 @@ import org.springframework.stereotype.Component;
 import software.amazon.awssdk.services.sfn.SfnClient;
 import software.amazon.awssdk.services.sqs.SqsClient;
 import software.amazon.awssdk.services.sqs.model.Message;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * Lê a DLQ e reinicia a máquina de estado para cada mensagem. Depois de {@code maxAttempts}
@@ -41,7 +39,7 @@ class ReprocessFunction implements Function<ReprocessCommand, ReprocessResult> {
         for (Message message : sqs.receiveMessage(builder -> builder
                 .queueUrl(queueUrl)
                 .maxNumberOfMessages(command.batchSize())).messages()) {
-            RequestContext failed = read(message.body());
+            RequestContext failed = objectMapper.readValue(message.body(), RequestContext.class);
             if (failed.attempt() >= properties.maxAttempts()) {
                 LOGGER.warn("Discarding request {} after {} attempts", failed.requestId(), failed.attempt());
                 discarded++;
@@ -55,26 +53,10 @@ class ReprocessFunction implements Function<ReprocessCommand, ReprocessResult> {
     }
 
     private void restart(RequestContext retry) {
-        String input = write(retry);
+        String input = objectMapper.writeValueAsString(retry);
         sfn.startExecution(builder -> builder
                 .stateMachineArn(properties.stateMachineArn())
                 .name(retry.requestId() + "-" + retry.attempt())
                 .input(input));
-    }
-
-    private RequestContext read(String body) {
-        try {
-            return objectMapper.readValue(body, RequestContext.class);
-        } catch (JsonProcessingException exception) {
-            throw new UncheckedIOException(exception);
-        }
-    }
-
-    private String write(RequestContext request) {
-        try {
-            return objectMapper.writeValueAsString(request);
-        } catch (JsonProcessingException exception) {
-            throw new UncheckedIOException(exception);
-        }
     }
 }

@@ -4,12 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -17,6 +15,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.sfn.SfnClient;
 import software.amazon.awssdk.services.sfn.model.DescribeExecutionResponse;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /** A aplicação HTTP completa, com os clients reais da autoconfiguração, contra o Floci. */
 @SpringBootTest(classes = ApiApplication.class)
@@ -58,18 +58,18 @@ class RequestControllerFlociIT extends FlociIntegrationTest {
                 .andExpect(status().isAccepted())
                 .andReturn().getResponse().getContentAsString();
         JsonNode accepted = objectMapper.readTree(response);
-        String requestId = accepted.get("requestId").asText();
+        String requestId = accepted.get("requestId").asString();
 
         String stored = S3.getObjectAsBytes(builder -> builder.bucket(BUCKET).key("requests/" + requestId + ".json"))
                 .asUtf8String();
         assertThat(stored).isEqualTo(payload);
 
         DescribeExecutionResponse execution = SFN.describeExecution(builder -> builder
-                .executionArn(accepted.get("executionArn").asText()));
+                .executionArn(accepted.get("executionArn").asString()));
         assertThat(execution.name()).isEqualTo(requestId);
         assertThat(execution.stateMachineArn()).isEqualTo(STATE_MACHINE_ARN);
         JsonNode input = objectMapper.readTree(execution.input());
-        assertThat(input.get("s3Key").asText()).isEqualTo("requests/" + requestId + ".json");
+        assertThat(input.get("s3Key").asString()).isEqualTo("requests/" + requestId + ".json");
         assertThat(input.get("attempt").asInt()).isEqualTo(1);
     }
 }

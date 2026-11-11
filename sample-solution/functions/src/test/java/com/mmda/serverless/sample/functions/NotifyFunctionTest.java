@@ -6,8 +6,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.verify;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -24,6 +22,8 @@ import software.amazon.awssdk.services.eventbridge.model.PutEventsResponse;
 import software.amazon.awssdk.services.sns.SnsClient;
 import software.amazon.awssdk.services.sns.model.PublishRequest;
 import software.amazon.awssdk.services.sns.model.PublishResponse;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 @ExtendWith(MockitoExtension.class)
 // WHY: a sobrecarga do SDK com Consumer repassa para a sobrecarga com request, que é a simulada;
@@ -75,8 +75,8 @@ class NotifyFunctionTest {
         assertThat(entry.source()).isEqualTo("mmda.sample");
         assertThat(entry.detailType()).isEqualTo("RequestCompleted");
         JsonNode detail = objectMapper.readTree(entry.detail());
-        assertThat(detail.get("requestId").asText()).isEqualTo("req-1");
-        assertThat(detail.get("signature").asText()).isEqualTo("abc123");
+        assertThat(detail.get("requestId").asString()).isEqualTo("req-1");
+        assertThat(detail.get("signature").asString()).isEqualTo("abc123");
     }
 
     @Test

@@ -3,8 +3,6 @@ package com.mmda.serverless.sample.e2e;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -27,6 +25,8 @@ import software.amazon.awssdk.services.sfn.model.ExecutionStatus;
 import software.amazon.awssdk.services.sfn.model.StateMachineListItem;
 import software.amazon.awssdk.services.sqs.SqsClient;
 import software.amazon.awssdk.services.sqs.model.Message;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * Exercita a stack implantada no Floci pela API HTTP, do mesmo jeito que um cliente faria.
@@ -84,8 +84,8 @@ class RequestFlowE2E {
         assertThat(item.get("signature").s()).hasSize(64);
         assertThat(item.get("payloadBytes").n()).isEqualTo(Integer.toString(payload.length()));
         JsonNode event = awaitAuditEvent(requestId);
-        assertThat(event.get("source").asText()).isEqualTo("mmda.sample");
-        assertThat(event.get("detail-type").asText()).isEqualTo("RequestCompleted");
+        assertThat(event.get("source").asString()).isEqualTo("mmda.sample");
+        assertThat(event.get("detail-type").asString()).isEqualTo("RequestCompleted");
     }
 
     @Test
@@ -115,7 +115,7 @@ class RequestFlowE2E {
                         .build(),
                 HttpResponse.BodyHandlers.ofString());
         assertThat(response.statusCode()).isEqualTo(202);
-        return JSON.readTree(response.body()).get("requestId").asText();
+        return JSON.readTree(response.body()).get("requestId").asString();
     }
 
     private static ExecutionStatus awaitFinalStatus(String executionName) {

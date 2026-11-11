@@ -28,7 +28,7 @@
         <!-- O serverless-java-container substitui o servidor embutido, então o Tomcat sai -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
+            <artifactId>spring-boot-starter-webmvc</artifactId>
             <exclusions>
                 <exclusion>
                     <groupId>org.springframework.boot</groupId>
@@ -38,11 +38,11 @@
         </dependency>
         <dependency>
             <groupId>com.amazonaws.serverless</groupId>
-            <artifactId>aws-serverless-java-container-springboot3</artifactId>
+            <artifactId>aws-serverless-java-container-springboot4</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
+            <artifactId>spring-boot-starter-webmvc-test</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>

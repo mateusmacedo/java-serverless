@@ -4,8 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.HexFormat;
@@ -37,6 +35,8 @@ import software.amazon.awssdk.services.sqs.model.Message;
 import software.amazon.awssdk.services.sqs.model.QueueAttributeName;
 import software.amazon.awssdk.services.ssm.SsmClient;
 import software.amazon.awssdk.services.ssm.model.ParameterType;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * As quatro funções com clients reais contra o Floci. Os recursos são criados antes do contexto
@@ -169,13 +169,13 @@ class RequestFlowFunctionsIT extends FlociIntegrationTest {
         notify.apply(new RequestContext("it-notify", "requests/it-notify.json", 1, "sig", 7L));
 
         JsonNode event = awaitSingleMessage(AUDIT_QUEUE_URL);
-        assertThat(event.get("source").asText()).isEqualTo("mmda.sample");
-        assertThat(event.get("detail-type").asText()).isEqualTo("RequestCompleted");
-        assertThat(event.get("detail").get("requestId").asText()).isEqualTo("it-notify");
+        assertThat(event.get("source").asString()).isEqualTo("mmda.sample");
+        assertThat(event.get("detail-type").asString()).isEqualTo("RequestCompleted");
+        assertThat(event.get("detail").get("requestId").asString()).isEqualTo("it-notify");
 
         JsonNode notification = awaitSingleMessage(NOTIFICATION_QUEUE_URL);
-        JsonNode message = readJson(notification.has("Message") ? notification.get("Message").asText() : notification.toString());
-        assertThat(message.get("requestId").asText()).isEqualTo("it-notify");
+        JsonNode message = readJson(notification.has("Message") ? notification.get("Message").asString() : notification.toString());
+        assertThat(message.get("requestId").asString()).isEqualTo("it-notify");
     }
 
     @Test

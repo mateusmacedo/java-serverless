@@ -1,14 +1,12 @@
 package com.mmda.serverless.sample.functions;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import java.io.UncheckedIOException;
 import java.util.function.Function;
 import org.springframework.stereotype.Component;
 import software.amazon.awssdk.services.eventbridge.EventBridgeClient;
 import software.amazon.awssdk.services.eventbridge.model.PutEventsRequestEntry;
 import software.amazon.awssdk.services.eventbridge.model.PutEventsResponse;
 import software.amazon.awssdk.services.sns.SnsClient;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * Publica no SNS e emite o evento no EventBridge. A origem e o tipo do evento precisam bater
@@ -35,7 +33,7 @@ class NotifyFunction implements Function<RequestContext, RequestContext> {
 
     @Override
     public RequestContext apply(RequestContext request) {
-        String json = toJson(request);
+        String json = objectMapper.writeValueAsString(request);
 
         sns.publish(builder -> builder.topicArn(properties.topicArn()).message(json));
 
@@ -50,13 +48,5 @@ class NotifyFunction implements Function<RequestContext, RequestContext> {
             throw new IllegalStateException("EventBridge rejected the event: " + response.entries());
         }
         return request;
-    }
-
-    private String toJson(RequestContext request) {
-        try {
-            return objectMapper.writeValueAsString(request);
-        } catch (JsonProcessingException exception) {
-            throw new UncheckedIOException(exception);
-        }
     }
 }

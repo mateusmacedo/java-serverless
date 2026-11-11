@@ -1,7 +1,5 @@
 package com.mmda.serverless.sample.api;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.UUID;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -12,6 +10,7 @@ import org.springframework.web.bind.annotation.RestController;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.sfn.SfnClient;
 import software.amazon.awssdk.services.sfn.model.StartExecutionResponse;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * Grava o payload no S3 e inicia a máquina de estado só com a chave, porque o Step Functions
@@ -34,7 +33,7 @@ class RequestController {
     }
 
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
-    ResponseEntity<RequestAccepted> create(@RequestBody String payload) throws JsonProcessingException {
+    ResponseEntity<RequestAccepted> create(@RequestBody String payload) {
         String requestId = UUID.randomUUID().toString();
         String s3Key = "requests/" + requestId + ".json";
 

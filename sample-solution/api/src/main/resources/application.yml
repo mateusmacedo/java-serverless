@@ -1,3 +1,9 @@
+# WHY: o serverless-java-container 3.x traz o Afterburner, que a descoberta automática registraria no
+# mapper da aplicação; ele não otimiza records e avisa a cada classe. O Jackson 3 já embute java.time e Optional
+spring:
+  jackson:
+    find-and-add-modules: false
+
 sample:
   bucket-name: ${BUCKET_NAME}
   state-machine-arn: ${STATE_MACHINE_ARN}

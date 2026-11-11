@@ -1,7 +1,8 @@
 package com.mmda.serverless.sample.functions;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 final class TestFixtures {
 
@@ -29,6 +30,6 @@ final class TestFixtures {
 
     /** Mesmo comportamento do ObjectMapper do Spring Boot, que ignora propriedades desconhecidas. */
     static ObjectMapper objectMapper() {
-        return Jackson2ObjectMapperBuilder.json().build();
+        return JsonMapper.builder().disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES).build();
     }
 }

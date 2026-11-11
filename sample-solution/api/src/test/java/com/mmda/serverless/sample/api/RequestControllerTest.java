@@ -9,8 +9,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jayway.jsonpath.JsonPath;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -20,7 +18,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -30,6 +28,8 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.sfn.SfnClient;
 import software.amazon.awssdk.services.sfn.model.StartExecutionRequest;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 @WebMvcTest(RequestController.class)
 @EnableConfigurationProperties(ApiProperties.class)
@@ -84,8 +84,8 @@ class RequestControllerTest {
                 .isEqualTo("arn:aws:states:us-east-1:000000000000:stateMachine:request-flow");
         assertThat(execution.name()).isEqualTo(requestId);
         JsonNode input = objectMapper.readTree(execution.input());
-        assertThat(input.get("requestId").asText()).isEqualTo(requestId);
-        assertThat(input.get("s3Key").asText()).isEqualTo("requests/" + requestId + ".json");
+        assertThat(input.get("requestId").asString()).isEqualTo(requestId);
+        assertThat(input.get("s3Key").asString()).isEqualTo("requests/" + requestId + ".json");
         assertThat(input.get("attempt").asInt()).isEqualTo(1);
     }
 
