@@ -199,15 +199,17 @@ aws --profile localstack s3 rm s3://sample-solution-local-payloads --recursive
 (cd sample-solution && pnpm sls remove --stage local)
 ```
 
-## Perfis do AWS CLI
+## Perfil do AWS CLI
 
-| Perfil | Destino | Autenticação |
-|---|---|---|
-| `localstack` | Floci (`localhost:4566`, `us-east-1`) | Chaves fixas de teste |
-| `personal` | Conta pessoal (`us-east-1`) | `aws login --profile personal --region us-east-1` |
-| `jusdocs`, `jusdocs-dev`, `jusdocs-prod` | Contas da JusDocs | SSO (IAM Identity Center) |
+Os comandos de exemplo usam o perfil `localstack`, que aponta para o Floci com as chaves fixas de
+teste. Para criá-lo:
 
-Não há perfil `default`: todo comando precisa de `--profile` ou `AWS_PROFILE`.
+```bash
+aws configure set region us-east-1 --profile localstack
+aws configure set endpoint_url http://localhost:4566 --profile localstack
+aws configure set aws_access_key_id test --profile localstack
+aws configure set aws_secret_access_key test --profile localstack
+```
 
 ## Pontos de atenção
 
