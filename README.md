@@ -22,9 +22,10 @@ com deploy pelo Serverless Framework e emulação local da AWS pelo [Floci](http
 |---|---|
 | Java (runtime `java21` da Lambda) | 21 |
 | Maven | 3.9 |
-| Spring Boot | 3.5.16 |
-| Spring Cloud / Spring Cloud Function | 2025.0.3 / 4.3.4 |
-| aws-serverless-java-container-springboot3 | 2.1.7 |
+| Spring Boot | 4.0.9 |
+| Spring Cloud / Spring Cloud Function | 2025.1.4 / 5.0.5 |
+| Jackson | 3.1.7 |
+| aws-serverless-java-container-springboot4 | 3.0.5 |
 | AWS SDK for Java v2 (clients síncronos com `AwsCrtHttpClient`) | 2.57.12 |
 | Serverless Framework | 4.46.0 |
 | serverless-step-functions / serverless-localstack / serverless-offline | 3.31.2 / 1.4.0 / 14.8.4 |

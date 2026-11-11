@@ -1,6 +1,6 @@
 # 0003. Spring Boot 3.5 pela adoção de mercado
 
-- Status: aceita
+- Status: substituída por [0009](0009-spring-boot-4-0.md)
 - Data: 2026-11-10
 
 ## Contexto

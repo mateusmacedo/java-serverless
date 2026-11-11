@@ -116,7 +116,7 @@ Arquivos, na ordem: `functions/src/main/resources/application.yml`, `FunctionsAp
 `FunctionsProperties.java`, a classe da função e `RequestContext.java`.
 
 Esse comportamento do `FunctionInvoker` foi conferido no código-fonte do Spring Cloud Function
-4.3.4: o construtor sobe o contexto, a aplicação vem de `MAIN_CLASS` e a função vem da propriedade
+5.0.5: o construtor sobe o contexto, a aplicação vem de `MAIN_CLASS` e a função vem da propriedade
 `spring.cloud.function.definition`.
 
 ## Uma requisição de ponta a ponta

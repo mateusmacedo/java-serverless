@@ -44,8 +44,8 @@ O teste pega divergência de verdade: com a resposta `415` removida do OpenAPI, 
 ## Integração com Floci
 
 Cada módulo sobe um único Floci (`floci/floci:2.4.0`) pelo módulo oficial
-[`testcontainers-floci`](https://github.com/floci-io/testcontainers-floci), na linha 1.x compatível com o
-Testcontainers 1.21 do Spring Boot 3.5. A classe base `FlociIntegrationTest` passa endpoint, região e
+[`testcontainers-floci`](https://github.com/floci-io/testcontainers-floci), na linha 2.x compatível com o
+Testcontainers 2.0 do Spring Boot 4.0. A classe base `FlociIntegrationTest` passa endpoint, região e
 credenciais para as propriedades de sistema do AWS SDK (`aws.endpointUrl`, `aws.region`,
 `aws.accessKeyId`, `aws.secretAccessKey`). Assim os testes usam a autoconfiguração real do `shared`.
 

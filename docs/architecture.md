@@ -1,7 +1,7 @@
 # Arquitetura
 
 O ambiente serve para projetar soluções serverless orquestradas pelo AWS Step Functions, com
-Lambdas em Java 21 e Spring Boot 3.5. O deploy usa o Serverless Framework v4 e, localmente, o
+Lambdas em Java 21 e Spring Boot 4.0. O deploy usa o Serverless Framework v4 e, localmente, o
 [Floci](https://github.com/floci-io/floci) emula os serviços da AWS na porta 4566.
 
 A `sample-solution` é a solução de referência: recebe uma requisição HTTP, valida, persiste e
@@ -53,10 +53,10 @@ flowchart TB
 
 | Módulo | Empacotamento | Responsabilidade |
 |---|---|---|
-| `serverless-parent` (raiz) | `pom` | Herda do Spring Boot 3.5.16; importa os BOMs do Spring Cloud 2025.0.3 e do AWS SDK 2.57.12; exclui `apache-client` e `netty-nio-client` de cada service do SDK |
+| `serverless-parent` (raiz) | `pom` | Herda do Spring Boot 4.0.9; importa os BOMs do Spring Cloud 2025.1.4 e do AWS SDK 2.57.12; exclui `apache-client` e `netty-nio-client` de cada service do SDK |
 | `shared` | `jar` | Autoconfiguração dos clients síncronos do SDK, cada um com o próprio `AwsCrtHttpClient` e criado só quando o SDK correspondente está no classpath ([ADR 0005](decisions/0005-clients-sincronos-com-crt.md)) |
 | `sample-solution` | `pom` | Agrega `api` e `functions` e define o empacotamento em zip para Lambda |
-| `sample-solution/api` | `jar` + zip | Lambda HTTP com Spring MVC via `aws-serverless-java-container-springboot3` |
+| `sample-solution/api` | `jar` + zip | Lambda HTTP com Spring MVC via `aws-serverless-java-container-springboot4` |
 | `sample-solution/functions` | `jar` + zip | Lambdas dos passos e do reprocessamento com Spring Cloud Function |
 | `sample-solution/e2e` | `jar`, só com testes | Testes ponta a ponta contra a stack implantada; entra no build apenas com o perfil `-Pe2e` ([Testes](testing.md)) |
 
