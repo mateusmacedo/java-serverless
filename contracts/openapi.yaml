@@ -1,0 +1,825 @@
+openapi: 3.1.0
+info:
+  title: Plataforma de cotação — API de produto
+  version: 0.1.0
+  description: |
+    API de produto da `quote-solution`, conforme o contrato compartilhado dos PRDs de backend e de
+    frontend (versão 2.0) e o desenho técnico (`docs/quotation-platform.md`).
+
+    Versão parcial do marco M1: identidade (`GET /v1/me`), criação de cotação e leitura de uma versão e
+    das suas ofertas. Catálogo, listagem, nova versão, seleção e operações entram nos marcos seguintes,
+    sem mudança incompatível nos schemas abaixo.
+
+    Autenticação: access token do user pool Cognito da stack (`Authorization: Bearer <token>`). ID
+    tokens e tokens de outro app client são rejeitados com `401`. A organização vem do grupo
+    `org_<organizationId>` e as permissões dos grupos `perm_*`; o servidor é a autoridade de
+    organização em todos os endpoints. Cotação de outra organização responde `404`.
+
+    Datas com hora são ISO 8601 em UTC; `desiredStartDate` e `licenseDate` são datas civis
+    (`YYYY-MM-DD`, fuso `America/Sao_Paulo`). Valores monetários são strings decimais com moeda
+    explícita. IDs são opacos. `revision` é monotônica por recurso: a da versão e a da lista de ofertas
+    não se comparam.
+servers:
+  - url: http://localhost:4566/restapis/{apiId}/local/_user_request_
+    description: API Gateway no Floci, stage local
+    variables:
+      apiId:
+        default: replace-with-api-id
+        description: >-
+          Id da API REST. Obtenha com
+          `aws --endpoint-url http://localhost:4566 apigateway get-rest-apis --query "items[?name=='local-quote-solution'].id" --output text`.
+security:
+  - bearerAuth: []
+tags:
+  - name: identity
+    description: Usuário autenticado
+  - name: quotes
+    description: Cotações, versões e ofertas
+paths:
+  /v1/me:
+    get:
+      tags:
+        - identity
+      operationId: getMe
+      summary: Usuário, organização e permissões
+      responses:
+        '200':
+          description: Identidade derivada do access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/quotes:
+    post:
+      tags:
+        - quotes
+      operationId: createQuote
+      summary: Registra uma cotação de forma durável e idempotente
+      description: |
+        Resolve as referências no catálogo da organização e grava, numa transação, a idempotência, a
+        cotação, a versão 1 com o snapshot e os eventos de início. A execução começa depois, de forma
+        assíncrona; acompanhe pelo `statusUrl`.
+
+        Reenviar a mesma `Idempotency-Key` com o mesmo body (comparado em JSON canônico, RFC 8785)
+        devolve a mesma identidade, sem nova execução. A mesma chave com outro body responde `409`
+        `IDEMPOTENCY_CONFLICT`, sem alterar a cotação existente. Exige `quotes:write`.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateQuoteRequest'
+            examples:
+              normal:
+                summary: Hatch com uso particular
+                value:
+                  product: AUTO
+                  applicantRef: customer-acme-ana
+                  risk:
+                    vehicleRef: vehicle-hatch-2021
+                    usage: PERSONAL
+                    principalDriverRef: driver-acme-ana
+                  coverageProfile: COMPREHENSIVE
+                  desiredStartDate: '2026-12-01'
+      responses:
+        '202':
+          description: Cotação aceita duravelmente, ou a mesma identidade de um reenvio idêntico.
+          headers:
+            Location:
+              description: Mesmo valor de `statusUrl`.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteAccepted'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /v1/quotes/{quoteId}/versions/{version}:
+    get:
+      tags:
+        - quotes
+      operationId: getQuoteVersion
+      summary: Andamento, resultado, pendências e resultados por seguradora de uma versão
+      description: |
+        `outcome` e `outcomeReason` ficam nulos até `phase = TERMINAL`. `retryAfterSeconds` orienta o
+        polling enquanto a versão não é terminal e é nulo depois. `allowedActions` é derivado no
+        servidor: `CREATE_VERSION` e `SELECT_OFFER` só na versão atual sem seleção e com a permissão
+        correspondente; `SELECT_OFFER` exige ao menos uma oferta selecionável. Exige `quotes:read`.
+      parameters:
+        - $ref: '#/components/parameters/QuoteId'
+        - $ref: '#/components/parameters/Version'
+      responses:
+        '200':
+          description: Versão da cotação.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteVersion'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/quotes/{quoteId}/versions/{version}/offers:
+    get:
+      tags:
+        - quotes
+      operationId: listQuoteOffers
+      summary: Ofertas da versão, inclusive parciais, com validade e disponibilidade
+      description: |
+        Uma oferta é selecionável quando a versão é a atual, não há seleção e `validUntil` é posterior
+        ao `serverTime`. `unavailabilityReason` segue a precedência `VERSION_SUPERSEDED`,
+        `SELECTION_ALREADY_EXISTS`, `OFFER_EXPIRED` e é nulo quando `selectable`. Exige `quotes:read`.
+      parameters:
+        - $ref: '#/components/parameters/QuoteId'
+        - $ref: '#/components/parameters/Version'
+        - name: cursor
+          in: query
+          required: false
+          description: Valor de `nextCursor` da página anterior.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Página de ofertas.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OffersPage'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Access token do user pool Cognito da stack (`token_use = access`).
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Uma chave por intenção de mutação. Após timeout, reenvie o mesmo body com a mesma chave.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 200
+        pattern: '^[\x21-\x7E]+$'
+    QuoteId:
+      name: quoteId
+      in: path
+      required: true
+      schema:
+        type: string
+    Version:
+      name: version
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 9999
+  responses:
+    ValidationError:
+      description: Estrutura, formato ou referência inválida.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthenticated:
+      description: Token ausente, inválido, expirado, ID token ou de outro app client.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Usuário sem organização ou sem a permissão do endpoint.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Recurso inexistente ou de outra organização.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: Conflito de chave, versão ou oferta.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ConflictError'
+    UnsupportedMediaType:
+      description: O body precisa ser `application/json`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unavailable:
+      description: Não foi possível aceitar duravelmente; reenvie com a mesma `Idempotency-Key`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Permission:
+      type: string
+      enum:
+        - quotes:read
+        - quotes:write
+        - offers:select
+        - operations:read
+        - operations:reconcile
+    Me:
+      type: object
+      additionalProperties: false
+      required:
+        - userId
+        - displayName
+        - organizationId
+        - permissions
+      properties:
+        userId:
+          type: string
+        displayName:
+          type: string
+        organizationId:
+          type: string
+        permissions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Permission'
+    Usage:
+      type: string
+      enum:
+        - PERSONAL
+        - COMMERCIAL
+    CreateQuoteRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - product
+        - applicantRef
+        - risk
+        - coverageProfile
+        - desiredStartDate
+      properties:
+        product:
+          type: string
+          const: AUTO
+        applicantRef:
+          type: string
+          minLength: 1
+          maxLength: 128
+        risk:
+          type: object
+          additionalProperties: false
+          required:
+            - vehicleRef
+            - usage
+            - principalDriverRef
+          properties:
+            vehicleRef:
+              type: string
+              minLength: 1
+              maxLength: 128
+            usage:
+              $ref: '#/components/schemas/Usage'
+            principalDriverRef:
+              type: string
+              minLength: 1
+              maxLength: 128
+        coverageProfile:
+          type: string
+          minLength: 1
+          maxLength: 128
+        desiredStartDate:
+          type: string
+          format: date
+    Phase:
+      type: string
+      enum:
+        - RECEIVED
+        - VALIDATING
+        - ENRICHING
+        - QUOTING
+        - TERMINAL
+    Outcome:
+      type: string
+      enum:
+        - COMPLETED
+        - PARTIAL
+        - NEEDS_INFORMATION
+        - INELIGIBLE
+        - NO_OFFER
+        - TECHNICAL_FAILURE
+    OutcomeReason:
+      type: string
+      description: Motivo do resultado agregado; nulo em `COMPLETED` e `PARTIAL`.
+      enum:
+        - SALVAGE_VEHICLE
+        - MISSING_LICENSE_DATE
+        - ENRICHMENT_NOT_FOUND
+        - ENRICHMENT_FAILED
+        - NO_APPLICABLE_INSURER
+        - ALL_INSURERS_DECLINED
+        - INSURER_NEEDS_INFORMATION
+        - INSURER_TECHNICAL_FAILURE
+        - WORKFLOW_FAILED
+    InsurerStatus:
+      type: string
+      enum:
+        - PENDING
+        - PROCESSING
+        - QUOTED
+        - DECLINED
+        - NEEDS_INFORMATION
+        - UNAVAILABLE
+        - TIMED_OUT
+    AllowedAction:
+      type: string
+      enum:
+        - CREATE_VERSION
+        - SELECT_OFFER
+    UnavailabilityReason:
+      type: string
+      enum:
+        - VERSION_SUPERSEDED
+        - SELECTION_ALREADY_EXISTS
+        - OFFER_EXPIRED
+    QuoteAccepted:
+      type: object
+      additionalProperties: false
+      required:
+        - quoteId
+        - version
+        - phase
+        - statusUrl
+      properties:
+        quoteId:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+        phase:
+          $ref: '#/components/schemas/Phase'
+        statusUrl:
+          type: string
+          examples:
+            - /v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/1
+    MissingField:
+      type: object
+      additionalProperties: false
+      required:
+        - path
+        - label
+        - reasonCode
+      properties:
+        path:
+          type: string
+          description: Caminho relativo ao snapshot, como `risk.principalDriverRef`.
+        label:
+          type: string
+        reasonCode:
+          type: string
+          description: Código seguro, como `MISSING_LICENSE_DATE` ou `ENRICHMENT_NOT_FOUND`.
+    Party:
+      type: object
+      required:
+        - id
+        - label
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+    Vehicle:
+      type: object
+      required:
+        - id
+        - label
+        - year
+        - salvage
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        make:
+          type: string
+        model:
+          type: string
+        year:
+          type: integer
+        salvage:
+          type: boolean
+    Driver:
+      type: object
+      required:
+        - id
+        - label
+        - licenseDate
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        licenseDate:
+          type:
+            - string
+            - 'null'
+          format: date
+    CoverageProfile:
+      type: object
+      required:
+        - code
+        - label
+        - coverages
+      properties:
+        code:
+          type: string
+        label:
+          type: string
+        summary:
+          type: string
+        coverages:
+          type: array
+          items:
+            $ref: '#/components/schemas/Coverage'
+    Coverage:
+      type: object
+      required:
+        - code
+        - label
+        - insuredAmount
+      properties:
+        code:
+          type: string
+        label:
+          type: string
+        insuredAmount:
+          type: string
+          pattern: '^-?\d+(\.\d+)?$'
+    Snapshot:
+      type: object
+      description: Pedido com as referências resolvidas no catálogo; imutável depois da aceitação.
+      required:
+        - product
+        - applicantRef
+        - applicant
+        - risk
+        - coverageProfile
+        - coverage
+        - desiredStartDate
+      properties:
+        product:
+          type: string
+          const: AUTO
+        applicantRef:
+          type: string
+        applicant:
+          $ref: '#/components/schemas/Party'
+        risk:
+          type: object
+          required:
+            - vehicleRef
+            - usage
+            - principalDriverRef
+            - vehicle
+            - principalDriver
+          properties:
+            vehicleRef:
+              type: string
+            usage:
+              $ref: '#/components/schemas/Usage'
+            principalDriverRef:
+              type: string
+            vehicle:
+              $ref: '#/components/schemas/Vehicle'
+            principalDriver:
+              $ref: '#/components/schemas/Driver'
+        coverageProfile:
+          type: string
+        coverage:
+          $ref: '#/components/schemas/CoverageProfile'
+        desiredStartDate:
+          type: string
+          format: date
+    InsurerResult:
+      type: object
+      additionalProperties: false
+      required:
+        - insurerId
+        - insurerName
+        - status
+        - reasonCode
+        - missingFields
+        - updatedAt
+      properties:
+        insurerId:
+          type: string
+        insurerName:
+          type: string
+        status:
+          $ref: '#/components/schemas/InsurerStatus'
+        reasonCode:
+          type:
+            - string
+            - 'null'
+        missingFields:
+          type: array
+          items:
+            $ref: '#/components/schemas/MissingField'
+        updatedAt:
+          type: string
+          format: date-time
+    Selection:
+      type: object
+      additionalProperties: false
+      required:
+        - selectionId
+        - offerId
+        - selectedAt
+        - status
+      properties:
+        selectionId:
+          type: string
+        offerId:
+          type: string
+        selectedAt:
+          type: string
+          format: date-time
+        status:
+          type: string
+          const: INTENT_RECORDED
+    QuoteVersion:
+      type: object
+      additionalProperties: false
+      required:
+        - quoteId
+        - version
+        - currentVersion
+        - snapshot
+        - phase
+        - outcome
+        - outcomeReason
+        - supersededAt
+        - revision
+        - updatedAt
+        - serverTime
+        - retryAfterSeconds
+        - missingFields
+        - insurerResults
+        - selection
+        - allowedActions
+      properties:
+        quoteId:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+        currentVersion:
+          type: integer
+          minimum: 1
+        snapshot:
+          $ref: '#/components/schemas/Snapshot'
+        phase:
+          $ref: '#/components/schemas/Phase'
+        outcome:
+          oneOf:
+            - $ref: '#/components/schemas/Outcome'
+            - type: 'null'
+        outcomeReason:
+          oneOf:
+            - $ref: '#/components/schemas/OutcomeReason'
+            - type: 'null'
+        supersededAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        revision:
+          type: integer
+          minimum: 0
+        updatedAt:
+          type: string
+          format: date-time
+        serverTime:
+          type: string
+          format: date-time
+        retryAfterSeconds:
+          type:
+            - integer
+            - 'null'
+          minimum: 1
+        missingFields:
+          type: array
+          items:
+            $ref: '#/components/schemas/MissingField'
+        insurerResults:
+          type: array
+          items:
+            $ref: '#/components/schemas/InsurerResult'
+        selection:
+          oneOf:
+            - $ref: '#/components/schemas/Selection'
+            - type: 'null'
+        allowedActions:
+          type: array
+          items:
+            $ref: '#/components/schemas/AllowedAction'
+    Installment:
+      type: object
+      required:
+        - count
+        - amount
+      properties:
+        count:
+          type: integer
+          minimum: 1
+        amount:
+          type: string
+          pattern: '^\d+(\.\d+)?$'
+    OfferCoverage:
+      type: object
+      required:
+        - code
+        - label
+      properties:
+        code:
+          type: string
+        label:
+          type: string
+        insuredAmount:
+          type: string
+          pattern: '^\d+(\.\d+)?$'
+    Deductible:
+      type: object
+      required:
+        - coverageCode
+        - amount
+      properties:
+        coverageCode:
+          type: string
+        amount:
+          type: string
+          pattern: '^\d+(\.\d+)?$'
+    Offer:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - insurerId
+        - insurerName
+        - premiumTotal
+        - currency
+        - installments
+        - coverages
+        - deductibles
+        - validUntil
+        - selectable
+        - unavailabilityReason
+      properties:
+        id:
+          type: string
+        insurerId:
+          type: string
+        insurerName:
+          type: string
+        premiumTotal:
+          type: string
+          pattern: '^\d+(\.\d+)?$'
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+        installments:
+          type: array
+          items:
+            $ref: '#/components/schemas/Installment'
+        coverages:
+          type: array
+          items:
+            $ref: '#/components/schemas/OfferCoverage'
+        deductibles:
+          type: array
+          items:
+            $ref: '#/components/schemas/Deductible'
+        validUntil:
+          type: string
+          format: date-time
+        selectable:
+          type: boolean
+        unavailabilityReason:
+          oneOf:
+            - $ref: '#/components/schemas/UnavailabilityReason'
+            - type: 'null'
+    OffersPage:
+      type: object
+      additionalProperties: false
+      required:
+        - revision
+        - serverTime
+        - items
+        - nextCursor
+      properties:
+        revision:
+          type: integer
+          minimum: 0
+        serverTime:
+          type: string
+          format: date-time
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Offer'
+        nextCursor:
+          type:
+            - string
+            - 'null'
+    FieldError:
+      type: object
+      additionalProperties: false
+      required:
+        - path
+        - message
+      properties:
+        path:
+          type: string
+        message:
+          type: string
+    Error:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+        - correlationId
+      properties:
+        code:
+          type: string
+          description: >-
+            Código seguro, como `VALIDATION_ERROR`, `UNAUTHENTICATED`, `FORBIDDEN`, `NOT_FOUND`,
+            `UNSUPPORTED_MEDIA_TYPE` ou `SERVICE_UNAVAILABLE`.
+        message:
+          type: string
+        correlationId:
+          type: string
+        fieldErrors:
+          type: array
+          items:
+            $ref: '#/components/schemas/FieldError'
+    ConflictError:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+        - correlationId
+      properties:
+        code:
+          type: string
+          enum:
+            - IDEMPOTENCY_CONFLICT
+            - VERSION_CONFLICT
+            - OFFER_EXPIRED
+            - VERSION_SUPERSEDED
+            - SELECTION_ALREADY_EXISTS
+            - QUOTE_ALREADY_SELECTED
+        message:
+          type: string
+        correlationId:
+          type: string

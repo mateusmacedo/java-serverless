@@ -15,6 +15,9 @@
     <packaging>pom</packaging>
 
     <modules>
+        <module>domain</module>
+        <module>api</module>
+        <module>functions</module>
     </modules>
 
     <!-- WHY: o e2e exige as stacks da plataforma, da provider-solution e da quote-solution implantadas no Floci -->
@@ -22,6 +25,7 @@
         <profile>
             <id>e2e</id>
             <modules>
+                <module>e2e</module>
             </modules>
         </profile>
     </profiles>

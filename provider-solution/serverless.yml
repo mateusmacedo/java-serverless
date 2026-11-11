@@ -1,0 +1,416 @@
+service: provider-solution
+
+frameworkVersion: "4"
+
+plugins:
+  - serverless-localstack
+
+# Parâmetros do §12 do desenho. As invariantes de tempo do §9 (timeout do worker, lease, visibilidade
+# das filas) são conferidas pelo ServerlessConfigurationTest, em provider-functions
+params:
+  default:
+    s3PathStyleAccess: "false"
+    # Fn::Sub: o ApiGatewayRestApi é o API Gateway desta stack, que atende os simuladores (§7)
+    providersBaseUrl: https://${ApiGatewayRestApi}.execute-api.${aws:region}.amazonaws.com/${sls:stage}
+    providerHttpTimeoutSeconds: 5
+    workerRetries: 2
+    retryBackoffMaxSeconds: 3
+    workerTimeoutSeconds: 25
+    enrichmentLeaseSeconds: 30
+    inflightTombstoneSeconds: 3600
+    enrichmentValiditySeconds: 900
+    offerValiditySeconds: 1800
+    enrichmentSimQuotaPerMinute: 30
+    alphaQuotaPerMinute: 30
+    betaQuotaPerMinute: 30
+    outboxRepublishAfterSeconds: 30
+    dlqMaxAttempts: 3
+    requestQueueVisibilityTimeoutSeconds: 150
+    requestQueueMaxReceiveCount: 3
+    reconcilerRate: rate(1 minute)
+  local:
+    awsEndpointUrl: http://floci:4566
+    s3PathStyleAccess: "true"
+    providersBaseUrl: http://floci:4566/restapis/${ApiGatewayRestApi}/local/_user_request_
+
+custom:
+  names:
+    queriesTable: ${self:service}-${sls:stage}-queries
+    simulatorsTable: ${self:service}-${sls:stage}-simulators
+    payloadsBucket: ${self:service}-${sls:stage}-payloads
+    enrichmentRequestsQueue: ${self:service}-${sls:stage}-enrichment-requests
+    enrichmentRequestsDeadLetterQueue: ${self:service}-${sls:stage}-enrichment-requests-dlq
+    insurerRequestsQueue: ${self:service}-${sls:stage}-insurer-requests
+    insurerRequestsDeadLetterQueue: ${self:service}-${sls:stage}-insurer-requests-dlq
+    streamFailuresQueue: ${self:service}-${sls:stage}-stream-failures
+    queryKeySecret: ${self:service}/${sls:stage}/query-key-secret
+    callbackSecret: ${self:service}/${sls:stage}/callback-secret
+  # Barramento da plataforma pela convenção de nomes, sem referência entre stacks (ADR 0013)
+  platformEventBus: platform-${sls:stage}-events
+  platformEventBusArn: arn:aws:events:${aws:region}:${aws:accountId}:event-bus/${self:custom.platformEventBus}
+  functionsPackage: functions/target/provider-functions-lambda.zip
+  functionsHandler: org.springframework.cloud.function.adapter.aws.FunctionInvoker::handleRequest
+  functionsMainClass: com.mmda.serverless.provider.functions.FunctionsApplication
+  localstack:
+    stages:
+      - local
+    host: http://localhost
+    edgePort: 4566
+    autostart: false
+
+provider:
+  name: aws
+  runtime: java21
+  region: us-east-1
+  stage: ${opt:stage, 'local'}
+  memorySize: 1024
+  timeout: 30
+  environment:
+    AWS_ENDPOINT_URL: ${param:awsEndpointUrl}
+    # O Serverless v4 exporta AWS_ENDPOINT_URL_S3 do LocalStack quando o serverless-localstack está ativo
+    AWS_ENDPOINT_URL_S3: ${param:awsEndpointUrl}
+    S3_PATH_STYLE_ACCESS: ${param:s3PathStyleAccess}
+    TABLE_NAME: ${self:custom.names.queriesTable}
+    PAYLOADS_BUCKET: ${self:custom.names.payloadsBucket}
+    EVENT_BUS_NAME: ${self:custom.platformEventBus}
+    QUERY_KEY_SECRET_ID: ${self:custom.names.queryKeySecret}
+    ENRICHMENT_REQUESTS_QUEUE_URL: !Ref EnrichmentRequestsQueue
+    INSURER_REQUESTS_QUEUE_URL: !Ref InsurerRequestsQueue
+    PROVIDER_HTTP_TIMEOUT_SECONDS: "${param:providerHttpTimeoutSeconds}"
+    WORKER_RETRIES: "${param:workerRetries}"
+    RETRY_BACKOFF_MAX_SECONDS: "${param:retryBackoffMaxSeconds}"
+    WORKER_TIMEOUT_SECONDS: "${param:workerTimeoutSeconds}"
+    ENRICHMENT_VALIDITY_SECONDS: "${param:enrichmentValiditySeconds}"
+    OUTBOX_REPUBLISH_AFTER_SECONDS: "${param:outboxRepublishAfterSeconds}"
+    ENRICHMENT_SIM_QUOTA_PER_MINUTE: "${param:enrichmentSimQuotaPerMinute}"
+    ALPHA_QUOTA_PER_MINUTE: "${param:alphaQuotaPerMinute}"
+    BETA_QUOTA_PER_MINUTE: "${param:betaQuotaPerMinute}"
+  # Papel das funções da provider; a Lambda dos simuladores tem papel próprio (SimulatorsRole)
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - dynamodb:ConditionCheckItem
+            - dynamodb:Query
+          Resource:
+            - !GetAtt QueriesTable.Arn
+            - !Join ["/", [!GetAtt QueriesTable.Arn, "index", "gsi2"]]
+        - Effect: Allow
+          Action: s3:PutObject
+          Resource: arn:aws:s3:::${self:custom.names.payloadsBucket}/raw/*
+        - Effect: Allow
+          Action: events:PutEvents
+          Resource: ${self:custom.platformEventBusArn}
+        - Effect: Allow
+          Action: secretsmanager:GetSecretValue
+          Resource: !Ref QueryKeySecret
+        # Reenvio adiado sem quota (§9) e destino de falha do stream da relay
+        - Effect: Allow
+          Action: sqs:SendMessage
+          Resource:
+            - !GetAtt EnrichmentRequestsQueue.Arn
+            - !GetAtt InsurerRequestsQueue.Arn
+            - !GetAtt StreamFailuresQueue.Arn
+
+package:
+  individually: true
+
+functions:
+  simulators:
+    handler: com.mmda.serverless.provider.simulators.StreamLambdaHandler::handleRequest
+    timeout: 29
+    role: SimulatorsRole
+    package:
+      artifact: simulators/target/provider-simulators-lambda.zip
+    environment:
+      SIMULATORS_TABLE_NAME: ${self:custom.names.simulatorsTable}
+      OFFER_VALIDITY_SECONDS: "${param:offerValiditySeconds}"
+    events:
+      - http:
+          path: sim/{proxy+}
+          method: any
+
+  enrichmentWorker:
+    handler: ${self:custom.functionsHandler}
+    timeout: ${param:workerTimeoutSeconds}
+    package:
+      artifact: ${self:custom.functionsPackage}
+    environment:
+      MAIN_CLASS: ${self:custom.functionsMainClass}
+      SPRING_CLOUD_FUNCTION_DEFINITION: enrichmentWorker
+      PROVIDERS_BASE_URL:
+        Fn::Sub: ${param:providersBaseUrl}
+    events:
+      - sqs:
+          arn: !GetAtt EnrichmentRequestsQueue.Arn
+          batchSize: 1
+          functionResponseType: ReportBatchItemFailures
+
+  insurerWorker:
+    handler: ${self:custom.functionsHandler}
+    timeout: ${param:workerTimeoutSeconds}
+    package:
+      artifact: ${self:custom.functionsPackage}
+    environment:
+      MAIN_CLASS: ${self:custom.functionsMainClass}
+      SPRING_CLOUD_FUNCTION_DEFINITION: insurerWorker
+      PROVIDERS_BASE_URL:
+        Fn::Sub: ${param:providersBaseUrl}
+    events:
+      - sqs:
+          arn: !GetAtt InsurerRequestsQueue.Arn
+          batchSize: 1
+          functionResponseType: ReportBatchItemFailures
+
+  outboxRelay:
+    handler: ${self:custom.functionsHandler}
+    timeout: 60
+    package:
+      artifact: ${self:custom.functionsPackage}
+    environment:
+      MAIN_CLASS: ${self:custom.functionsMainClass}
+      SPRING_CLOUD_FUNCTION_DEFINITION: outboxRelay
+    events:
+      # Lotes de 100 só no stream; retries limitados para um registro com erro não bloquear o shard (§7, §13)
+      - stream:
+          type: dynamodb
+          arn: !GetAtt QueriesTable.StreamArn
+          batchSize: 100
+          startingPosition: TRIM_HORIZON
+          maximumRetryAttempts: 3
+          bisectBatchOnFunctionError: true
+          functionResponseType: ReportBatchItemFailures
+          destinations:
+            onFailure:
+              arn: !GetAtt StreamFailuresQueue.Arn
+              type: sqs
+          filterPatterns:
+            - eventName:
+                - INSERT
+              dynamodb:
+                NewImage:
+                  type:
+                    S:
+                      - OUTBOX
+
+  reconciler:
+    handler: ${self:custom.functionsHandler}
+    timeout: 60
+    package:
+      artifact: ${self:custom.functionsPackage}
+    environment:
+      MAIN_CLASS: ${self:custom.functionsMainClass}
+      SPRING_CLOUD_FUNCTION_DEFINITION: reconciler
+    events:
+      - schedule:
+          method: scheduler
+          rate: ${param:reconcilerRate}
+          input:
+            maxItems: 100
+
+resources:
+  Resources:
+    QueriesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.names.queriesTable}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: pk
+            AttributeType: S
+          - AttributeName: sk
+            AttributeType: S
+          - AttributeName: gsi2pk
+            AttributeType: S
+          - AttributeName: gsi2sk
+            AttributeType: S
+        KeySchema:
+          - AttributeName: pk
+            KeyType: HASH
+          - AttributeName: sk
+            KeyType: RANGE
+        # Índice esparso do trabalho pendente: OUTBOX_PENDING, QUERY_IN_FLIGHT, QUERY_UNKNOWN (ADR 0015)
+        GlobalSecondaryIndexes:
+          - IndexName: gsi2
+            KeySchema:
+              - AttributeName: gsi2pk
+                KeyType: HASH
+              - AttributeName: gsi2sk
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE
+        TimeToLiveSpecification:
+          AttributeName: ttl
+          Enabled: true
+
+    SimulatorsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.names.simulatorsTable}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: pk
+            AttributeType: S
+        KeySchema:
+          - AttributeName: pk
+            KeyType: HASH
+        TimeToLiveSpecification:
+          AttributeName: ttl
+          Enabled: true
+
+    PayloadsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.names.payloadsBucket}
+
+    EnrichmentRequestsQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.names.enrichmentRequestsQueue}
+        VisibilityTimeout: ${param:requestQueueVisibilityTimeoutSeconds}
+        RedrivePolicy:
+          deadLetterTargetArn: !GetAtt EnrichmentRequestsDeadLetterQueue.Arn
+          maxReceiveCount: ${param:requestQueueMaxReceiveCount}
+
+    EnrichmentRequestsDeadLetterQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.names.enrichmentRequestsDeadLetterQueue}
+        MessageRetentionPeriod: 1209600
+
+    InsurerRequestsQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.names.insurerRequestsQueue}
+        VisibilityTimeout: ${param:requestQueueVisibilityTimeoutSeconds}
+        RedrivePolicy:
+          deadLetterTargetArn: !GetAtt InsurerRequestsDeadLetterQueue.Arn
+          maxReceiveCount: ${param:requestQueueMaxReceiveCount}
+
+    InsurerRequestsDeadLetterQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.names.insurerRequestsDeadLetterQueue}
+        MessageRetentionPeriod: 1209600
+
+    # Só destino de falha do stream da relay: aponta shard e faixa de sequência, sem consumidor (§9)
+    StreamFailuresQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.names.streamFailuresQueue}
+        MessageRetentionPeriod: 1209600
+
+    # source e detail-type dos pedidos estão no AsyncAPI da quote-solution
+    EnrichmentRequestedRule:
+      Type: AWS::Events::Rule
+      Properties:
+        EventBusName: ${self:custom.platformEventBus}
+        EventPattern:
+          source:
+            - mmda.quote
+          detail-type:
+            - EnrichmentRequested
+        Targets:
+          - Id: enrichment-requests
+            Arn: !GetAtt EnrichmentRequestsQueue.Arn
+
+    InsurerQuoteRequestedRule:
+      Type: AWS::Events::Rule
+      Properties:
+        EventBusName: ${self:custom.platformEventBus}
+        EventPattern:
+          source:
+            - mmda.quote
+          detail-type:
+            - InsurerQuoteRequested
+        Targets:
+          - Id: insurer-requests
+            Arn: !GetAtt InsurerRequestsQueue.Arn
+
+    EnrichmentRequestsQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref EnrichmentRequestsQueue
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: events.amazonaws.com
+              Action: sqs:SendMessage
+              Resource: !GetAtt EnrichmentRequestsQueue.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !GetAtt EnrichmentRequestedRule.Arn
+
+    InsurerRequestsQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref InsurerRequestsQueue
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: events.amazonaws.com
+              Action: sqs:SendMessage
+              Resource: !GetAtt InsurerRequestsQueue.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !GetAtt InsurerQuoteRequestedRule.Arn
+
+    QueryKeySecret:
+      Type: AWS::SecretsManager::Secret
+      Properties:
+        Name: ${self:custom.names.queryKeySecret}
+        GenerateSecretString:
+          PasswordLength: 48
+          ExcludePunctuation: true
+
+    # Assinatura dos callbacks (X-Signature), usada pela API de callbacks e pelo simCallbackSender (M3)
+    CallbackSecret:
+      Type: AWS::SecretsManager::Secret
+      Properties:
+        Name: ${self:custom.names.callbackSecret}
+        GenerateSecretString:
+          PasswordLength: 48
+          ExcludePunctuation: true
+
+    # A tabela dos simuladores é acessada só pela Lambda simulators (§2)
+    SimulatorsRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: simulators
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource: arn:aws:logs:${aws:region}:${aws:accountId}:log-group:/aws/lambda/${self:service}-${sls:stage}-simulators:*
+                - Effect: Allow
+                  Action:
+                    - dynamodb:GetItem
+                    - dynamodb:UpdateItem
+                  Resource: !GetAtt SimulatorsTable.Arn
+
+  Outputs:
+    SimulatorsRestApiId:
+      Value: !Ref ApiGatewayRestApi
