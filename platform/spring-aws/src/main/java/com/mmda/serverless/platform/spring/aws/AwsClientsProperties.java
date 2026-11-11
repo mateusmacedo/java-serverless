@@ -1,4 +1,4 @@
-package com.mmda.serverless.shared.aws;
+package com.mmda.serverless.platform.spring.aws;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;

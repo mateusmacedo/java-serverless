@@ -1,4 +1,4 @@
-package com.mmda.serverless.shared.aws;
+package com.mmda.serverless.platform.spring.aws;
 
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;

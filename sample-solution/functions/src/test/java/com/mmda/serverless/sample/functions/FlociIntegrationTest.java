@@ -6,7 +6,7 @@ import io.floci.testcontainers.FlociContainer;
  * Um único Floci por execução dos testes de integração do módulo.
  * <p>
  * WHY: endpoint, região e credenciais vão para as propriedades de sistema que o AWS SDK lê nas
- * cadeias padrão. Assim os testes passam pela autoconfiguração real do módulo shared, em vez de
+ * cadeias padrão. Assim os testes passam pela autoconfiguração real do módulo spring-aws, em vez de
  * clients montados à mão.
  */
 abstract class FlociIntegrationTest {

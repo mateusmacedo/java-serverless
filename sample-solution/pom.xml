@@ -6,8 +6,9 @@
 
     <parent>
         <groupId>com.mmda.serverless</groupId>
-        <artifactId>serverless-parent</artifactId>
+        <artifactId>spring-parent</artifactId>
         <version>0.1.0-SNAPSHOT</version>
+        <relativePath>../platform/spring-parent/pom.xml</relativePath>
     </parent>
 
     <artifactId>sample-solution</artifactId>
@@ -27,59 +28,4 @@
             </modules>
         </profile>
     </profiles>
-
-    <build>
-        <pluginManagement>
-            <plugins>
-                <plugin>
-                    <groupId>org.apache.maven.plugins</groupId>
-                    <artifactId>maven-failsafe-plugin</artifactId>
-                    <configuration>
-                        <systemPropertyVariables>
-                            <floci.image>${floci.image}</floci.image>
-                        </systemPropertyVariables>
-                    </configuration>
-                </plugin>
-                <plugin>
-                    <groupId>org.apache.maven.plugins</groupId>
-                    <artifactId>maven-dependency-plugin</artifactId>
-                    <executions>
-                        <execution>
-                            <!-- WHY: no build da IDE (m2e) o shared resolve para target/classes, uma pasta que o
-                                 copy-dependencies recusa (MDEP-187); o zip da Lambda sai do mvn package -->
-                            <?m2e ignore?>
-                            <id>copy-lambda-dependencies</id>
-                            <phase>package</phase>
-                            <goals>
-                                <goal>copy-dependencies</goal>
-                            </goals>
-                            <configuration>
-                                <includeScope>runtime</includeScope>
-                                <outputDirectory>${project.build.directory}/lib</outputDirectory>
-                            </configuration>
-                        </execution>
-                    </executions>
-                </plugin>
-                <plugin>
-                    <groupId>org.apache.maven.plugins</groupId>
-                    <artifactId>maven-assembly-plugin</artifactId>
-                    <executions>
-                        <execution>
-                            <id>lambda-zip</id>
-                            <phase>package</phase>
-                            <goals>
-                                <goal>single</goal>
-                            </goals>
-                            <configuration>
-                                <finalName>${project.artifactId}</finalName>
-                                <descriptors>
-                                    <descriptor>${project.basedir}/../src/assembly/lambda-zip.xml</descriptor>
-                                </descriptors>
-                            </configuration>
-                        </execution>
-                    </executions>
-                </plugin>
-            </plugins>
-        </pluginManagement>
-    </build>
 </project>

@@ -1,4 +1,4 @@
-package com.mmda.serverless.shared.aws;
+package com.mmda.serverless.platform.spring.aws;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

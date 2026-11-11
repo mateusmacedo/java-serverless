@@ -6,11 +6,13 @@
 
     <parent>
         <groupId>com.mmda.serverless</groupId>
-        <artifactId>serverless-parent</artifactId>
+        <artifactId>spring-parent</artifactId>
         <version>0.1.0-SNAPSHOT</version>
+        <relativePath>../spring-parent/pom.xml</relativePath>
     </parent>
 
-    <artifactId>shared</artifactId>
+    <!-- WHY: biblioteca da plataforma Spring; no Quarkus, os clients vêm das extensões do Quarkus Amazon Services -->
+    <artifactId>spring-aws</artifactId>
 
     <!-- WHY: os services do SDK são opcionais; cada módulo declara só os que usa e o client
          correspondente sobe por @ConditionalOnClass, mantendo o pacote de cada Lambda enxuto -->
