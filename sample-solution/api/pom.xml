@@ -47,7 +47,7 @@
         </dependency>
         <dependency>
             <groupId>com.atlassian.oai</groupId>
-            <artifactId>swagger-request-validator-mockmvc</artifactId>
+            <artifactId>openapi-request-validator-mockmvc</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>

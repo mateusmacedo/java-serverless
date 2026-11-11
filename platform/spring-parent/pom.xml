@@ -21,7 +21,7 @@
         <spring-cloud.version>2025.1.4</spring-cloud.version>
         <aws-sdk.version>2.57.12</aws-sdk.version>
         <aws-serverless-java-container.version>3.0.5</aws-serverless-java-container.version>
-        <swagger-request-validator.version>3.0.0</swagger-request-validator.version>
+        <openapi-request-validator.version>3.0.0</openapi-request-validator.version>
     </properties>
 
     <dependencyManagement>
@@ -38,8 +38,8 @@
             </dependency>
             <dependency>
                 <groupId>com.atlassian.oai</groupId>
-                <artifactId>swagger-request-validator-mockmvc</artifactId>
-                <version>${swagger-request-validator.version}</version>
+                <artifactId>openapi-request-validator-mockmvc</artifactId>
+                <version>${openapi-request-validator.version}</version>
             </dependency>
             <!-- WHY: cada service do SDK traz apache-client e netty-nio-client por padrão; o spring-aws usa
                  só o AwsCrtHttpClient (recomendado pela AWS para Lambda), então os outros saem do pacote -->

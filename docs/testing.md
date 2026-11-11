@@ -40,7 +40,7 @@ direto a sobrecarga com o request pronto, então os testes deles usam o modo est
 ## Contrato
 
 `RequestControllerContractTest` confere requisições e respostas do controller contra o
-[OpenAPI](api/openapi.yaml), com o `swagger-request-validator-mockmvc`. Nos casos `400` e `415` a
+[OpenAPI](api/openapi.yaml), com o `openapi-request-validator-mockmvc`. Nos casos `400` e `415` a
 requisição é inválida de propósito, então só a resposta é conferida.
 
 O teste pega divergência de verdade: com a resposta `415` removida do OpenAPI, ele falha com
@@ -126,7 +126,7 @@ As propriedades `e2e.endpoint` (padrão `http://localhost:4566`) e `e2e.stage` (
 ## Limites conhecidos
 
 - A resposta `500` da API não tem teste.
-- O suporte do `swagger-request-validator` ao OpenAPI 3.1 é parcial; o contrato atual passou, mas
+- O suporte do `openapi-request-validator` ao OpenAPI 3.1 é parcial; o contrato atual passou, mas
   recursos específicos do 3.1 podem não ser validados.
 - O formato da mensagem do SNS é conferido só no teste de integração, onde há um assinante SQS; a
   stack do exemplo não tem assinante.
