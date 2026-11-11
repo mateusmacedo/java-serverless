@@ -22,6 +22,9 @@
         <aws-sdk.version>2.57.12</aws-sdk.version>
         <aws-serverless-java-container.version>3.0.5</aws-serverless-java-container.version>
         <openapi-request-validator.version>3.0.0</openapi-request-validator.version>
+        <!-- WHY: o mesmo awscrt.version do AWS SDK acima; fixado para o jar completo dos testes e os jars
+             Linux do zip terem a mesma versão. Ao subir o SDK, confira o awscrt.version do aws-sdk-java-pom -->
+        <aws-crt.version>0.50.0</aws-crt.version>
     </properties>
 
     <dependencyManagement>
@@ -40,6 +43,11 @@
                 <groupId>com.atlassian.oai</groupId>
                 <artifactId>openapi-request-validator-mockmvc</artifactId>
                 <version>${openapi-request-validator.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>software.amazon.awssdk.crt</groupId>
+                <artifactId>aws-crt</artifactId>
+                <version>${aws-crt.version}</version>
             </dependency>
             <!-- WHY: cada service do SDK traz apache-client e netty-nio-client por padrão; o spring-aws usa
                  só o AwsCrtHttpClient (recomendado pela AWS para Lambda), então os outros saem do pacote -->
@@ -168,7 +176,36 @@
                             </goals>
                             <configuration>
                                 <includeScope>runtime</includeScope>
+                                <excludeArtifactIds>aws-crt</excludeArtifactIds>
                                 <outputDirectory>${project.build.directory}/lib</outputDirectory>
+                            </configuration>
+                        </execution>
+                        <!-- WHY: o aws-crt completo tem 22 MB de bibliotecas nativas de todas as plataformas; a Lambda
+                             só precisa das de Linux. Vão as duas arquiteturas porque o Floci roda o container na
+                             arquitetura do host (arm64 num Mac com Apple Silicon) -->
+                        <execution>
+                            <?m2e ignore?>
+                            <id>copy-lambda-crt-natives</id>
+                            <phase>package</phase>
+                            <goals>
+                                <goal>copy</goal>
+                            </goals>
+                            <configuration>
+                                <outputDirectory>${project.build.directory}/lib</outputDirectory>
+                                <artifactItems>
+                                    <artifactItem>
+                                        <groupId>software.amazon.awssdk.crt</groupId>
+                                        <artifactId>aws-crt</artifactId>
+                                        <version>${aws-crt.version}</version>
+                                        <classifier>linux-x86_64</classifier>
+                                    </artifactItem>
+                                    <artifactItem>
+                                        <groupId>software.amazon.awssdk.crt</groupId>
+                                        <artifactId>aws-crt</artifactId>
+                                        <version>${aws-crt.version}</version>
+                                        <classifier>linux-aarch_64</classifier>
+                                    </artifactItem>
+                                </artifactItems>
                             </configuration>
                         </execution>
                     </executions>

@@ -21,6 +21,9 @@
         <quarkus.platform.version>3.40.1.2</quarkus.platform.version>
         <assertj.version>3.27.7</assertj.version>
         <openapi-request-validator.version>3.0.0</openapi-request-validator.version>
+        <!-- WHY: o awscrt.version do AWS SDK do BOM do Quarkus Amazon Services; fixado para o jar completo dos
+             testes e os jars Linux do zip terem a mesma versão. Ao subir o Quarkus, confira esse valor -->
+        <aws-crt.version>0.48.4</aws-crt.version>
     </properties>
 
     <dependencyManagement>
@@ -36,6 +39,11 @@
                 <groupId>com.atlassian.oai</groupId>
                 <artifactId>openapi-request-validator-restassured</artifactId>
                 <version>${openapi-request-validator.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>software.amazon.awssdk.crt</groupId>
+                <artifactId>aws-crt</artifactId>
+                <version>${aws-crt.version}</version>
             </dependency>
             <dependency>
                 <groupId>${quarkus.platform.group-id}</groupId>
@@ -72,9 +80,44 @@
                         </execution>
                     </executions>
                 </plugin>
+                <!-- WHY: o aws-crt completo tem 22 MB de bibliotecas nativas de todas as plataformas; a Lambda
+                     só precisa das de Linux. Vão as duas arquiteturas porque o Floci roda o container na
+                     arquitetura do host (arm64 num Mac com Apple Silicon) -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-dependency-plugin</artifactId>
+                    <executions>
+                        <execution>
+                            <?m2e ignore?>
+                            <id>copy-lambda-crt-natives</id>
+                            <phase>package</phase>
+                            <goals>
+                                <goal>copy</goal>
+                            </goals>
+                            <configuration>
+                                <outputDirectory>${project.build.directory}/lambda-crt</outputDirectory>
+                                <artifactItems>
+                                    <artifactItem>
+                                        <groupId>software.amazon.awssdk.crt</groupId>
+                                        <artifactId>aws-crt</artifactId>
+                                        <version>${aws-crt.version}</version>
+                                        <classifier>linux-x86_64</classifier>
+                                    </artifactItem>
+                                    <artifactItem>
+                                        <groupId>software.amazon.awssdk.crt</groupId>
+                                        <artifactId>aws-crt</artifactId>
+                                        <version>${aws-crt.version}</version>
+                                        <classifier>linux-aarch_64</classifier>
+                                    </artifactItem>
+                                </artifactItems>
+                            </configuration>
+                        </execution>
+                    </executions>
+                </plugin>
                 <!-- WHY: a extensão de Lambda sempre gera target/function.zip, e o Serverless envia os artefatos
                      ao bucket de deploy pelo nome do arquivo: dois módulos Quarkus na mesma stack se sobrescreveriam.
-                     O módulo declara o plugin depois do quarkus-maven-plugin, para rodar após o build do Quarkus -->
+                     O zip renomeado troca o aws-crt completo pelos jars Linux, se o módulo usar CRT. O módulo
+                     declara quarkus-maven-plugin, maven-dependency-plugin e maven-antrun-plugin nessa ordem -->
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-antrun-plugin</artifactId>
@@ -87,9 +130,19 @@
                                 <goal>run</goal>
                             </goals>
                             <configuration>
-                                <target>
-                                    <copy file="${project.build.directory}/function.zip"
-                                          tofile="${project.build.directory}/${project.artifactId}-lambda.zip"/>
+                                <target xmlns:if="ant:if">
+                                    <condition property="lambda.crt.present">
+                                        <resourcecount when="greater" count="0">
+                                            <zipfileset src="${project.build.directory}/function.zip"
+                                                        includes="lib/software.amazon.awssdk.crt.aws-crt-*.jar"/>
+                                        </resourcecount>
+                                    </condition>
+                                    <zip destfile="${project.build.directory}/${project.artifactId}-lambda.zip">
+                                        <zipfileset src="${project.build.directory}/function.zip"
+                                                    excludes="lib/software.amazon.awssdk.crt.aws-crt-*.jar"/>
+                                        <zipfileset dir="${project.build.directory}/lambda-crt" prefix="lib"
+                                                    if:set="lambda.crt.present"/>
+                                    </zip>
                                 </target>
                             </configuration>
                         </execution>
