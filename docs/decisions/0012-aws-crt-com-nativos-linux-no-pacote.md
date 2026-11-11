@@ -7,9 +7,9 @@
 ## Contexto
 
 O [ADR 0005](0005-clients-sincronos-com-crt.md) manteve o jar completo do `aws-crt` no pacote de cada
-Lambda para funcionar em x86_64 e arm64 sem trocar dependência. Esse jar tem cerca de 22 MB, quase
+Lambda para funcionar em x86_64 e arm64 sem trocar dependência. Esse jar tem cerca de 22 MiB, quase
 todos de bibliotecas nativas de plataformas que a Lambda não usa (macOS, Windows, musl, ARM de 32
-bits). A AWS publica jars por plataforma, de 2,7 MB, com as mesmas classes Java e a biblioteca nativa
+bits). A AWS publica jars por plataforma, de 2,7 MiB, com as mesmas classes Java e a biblioteca nativa
 de uma plataforma só.
 
 Duas restrições pesam:
@@ -33,8 +33,8 @@ Duas restrições pesam:
 
 ## Consequências
 
-- Os pacotes encolheram cerca de 17 MB cada: `api` de 56 para 38 MB, `functions` de 61 para 43 MB,
-  `receipt-api` de 49 para 32 MB e `receipt-functions` de 38 para 21 MB.
+- Os pacotes encolheram cerca de 17 MiB cada: `api` de 56 para 38 MiB, `functions` de 61 para 43 MiB,
+  `receipt-api` de 49 para 32 MiB e `receipt-functions` de 38 para 21 MiB.
 - Os pacotes continuam funcionando em x86_64 e arm64. O E2E das duas soluções passou no Floci em
   x86_64; o caminho arm64 não foi exercitado nesta máquina.
 - As classes Java do CRT aparecem duas vezes no pacote, uma em cada jar Linux. São idênticas, então

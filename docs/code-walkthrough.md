@@ -34,6 +34,10 @@ Por isso a leitura começa pelo `serverless.yml`, não por uma classe Java.
 | Cada passo | `sample-solution/functions/src/main/java/com/mmda/serverless/sample/functions/` (`ValidateFunction`, `PersistFunction`, `NotifyFunction` e `ReprocessFunction`) |
 | De onde vêm os clients da AWS | `platform/spring-aws/src/main/java/com/mmda/serverless/platform/spring/aws/AwsClientsAutoConfiguration.java`, ativada por `platform/spring-aws/src/main/resources/META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports` |
 | Nomes de bucket, tabela e demais recursos | `application.yml` de cada módulo, que lê as variáveis de ambiente definidas no `serverless.yml` |
+| Lambdas, gatilho e máquina de estado da `receipt-solution` | `receipt-solution/serverless.yml`, blocos `functions:` e `stepFunctions:` |
+| Onde a API da `receipt-solution` responde | `receipt-solution/api/src/main/java/com/mmda/serverless/receipt/api/ReceiptResource.java` |
+| Os passos da `receipt-solution` | `receipt-solution/functions/src/main/java/com/mmda/serverless/receipt/functions/` (`IssueReceiptHandler` e `AnnounceReceiptHandler`) |
+| Configuração dos módulos Quarkus | `application.properties` de `receipt-solution/api` e de `receipt-solution/functions` |
 
 ## Do build ao deploy
 
@@ -42,7 +46,7 @@ mvn package
   ├─ api/target/api-lambda.zip              classes + lib/  (Spring MVC + SDKs s3 e sfn)
   └─ functions/target/functions-lambda.zip  classes + lib/  (Spring Cloud Function + 8 SDKs)
 
-pnpm sls deploy --stage local   (lê sample-solution/serverless.yml)
+pnpm deploy:sample   (lê sample-solution/serverless.yml)
   │
   ├─ functions:      5 Lambdas
   │     api        ← api-lambda.zip        handler: StreamLambdaHandler::handleRequest
@@ -56,6 +60,27 @@ pnpm sls deploy --stage local   (lê sample-solution/serverless.yml)
   ├─ resources:      S3, DynamoDB, SQS (dlq e audit), SNS, EventBridge, SSM e Secrets Manager
   └─ environment:    BUCKET_NAME, TABLE_NAME, STATE_MACHINE_ARN... injetadas em todas as Lambdas
 ```
+
+A `receipt-solution` segue o mesmo roteiro, com os zips que o `quarkus-parent` monta:
+
+```text
+mvn package
+  ├─ receipt-solution/api/target/receipt-api-lambda.zip              (Quarkus REST)
+  └─ receipt-solution/functions/target/receipt-functions-lambda.zip  (issue e announce)
+
+pnpm deploy:receipt   (lê receipt-solution/serverless.yml; a sample precisa estar implantada)
+  │
+  ├─ functions:      3 Lambdas, todas com handler QuarkusStreamHandler::handleRequest
+  │     api        ← receipt-api-lambda.zip
+  │     issue      ┐ receipt-functions-lambda.zip
+  │     announce   ┘   (a variável QUARKUS_LAMBDA_HANDLER diz qual handler cada uma executa)
+  ├─ events:         API Gateway GET /receipts/{requestId} e POST /receipts → api
+  ├─ stepFunctions:  máquina receipt-flow Issue → Announce, iniciada por uma regra no barramento da sample
+  ├─ resources:      DynamoDB receipts e EventBridge do próprio barramento
+  └─ environment:    TABLE_NAME, EVENT_BUS_NAME e STATE_MACHINE_ARN
+```
+
+O `pnpm deploy:local` faz o `mvn package` e os dois deploys, nessa ordem.
 
 ## Como a Lambda `api` sobe e registra os componentes
 
@@ -146,7 +171,9 @@ Step Functions "request-flow"       ← serverless.yml: stepFunctions
   ├─ Persist  → Lambda persist  → PersistFunction.apply  → grava no DynamoDB
   ├─ Notify   → Lambda notify   → NotifyFunction.apply
   │               ├─ publica no SNS
-  │               └─ PutEvents no EventBridge → regra → fila SQS audit
+  │               └─ PutEvents no EventBridge
+  │                    ├─ regra da sample → fila SQS audit
+  │                    └─ regra da receipt-solution → máquina receipt-flow (ver a última parte)
   └─ erro em qualquer passo (Catch)
         → SendToDeadLetterQueue → fila SQS dlq → RequestFailed (execução FAILED)
 

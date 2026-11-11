@@ -60,8 +60,9 @@ juntos.
 ## Integração com Floci
 
 Cada módulo sobe um único Floci (`floci/floci:2.4.0`) pelo módulo oficial
-[`testcontainers-floci`](https://github.com/floci-io/testcontainers-floci), na linha 2.x compatível com o
-Testcontainers 2.0 do Spring Boot 4.0. A classe base `FlociIntegrationTest` passa endpoint, região e
+[`testcontainers-floci`](https://github.com/floci-io/testcontainers-floci), artefato
+`testcontainers-floci-aws` 2.17.0, sobre o Testcontainers 2.0.5 que o Spring Boot 4.0 e o Quarkus
+3.40 usam. A classe base `FlociIntegrationTest` passa endpoint, região e
 credenciais para as propriedades de sistema do AWS SDK (`aws.endpointUrl`, `aws.region`,
 `aws.accessKeyId`, `aws.secretAccessKey`). Assim os testes usam a autoconfiguração real do `spring-aws`.
 
@@ -76,7 +77,9 @@ Cada teste cria os recursos de que precisa antes do contexto Spring, com os mesm
 Na `receipt-solution`, o `ReceiptFunctionsIT` é um `@QuarkusTest` com o recurso de teste
 `FlociResource`, que sobe o Floci, define as mesmas propriedades de sistema e cria tabela, barramento
 e uma fila de captura antes de o Quarkus iniciar. Os clients do Quarkus Amazon Services chegam ao
-Floci pela cadeia padrão do SDK, sem `endpoint-override`, como na Lambda.
+Floci pela cadeia padrão do SDK, sem `endpoint-override`, como na Lambda. O `receipt-api` tem o
+próprio `FlociResource`, que cria a tabela e uma máquina de estado de um passo para o
+`ReceiptApiFlociIT`.
 
 | Classe | O que cobre |
 |---|---|

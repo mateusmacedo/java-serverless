@@ -29,10 +29,10 @@ acionam por eventos: a `receipt-solution` (Quarkus) reage ao que a `sample-solut
 | Spring Boot | 4.0.9 |
 | Spring Cloud / Spring Cloud Function | 2025.1.4 / 5.0.5 |
 | aws-serverless-java-container-springboot4 | 3.0.5 |
-| Quarkus (linha LTS) / Quarkus Amazon Services | 3.40.1.2 |
+| Quarkus, linha LTS (plataforma e BOMs) / extensões do Quarkus Amazon Services | 3.40.1.2 / 3.22.1 |
 | Jackson (Spring / Quarkus) | 3.1.7 / 2.21.8 |
 | AWS SDK for Java v2, clients síncronos com CRT (Spring / Quarkus) | 2.57.12 / 2.54.13 |
-| Testcontainers / testcontainers-floci | 2.0.5 / 2.17.0 |
+| Testcontainers / testcontainers-floci-aws | 2.0.5 / 2.17.0 |
 | Serverless Framework | 4.46.0 |
 | serverless-step-functions / serverless-localstack / serverless-offline | 3.31.2 / 1.4.0 / 14.8.4 |
 | Floci | 2.4.0 |
@@ -42,10 +42,10 @@ acionam por eventos: a `receipt-solution` (Quarkus) reage ao que a `sample-solut
 ```text
 compose.yaml            Floci na porta 4566, com acesso ao Docker para executar as Lambdas
 package.json            Serverless Framework e plugins (pnpm)
-pom.xml                 POM raiz neutro: Java 21, versões de plugins e testcontainers-floci
+pom.xml                 POM raiz neutro: Java 21, versões de plugins e testcontainers-floci-aws
 platform/
   spring-parent/        Parent das soluções Spring: Spring Boot, Spring Cloud, AWS SDK, exclusões de clients HTTP e zip das Lambdas
-  quarkus-parent/       Parent das soluções Quarkus: Quarkus LTS e Quarkus Amazon Services
+  quarkus-parent/       Parent das soluções Quarkus: Quarkus LTS, Quarkus Amazon Services e zip por módulo
   spring-aws/           Spring: autoconfiguração dos clients do AWS SDK v2 (cada client sobe se o SDK estiver no módulo)
 sample-solution/        Spring
   serverless.yml        Lambdas, API, máquina de estado e recursos do exemplo
@@ -81,7 +81,7 @@ mvn -B package
 O `mvn package` gera os zips das Lambdas. Os módulos Spring têm as classes na raiz e as dependências
 em `lib/`: `sample-solution/api/target/api-lambda.zip` e
 `sample-solution/functions/target/functions-lambda.zip`. Nos módulos Quarkus, a extensão de Lambda
-gera o `function.zip`, e o build copia para um nome único por módulo:
+gera o `function.zip`, e o build monta a partir dele um zip com nome único por módulo:
 `receipt-solution/api/target/receipt-api-lambda.zip` e
 `receipt-solution/functions/target/receipt-functions-lambda.zip`.
 
@@ -220,7 +220,7 @@ aws configure set aws_secret_access_key test --profile localstack
 - Os parâmetros de ambiente (`params`) do `serverless.yml` existem só para o stage `local`.
 - O `pnpm-workspace.yaml` nega os scripts de instalação de `serverless`, `aws-sdk`, `es5-ext` e
   `esbuild`; nenhum deles é necessário para o uso atual.
-- Os pacotes das Lambdas têm entre 21 e 43 MB. O `aws-crt` entra só com os nativos de Linux, para
+- Os pacotes das Lambdas têm entre 21 e 43 MiB. O `aws-crt` entra só com os nativos de Linux, para
   x86_64 e arm64; os testes usam o jar completo, com os nativos de todas as plataformas
   ([ADR 0012](docs/decisions/0012-aws-crt-com-nativos-linux-no-pacote.md)).
 - O EventBridge Scheduler dispara o `reprocess` no Floci a cada 5 minutos (observado nos logs da

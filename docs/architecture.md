@@ -77,15 +77,15 @@ As Lambdas `api`, `validate`, `persist`, `notify` e `reprocess` da parte de cima
 
 | Módulo | Empacotamento | Responsabilidade |
 |---|---|---|
-| `serverless-parent` (raiz) | `pom` | Neutro: Java 21, versões e configuração dos plugins Maven e `testcontainers-floci` ([ADR 0010](decisions/0010-raiz-neutra-e-parents-por-framework.md)) |
+| `serverless-parent` (raiz) | `pom` | Neutro: Java 21, versões e configuração dos plugins Maven e `testcontainers-floci-aws` ([ADR 0010](decisions/0010-raiz-neutra-e-parents-por-framework.md)) |
 | `platform/spring-parent` | `pom` | Importa os BOMs do Spring Boot 4.0.9, do AWS SDK 2.57.12 e do Spring Cloud 2025.1.4; exclui `apache-client` e `netty-nio-client` de cada service do SDK; define o empacotamento em zip para Lambda, herdado pelo módulo que declarar `maven-dependency-plugin` e `maven-assembly-plugin` |
-| `platform/quarkus-parent` | `pom` | Importa os BOMs do Quarkus 3.40.1.2 e do Quarkus Amazon Services (AWS SDK 2.54.13) e configura o `quarkus-maven-plugin` |
+| `platform/quarkus-parent` | `pom` | Importa os BOMs do Quarkus 3.40.1.2 e do Quarkus Amazon Services (extensões 3.22.1, AWS SDK 2.54.13); configura o `quarkus-maven-plugin` e monta o `<artifactId>-lambda.zip` de cada módulo, com o `aws-crt` só nos jars Linux; fixa versões fora do BOM (`aws-crt`, AssertJ e `openapi-request-validator-restassured`) |
 | `platform/spring-aws` | `jar` | Só para soluções Spring: autoconfiguração dos clients síncronos do SDK, cada um com o próprio `AwsCrtHttpClient` e criado só quando o SDK correspondente está no classpath ([ADR 0005](decisions/0005-clients-sincronos-com-crt.md)) |
 | `sample-solution` | `pom` | Herda do `spring-parent`; agrega `api` e `functions` e, com `-Pe2e`, o `e2e` |
 | `sample-solution/api` | `jar` + zip | Lambda HTTP com Spring MVC via `aws-serverless-java-container-springboot4` |
 | `sample-solution/functions` | `jar` + zip | Lambdas dos passos e do reprocessamento com Spring Cloud Function |
 | `sample-solution/e2e` | `jar`, só com testes | Testes ponta a ponta contra a stack implantada; entra no build apenas com o perfil `-Pe2e` ([Testes](testing.md)) |
-| `receipt-solution` | `pom` | Herda do `quarkus-parent`; agrega `functions` e, com `-Pe2e`, o `e2e` |
+| `receipt-solution` | `pom` | Herda do `quarkus-parent`; agrega `api` e `functions` e, com `-Pe2e`, o `e2e` |
 | `receipt-solution/api` (`receipt-api`) | `jar` + `receipt-api-lambda.zip` | Lambda HTTP com Quarkus REST via `quarkus-amazon-lambda-rest`: consulta e emissão manual de comprovantes |
 | `receipt-solution/functions` (`receipt-functions`) | `jar` + `receipt-functions-lambda.zip` | Lambdas `issue` e `announce` com `quarkus-amazon-lambda`; clients do Quarkus Amazon Services com `aws-crt` |
 | `receipt-solution/e2e` (`receipt-e2e`) | `jar`, só com testes | Teste ponta a ponta entre as duas soluções; exige as duas stacks implantadas |
@@ -139,6 +139,7 @@ Declarados em `sample-solution/serverless.yml`. Os nomes seguem o padrão
 | `MaxPayloadParameter` | `AWS::SSM::Parameter` | `/sample-solution/<stage>/max-payload-bytes` | Limite de tamanho do payload, `4096` bytes |
 | `SigningSecret` | `AWS::SecretsManager::Secret` | `sample-solution/<stage>/signing-key` | Chave HMAC gerada pelo próprio Secrets Manager (32 caracteres) |
 | Agendamento do `reprocess` | `AWS::Scheduler::Schedule` | gerado pelo Serverless | Aciona o `reprocess` a cada 5 minutos com `{"maxMessages":10}` |
+| API REST, gerada pelo Serverless | `AWS::ApiGateway::RestApi` | nome `<stage>-sample-solution` | Rota `POST /requests` para a Lambda `api` |
 
 Declarados em `receipt-solution/serverless.yml`, com o padrão `receipt-solution-<stage>-<sufixo>`:
 
@@ -203,8 +204,9 @@ api-lambda.zip / functions-lambda.zip
 No Quarkus, as extensões de Lambda geram o `function.zip` no mesmo formato, com as classes que o
 Quarkus produz no build. O nome é fixo na extensão, e o Serverless envia os artefatos ao bucket de
 deploy pelo nome do arquivo: com dois módulos Quarkus na mesma stack, um zip sobrescreveria o outro.
-Por isso o `quarkus-parent` copia o zip para `<artifactId>-lambda.zip`, e o `serverless.yml` aponta
-para essa cópia.
+Por isso o `quarkus-parent` monta, a partir do `function.zip`, um zip novo chamado
+`<artifactId>-lambda.zip`, já com a troca do `aws-crt` descrita abaixo, e o `serverless.yml` aponta
+para ele.
 
 ```text
 receipt-api-lambda.zip / receipt-functions-lambda.zip
@@ -222,19 +224,21 @@ continuam com o jar completo ([ADR 0012](decisions/0012-aws-crt-com-nativos-linu
 
 ```mermaid
 flowchart LR
-    dev([Desenvolvedor]) -->|pnpm sls deploy --stage local| sls[Serverless Framework v4 e serverless-localstack]
-    sls -->|CloudFormation em localhost:4566| floci[Floci]
+    dev([Desenvolvedor]) -->|pnpm deploy:local| sls[Serverless Framework v4 e serverless-localstack]
+    sls -->|CloudFormation em localhost:4566, sample e depois receipt| floci[Floci]
     floci -->|socket do Docker| lambdas[Containers das Lambdas - imagem java 21]
     lambdas -->|AWS_ENDPOINT_URL floci:4566| floci
-    dev -->|pnpm sls offline --stage local| offline[serverless-offline na porta 3000]
+    dev -->|pnpm sls offline --stage local, em sample-solution| offline[serverless-offline na porta 3000]
     offline -->|container na rede floci| apiC[Lambda api]
     apiC -->|floci:4566| floci
 ```
 
 - O Floci cria um container por Lambda a partir da imagem oficial `public.ecr.aws/lambda/java:21` e
   injeta `AWS_ENDPOINT_URL=http://floci:4566` por causa de `FLOCI_HOSTNAME=floci` no `compose.yaml`.
-- O `serverless-offline` executa só as Lambdas e a rota HTTP; a máquina de estado e os recursos
-  continuam no Floci, então ele depende do deploy local.
+- O `pnpm deploy:local` empacota os módulos e implanta a `sample-solution` antes da
+  `receipt-solution`, porque a regra que aciona a receipt fica no barramento da sample.
+- O `serverless-offline` só está configurado na `sample-solution`. Ele executa só as Lambdas e a rota
+  HTTP; a máquina de estado e os recursos continuam no Floci, então ele depende do deploy local.
 - Decisão sobre o emulador e os plugins: [ADR 0001](decisions/0001-serverless-framework-e-floci.md).
 
 ## Permissões
