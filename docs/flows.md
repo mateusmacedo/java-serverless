@@ -1,7 +1,8 @@
 # Fluxos
 
-Como uma requisição percorre a `sample-solution`. Os componentes estão descritos em
-[Arquitetura](architecture.md); os formatos das mensagens, no [AsyncAPI](events/asyncapi.yaml).
+Como uma requisição percorre a `sample-solution` e como o resultado aciona a `receipt-solution`. Os
+componentes estão descritos em [Arquitetura](architecture.md); os formatos das mensagens, no
+[AsyncAPI da sample](events/asyncapi.yaml) e no [da receipt](events/receipt-solution.asyncapi.yaml).
 
 ## Máquina de estado `request-flow`
 
@@ -119,6 +120,67 @@ A nova execução recomeça do `Validate`, com `signature` e `payloadBytes` limp
 sempre falha é reiniciado duas vezes e descartado na terceira tentativa
 ([ADR 0007](decisions/0007-dlq-e-reprocessamento.md)).
 
+## Integração com a receipt-solution
+
+A `receipt-solution`, em Quarkus, reage ao mesmo `RequestCompleted`. Uma regra que ela cria no
+barramento da `sample-solution` inicia a máquina de estado `receipt-flow` direto, sem Lambda no meio
+([ADR 0011](decisions/0011-integracao-entre-solucoes-por-eventbridge.md)).
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant N as Lambda notify (sample, Spring)
+    participant EB as EventBridge sample events
+    participant RSFN as Step Functions receipt-flow
+    participant I as Lambda issue (receipt, Quarkus)
+    participant RDDB as DynamoDB receipts
+    participant A as Lambda announce (receipt, Quarkus)
+    participant REB as EventBridge receipt events
+    N->>EB: PutEvents RequestCompleted
+    EB->>RSFN: regra da receipt-solution inicia a execução com o evento
+    RSFN->>I: detail do evento (InputPath $.detail)
+    I->>RDDB: PutItem se requestId ainda não existe
+    alt evento repetido
+        RDDB-->>I: ConditionalCheckFailed
+        I->>RDDB: GetItem com leitura consistente
+    end
+    I-->>RSFN: Receipt
+    RSFN->>A: Receipt
+    A->>REB: PutEvents ReceiptIssued
+    A-->>RSFN: Receipt
+```
+
+O EventBridge entrega cada evento pelo menos uma vez, e o alvo nativo não deixa escolher o nome da
+execução. Por isso o `issue` é idempotente: um evento repetido devolve o comprovante já emitido, com o
+mesmo `issuedAt`. Os dois passos têm 2 novas tentativas, com intervalo inicial de 2 segundos. A
+`sample-solution` não sabe que a `receipt-solution` existe: o contrato entre as duas é o evento.
+
+## API da receipt-solution
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor C as Cliente
+    participant GW as API Gateway da receipt
+    participant API as Lambda api (Quarkus REST)
+    participant RDDB as DynamoDB receipts
+    participant RSFN as Step Functions receipt-flow
+    C->>GW: GET /receipts/requestId
+    GW->>API: evento proxy
+    API->>RDDB: GetItem com leitura consistente
+    API-->>C: 200 com o comprovante ou 404
+    C->>GW: POST /receipts com requestId, signature e payloadBytes
+    GW->>API: evento proxy
+    API->>RSFN: StartExecution com detail igual ao corpo
+    API-->>C: 202 com requestId e executionArn
+    Note over RSFN: segue igual ao caminho do evento: issue e depois announce
+```
+
+A emissão manual entra na mesma máquina e no mesmo formato do evento, então reaproveita o `issue`
+idempotente: emitir de novo para um `requestId` que já tem comprovante devolve o comprovante
+existente e publica `ReceiptIssued` mais uma vez. Os contratos estão no
+[OpenAPI da receipt](api/receipt-solution.openapi.yaml).
+
 ## Onde cada erro termina
 
 | Situação | Resultado | Onde observar |
@@ -130,3 +192,8 @@ sempre falha é reiniciado duas vezes e descartado na terceira tentativa
 | Payload vazio ou acima de 4096 bytes | Execução `FAILED` e mensagem na DLQ | Histórico da execução e fila `dlq` |
 | Erro em `persist` ou `notify` | Execução `FAILED` e mensagem na DLQ | Histórico da execução e fila `dlq` |
 | Falha repetida após 3 tentativas | Mensagem descartada | Log da Lambda `reprocess` (`Discarding request ...`) |
+| Erro em `issue` ou `announce` (receipt-solution) | 2 novas tentativas; depois, execução `FAILED`, sem DLQ no exemplo | Histórico da execução `receipt-flow` |
+| `RequestCompleted` entregue mais de uma vez | Mesmo comprovante; o `announce` pode publicar `ReceiptIssued` de novo | Tabela `receipts` e barramento da receipt-solution |
+| `GET /receipts/{requestId}` sem comprovante | `404` sem corpo | Resposta HTTP |
+| `POST /receipts` com campo ausente ou `payloadBytes` menor que 1 | `400` com a lista de violações, sem iniciar execução | Resposta HTTP |
+| `POST /receipts` com `Content-Type` diferente de `application/json` | `415` sem corpo | Resposta HTTP |

@@ -1,8 +1,9 @@
 # Guia: como o código sobe e por onde a requisição passa
 
-Este guia é um roteiro de leitura do código da `sample-solution`. Ele explica onde cada Lambda
-começa, como os componentes são registrados e por onde uma requisição passa, com os arquivos
-envolvidos em cada etapa.
+Este guia é um roteiro de leitura do código da `sample-solution`, em Spring. Ele explica onde cada
+Lambda começa, como os componentes são registrados e por onde uma requisição passa, com os arquivos
+envolvidos em cada etapa. A [última parte](#como-as-lambdas-da-receipt-solution-sobem-quarkus) mostra
+o mesmo para a `receipt-solution`, em Quarkus.
 
 Para a referência de componentes e recursos, veja [Arquitetura](architecture.md). Para os diagramas
 de execução em Mermaid, veja [Fluxos](flows.md).
@@ -31,7 +32,7 @@ Por isso a leitura começa pelo `serverless.yml`, não por uma classe Java.
 | A rota HTTP | `sample-solution/api/src/main/java/com/mmda/serverless/sample/api/RequestController.java` |
 | Onde as Lambdas dos passos começam | `FunctionInvoker`, classe da biblioteca Spring Cloud Function (fora do projeto), guiada pelas variáveis `MAIN_CLASS` e `SPRING_CLOUD_FUNCTION_DEFINITION` |
 | Cada passo | `sample-solution/functions/src/main/java/com/mmda/serverless/sample/functions/` (`ValidateFunction`, `PersistFunction`, `NotifyFunction` e `ReprocessFunction`) |
-| De onde vêm os clients da AWS | `shared/src/main/java/com/mmda/serverless/shared/aws/AwsClientsAutoConfiguration.java`, ativada por `shared/src/main/resources/META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports` |
+| De onde vêm os clients da AWS | `platform/spring-aws/src/main/java/com/mmda/serverless/platform/spring/aws/AwsClientsAutoConfiguration.java`, ativada por `platform/spring-aws/src/main/resources/META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports` |
 | Nomes de bucket, tabela e demais recursos | `application.yml` de cada módulo, que lê as variáveis de ambiente definidas no `serverless.yml` |
 
 ## Do build ao deploy
@@ -72,7 +73,7 @@ Spring Boot inicia ApiApplication  (@SpringBootApplication)
   ├─ 3a. varre o pacote ...sample.api       → registra RequestController
   ├─ 3b. @ConfigurationPropertiesScan        → registra ApiProperties
   │        application.yml: sample.bucket-name = ${BUCKET_NAME}  ← variável do serverless.yml
-  └─ 3c. autoconfiguração: lê o AutoConfiguration.imports do jar shared
+  └─ 3c. autoconfiguração: lê o AutoConfiguration.imports do jar spring-aws
            → AwsClientsAutoConfiguration
               ├─ S3Client   criado  (o SDK s3 está no pom do api)
               ├─ SfnClient  criado  (o SDK sfn está no pom do api)
@@ -158,6 +159,44 @@ EventBridge Scheduler, a cada 5 minutos  ← serverless.yml: functions.reprocess
 Os formatos de cada mensagem estão no [AsyncAPI](events/asyncapi.yaml), e o contrato da rota no
 [OpenAPI](api/openapi.yaml).
 
+## Como as Lambdas da receipt-solution sobem (Quarkus)
+
+A `receipt-solution` segue a mesma ideia com outro framework: um zip só, várias Lambdas, e cada uma
+escolhe o seu handler por variável de ambiente. Quem decide a ordem continua sendo o Step Functions,
+agora iniciado pelo evento `RequestCompleted` da sample
+([ADR 0011](decisions/0011-integracao-entre-solucoes-por-eventbridge.md)).
+
+```text
+Runtime java21 da Lambda
+  │ 1. instancia o handler: QuarkusStreamHandler  (classe da extensão quarkus-amazon-lambda)
+  ▼
+Quarkus inicia a aplicação montada no build
+  ├─ a injeção de dependências foi resolvida no build: IssueReceiptHandler (@Named("issue")),
+  │   AnnounceReceiptHandler (@Named("announce")) e ClockProducer
+  ├─ ReceiptConfig ← application.properties ← variáveis de ambiente
+  └─ DynamoDbClient e EventBridgeClient ← extensões do Quarkus Amazon Services, client aws-crt
+  │ 2. propriedade quarkus.lambda.handler, sobrescrita por QUARKUS_LAMBDA_HANDLER = issue
+  │    → usa o handler com @Named("issue")
+  ▼
+IssueReceiptHandler.handleRequest(CompletedRequest, Context)
+```
+
+A cada invocação, o `QuarkusStreamHandler` converte o JSON de entrada para o tipo de entrada do
+`RequestHandler` e serializa o retorno. No `issue`, a entrada é só o `detail` do evento, porque o
+estado `Issue` da máquina usa `InputPath: $.detail`.
+
+Arquivos, na ordem: `receipt-solution/serverless.yml`, `functions/src/main/resources/application.properties`,
+`IssueReceiptHandler.java`, `AnnounceReceiptHandler.java`, `CompletedRequest.java` e `Receipt.java`.
+
+A Lambda `api` da `receipt-solution` usa o mesmo `QuarkusStreamHandler`, mas da extensão
+`quarkus-amazon-lambda-rest`: ele converte o evento do API Gateway numa requisição HTTP para o Quarkus
+REST, e o `ReceiptResource` responde como num servidor comum. A emissão manual (`POST /receipts`)
+inicia o `receipt-flow` com `{"detail": <corpo>}`, então daí em diante o caminho é o do evento.
+
+O handler `io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest` é o que as próprias
+extensões declaram no `target/sam.jvm.yaml` gerado pelo build. A escolha pelo `@Named` e a variável de
+ambiente estão no guia oficial da extensão `quarkus-amazon-lambda`.
+
 ## Ordem sugerida de leitura
 
 1. `sample-solution/serverless.yml`: os blocos `functions:` e `stepFunctions:` são o roteiro de tudo.
@@ -165,6 +204,7 @@ Os formatos de cada mensagem estão no [AsyncAPI](events/asyncapi.yaml), e o con
 3. `ValidateFunction.java`, `PersistFunction.java` e `NotifyFunction.java`, na ordem da máquina de estado.
 4. `ReprocessFunction.java`: o ciclo de falha.
 5. `AwsClientsAutoConfiguration.java`: de onde vêm os clients que as classes recebem no construtor.
+6. `receipt-solution/serverless.yml` e os dois handlers: como outra solução reage ao evento da sample.
 
 ## Onde mexer para...
 
@@ -172,7 +212,11 @@ Os formatos de cada mensagem estão no [AsyncAPI](events/asyncapi.yaml), e o con
 |---|---|
 | Adicionar um passo à máquina de estado | Nova classe `Function<In, Out>` com `@Component("nome")` em `functions`; nova Lambda no bloco `functions:` do `serverless.yml`, com `SPRING_CLOUD_FUNCTION_DEFINITION: nome`; novo estado no bloco `stepFunctions:`; permissões em `provider.iam`; testes ([Testes](testing.md)) |
 | Adicionar uma rota HTTP | Método em `RequestController` ou novo `@RestController` em `api`; novo evento `http` na Lambda `api` do `serverless.yml`, porque o API Gateway só encaminha os caminhos declarados; atualizar o [OpenAPI](api/openapi.yaml) |
-| Usar outro serviço da AWS | Entrada do SDK com as exclusões de cliente HTTP no `pom.xml` raiz; SDK opcional e nova configuração aninhada em `AwsClientsAutoConfiguration`; SDK declarado no pom do módulo que vai usar ([ADR 0005](decisions/0005-clients-sincronos-com-crt.md)) |
+| Usar outro serviço da AWS (Spring) | Entrada do SDK com as exclusões de cliente HTTP no `platform/spring-parent/pom.xml`; SDK opcional e nova configuração aninhada em `AwsClientsAutoConfiguration`; SDK declarado no pom do módulo que vai usar ([ADR 0005](decisions/0005-clients-sincronos-com-crt.md)) |
+| Usar outro serviço da AWS (Quarkus) | Extensão `quarkus-amazon-<serviço>` no pom do módulo, com versão do BOM do `quarkus-parent`; `quarkus.<serviço>.sync-client.type=aws-crt` no `application.properties` |
+| Adicionar uma rota à API da `receipt-solution` | Método em `ReceiptResource` ou novo recurso JAX-RS em `receipt-solution/api`; novo evento `http` na Lambda `api` do `serverless.yml`; atualizar o [OpenAPI da receipt](api/receipt-solution.openapi.yaml) |
+| Adicionar um passo à `receipt-solution` | Nova classe `RequestHandler<In, Out>` com `@Singleton` e `@Named("nome")`; nova Lambda no `serverless.yml` com `QUARKUS_LAMBDA_HANDLER: nome`; novo estado no bloco `stepFunctions:`; permissões em `provider.iam` |
+| Criar uma solução que reage a outra | Pasta nova com o parent do framework em `platform/` e `serverless.yml` próprio; evento `eventBridge` na máquina de estado, com `eventBusName` do barramento da produtora; primeiro passo idempotente ([ADR 0011](decisions/0011-integracao-entre-solucoes-por-eventbridge.md)) |
 | Mudar o nome de um recurso | Bloco `custom.names` do `serverless.yml`; as variáveis de ambiente levam o novo nome às Lambdas |
 | Mudar o limite de tamanho do payload | Recurso `MaxPayloadParameter` no `serverless.yml` (o valor fica no SSM e é lido a cada validação) |
 | Mudar o número de tentativas | Variável `MAX_ATTEMPTS` nas Lambdas (padrão `3` em `functions/src/main/resources/application.yml`) |
