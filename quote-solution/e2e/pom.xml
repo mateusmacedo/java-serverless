@@ -15,6 +15,7 @@
     <properties>
         <e2e.endpoint>http://localhost:4566</e2e.endpoint>
         <e2e.stage>local</e2e.stage>
+        <e2e.region>us-east-1</e2e.region>
         <!-- N do T06 no Floci; o caso de 100 pedidos fica na integração da provider-functions -->
         <e2e.concurrentQuotes>12</e2e.concurrentQuotes>
     </properties>
@@ -111,10 +112,7 @@
                     <systemPropertyVariables>
                         <!-- WHY: o módulo não sobe o Quarkus, então volta ao LogManager padrão do JUL -->
                         <java.util.logging.manager>java.util.logging.LogManager</java.util.logging.manager>
-                        <aws.endpointUrl>${e2e.endpoint}</aws.endpointUrl>
-                        <aws.region>us-east-1</aws.region>
-                        <aws.accessKeyId>test</aws.accessKeyId>
-                        <aws.secretAccessKey>test</aws.secretAccessKey>
+                        <aws.region>${e2e.region}</aws.region>
                         <e2e.stage>${e2e.stage}</e2e.stage>
                         <e2e.concurrentQuotes>${e2e.concurrentQuotes}</e2e.concurrentQuotes>
                     </systemPropertyVariables>
@@ -122,4 +120,37 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!-- NOTE: padrão, contra o Floci; desliga sozinho quando outro perfil deste pom é ativado -->
+        <profile>
+            <id>floci</id>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-failsafe-plugin</artifactId>
+                        <configuration>
+                            <systemPropertyVariables>
+                                <aws.endpointUrl>${e2e.endpoint}</aws.endpointUrl>
+                                <aws.accessKeyId>test</aws.accessKeyId>
+                                <aws.secretAccessKey>test</aws.secretAccessKey>
+                            </systemPropertyVariables>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <!-- WHY: contra uma conta AWS (-Pe2e,e2e-aws), as três propriedades do Floci não podem existir nem vazias: o
+             SDK trataria "" como endpoint, e as credenciais test venceriam a cadeia padrão (AWS_PROFILE ou SSO) -->
+        <profile>
+            <id>e2e-aws</id>
+            <properties>
+                <e2e.stage>dev</e2e.stage>
+            </properties>
+        </profile>
+    </profiles>
 </project>

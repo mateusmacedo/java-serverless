@@ -9,6 +9,9 @@ plugins:
 # das filas) são conferidas pelo ServerlessConfigurationTest, em provider-functions
 params:
   default:
+    # WHY: vazio na AWS, a condição HasAwsEndpointUrl tira AWS_ENDPOINT_URL e AWS_ENDPOINT_URL_S3 das funções e o
+    # SDK resolve o endpoint pela região; o SDK trataria um valor vazio como endpoint, então a variável não pode existir
+    awsEndpointUrl: ""
     s3PathStyleAccess: "false"
     # Fn::Sub: o ApiGatewayRestApi é o API Gateway desta stack, que atende os simuladores (§7)
     providersBaseUrl: https://${ApiGatewayRestApi}.execute-api.${aws:region}.amazonaws.com/${sls:stage}
@@ -53,6 +56,8 @@ params:
     simCallbacksVisibilityTimeoutSeconds: 90
     simCallbacksMaxReceiveCount: 5
     reconcilerRate: rate(1 minute)
+    # NOTE: vazio não cria a assinatura por e-mail do tópico de alarmes
+    alarmEmail: ""
   local:
     awsEndpointUrl: http://floci:4566
     s3PathStyleAccess: "true"
@@ -100,9 +105,9 @@ provider:
   memorySize: 1769
   timeout: 30
   environment:
-    AWS_ENDPOINT_URL: ${param:awsEndpointUrl}
+    AWS_ENDPOINT_URL: !If [HasAwsEndpointUrl, "${param:awsEndpointUrl}", !Ref AWS::NoValue]
     # O Serverless v4 exporta AWS_ENDPOINT_URL_S3 do LocalStack quando o serverless-localstack está ativo
-    AWS_ENDPOINT_URL_S3: ${param:awsEndpointUrl}
+    AWS_ENDPOINT_URL_S3: !If [HasAwsEndpointUrl, "${param:awsEndpointUrl}", !Ref AWS::NoValue]
     S3_PATH_STYLE_ACCESS: ${param:s3PathStyleAccess}
     TABLE_NAME: ${self:custom.names.queriesTable}
     PAYLOADS_BUCKET: ${self:custom.names.payloadsBucket}
@@ -158,12 +163,12 @@ provider:
             - !GetAtt ReconcileRequestsQueue.Arn
             - !GetAtt SimCallbacksQueue.Arn
             - !GetAtt StreamFailuresQueue.Arn
-        # O reconciler lê e apaga as DLQs no reprocessamento (ADR 0007)
+        # O reconciler lê e apaga as DLQs no reprocessamento (ADR 0007); as DLQs não têm ESM, e o código não lê
+        # atributos da fila
         - Effect: Allow
           Action:
             - sqs:ReceiveMessage
             - sqs:DeleteMessage
-            - sqs:GetQueueAttributes
           Resource:
             - !GetAtt EnrichmentRequestsDeadLetterQueue.Arn
             - !GetAtt InsurerRequestsDeadLetterQueue.Arn
@@ -332,6 +337,10 @@ functions:
             maxItems: 100
 
 resources:
+  Conditions:
+    HasAwsEndpointUrl: !Not [!Equals ["${param:awsEndpointUrl}", ""]]
+    HasAlarmEmail: !Not [!Equals ["${param:alarmEmail}", ""]]
+
   Resources:
     QueriesTable:
       Type: AWS::DynamoDB::Table
@@ -663,7 +672,23 @@ resources:
                   Action: secretsmanager:GetSecretValue
                   Resource: !Ref CallbackSecret
 
-    # Alarmes do M4 (§9, §12), com os limiares por stage. O Floci só reconhece o tipo do recurso; o disparo é do M6
+    # NOTE: a assinatura por e-mail só existe com o param alarmEmail preenchido e precisa ser confirmada pelo
+    # link que a AWS envia
+    AlarmsTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:service}-${sls:stage}-alarms
+
+    AlarmsEmailSubscription:
+      Type: AWS::SNS::Subscription
+      Condition: HasAlarmEmail
+      Properties:
+        TopicArn: !Ref AlarmsTopic
+        Protocol: email
+        Endpoint: ${param:alarmEmail}
+
+    # Alarmes do M4 (§9, §12), com os limiares por stage e notificados no AlarmsTopic. O Floci só reconhece o tipo
+    # do recurso e não dispara; o disparo é do M6
 
     EnrichmentRequestsDeadLetterQueueAgeAlarm:
       Type: AWS::CloudWatch::Alarm
@@ -681,6 +706,8 @@ resources:
         Threshold: ${param:dlqAlarmAgeSeconds}
         ComparisonOperator: GreaterThanOrEqualToThreshold
         TreatMissingData: notBreaching
+        AlarmActions:
+          - !Ref AlarmsTopic
 
     EnrichmentRequestsDeadLetterQueueVolumeAlarm:
       Type: AWS::CloudWatch::Alarm
@@ -698,6 +725,8 @@ resources:
         Threshold: ${param:dlqAlarmVisibleMessages}
         ComparisonOperator: GreaterThanOrEqualToThreshold
         TreatMissingData: notBreaching
+        AlarmActions:
+          - !Ref AlarmsTopic
 
     InsurerRequestsDeadLetterQueueAgeAlarm:
       Type: AWS::CloudWatch::Alarm
@@ -715,6 +744,8 @@ resources:
         Threshold: ${param:dlqAlarmAgeSeconds}
         ComparisonOperator: GreaterThanOrEqualToThreshold
         TreatMissingData: notBreaching
+        AlarmActions:
+          - !Ref AlarmsTopic
 
     InsurerRequestsDeadLetterQueueVolumeAlarm:
       Type: AWS::CloudWatch::Alarm
@@ -732,6 +763,8 @@ resources:
         Threshold: ${param:dlqAlarmVisibleMessages}
         ComparisonOperator: GreaterThanOrEqualToThreshold
         TreatMissingData: notBreaching
+        AlarmActions:
+          - !Ref AlarmsTopic
 
     ReconcileRequestsDeadLetterQueueAgeAlarm:
       Type: AWS::CloudWatch::Alarm
@@ -749,6 +782,8 @@ resources:
         Threshold: ${param:dlqAlarmAgeSeconds}
         ComparisonOperator: GreaterThanOrEqualToThreshold
         TreatMissingData: notBreaching
+        AlarmActions:
+          - !Ref AlarmsTopic
 
     ReconcileRequestsDeadLetterQueueVolumeAlarm:
       Type: AWS::CloudWatch::Alarm
@@ -766,6 +801,8 @@ resources:
         Threshold: ${param:dlqAlarmVisibleMessages}
         ComparisonOperator: GreaterThanOrEqualToThreshold
         TreatMissingData: notBreaching
+        AlarmActions:
+          - !Ref AlarmsTopic
 
     SimCallbacksDeadLetterQueueAgeAlarm:
       Type: AWS::CloudWatch::Alarm
@@ -783,6 +820,8 @@ resources:
         Threshold: ${param:dlqAlarmAgeSeconds}
         ComparisonOperator: GreaterThanOrEqualToThreshold
         TreatMissingData: notBreaching
+        AlarmActions:
+          - !Ref AlarmsTopic
 
     SimCallbacksDeadLetterQueueVolumeAlarm:
       Type: AWS::CloudWatch::Alarm
@@ -800,6 +839,8 @@ resources:
         Threshold: ${param:dlqAlarmVisibleMessages}
         ComparisonOperator: GreaterThanOrEqualToThreshold
         TreatMissingData: notBreaching
+        AlarmActions:
+          - !Ref AlarmsTopic
 
     StreamFailuresQueueAgeAlarm:
       Type: AWS::CloudWatch::Alarm
@@ -817,6 +858,8 @@ resources:
         Threshold: ${param:dlqAlarmAgeSeconds}
         ComparisonOperator: GreaterThanOrEqualToThreshold
         TreatMissingData: notBreaching
+        AlarmActions:
+          - !Ref AlarmsTopic
 
     StreamFailuresQueueVolumeAlarm:
       Type: AWS::CloudWatch::Alarm
@@ -834,6 +877,8 @@ resources:
         Threshold: ${param:dlqAlarmVisibleMessages}
         ComparisonOperator: GreaterThanOrEqualToThreshold
         TreatMissingData: notBreaching
+        AlarmActions:
+          - !Ref AlarmsTopic
 
     OutboxPendingAgeAlarm:
       Type: AWS::CloudWatch::Alarm
@@ -851,6 +896,8 @@ resources:
         Threshold: ${param:staleOutboxAfterSeconds}
         ComparisonOperator: GreaterThanOrEqualToThreshold
         TreatMissingData: notBreaching
+        AlarmActions:
+          - !Ref AlarmsTopic
 
     UnmatchedCallbacksAlarm:
       Type: AWS::CloudWatch::Alarm
@@ -868,6 +915,8 @@ resources:
         Threshold: ${param:unmatchedCallbacksAlarmThreshold}
         ComparisonOperator: GreaterThanOrEqualToThreshold
         TreatMissingData: notBreaching
+        AlarmActions:
+          - !Ref AlarmsTopic
 
     UnknownQueriesAlarm:
       Type: AWS::CloudWatch::Alarm
@@ -885,6 +934,8 @@ resources:
         Threshold: ${param:unknownQueriesAlarmThreshold}
         ComparisonOperator: GreaterThanOrEqualToThreshold
         TreatMissingData: notBreaching
+        AlarmActions:
+          - !Ref AlarmsTopic
 
     EnrichmentSimProviderFailuresAlarm:
       Type: AWS::CloudWatch::Alarm
@@ -926,6 +977,8 @@ resources:
         Threshold: ${param:providerFailureAlarmPercent}
         ComparisonOperator: GreaterThanOrEqualToThreshold
         TreatMissingData: notBreaching
+        AlarmActions:
+          - !Ref AlarmsTopic
 
     AlphaProviderFailuresAlarm:
       Type: AWS::CloudWatch::Alarm
@@ -967,6 +1020,8 @@ resources:
         Threshold: ${param:providerFailureAlarmPercent}
         ComparisonOperator: GreaterThanOrEqualToThreshold
         TreatMissingData: notBreaching
+        AlarmActions:
+          - !Ref AlarmsTopic
 
     BetaProviderFailuresAlarm:
       Type: AWS::CloudWatch::Alarm
@@ -1008,6 +1063,8 @@ resources:
         Threshold: ${param:providerFailureAlarmPercent}
         ComparisonOperator: GreaterThanOrEqualToThreshold
         TreatMissingData: notBreaching
+        AlarmActions:
+          - !Ref AlarmsTopic
 
   Outputs:
     SimulatorsRestApiId:

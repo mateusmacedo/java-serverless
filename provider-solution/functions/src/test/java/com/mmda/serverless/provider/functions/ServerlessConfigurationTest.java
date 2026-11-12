@@ -9,9 +9,10 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -32,6 +33,8 @@ import org.yaml.snakeyaml.nodes.SequenceNode;
 class ServerlessConfigurationTest {
 
     private static final Pattern PARAM = Pattern.compile("\\$\\{param:([A-Za-z]+)}");
+    /** Referência a parâmetro com ou sem fallback, como {@code ${param:x}} e {@code ${param:x, null}}. */
+    private static final Pattern PARAM_REFERENCE = Pattern.compile("\\$\\{param:([A-Za-z]+)(,[^}]*)?}");
     private static final List<String> WORKERS = List.of("enrichmentWorker", "insurerWorker");
     private static final List<String> QUEUE_CONSUMERS =
             List.of("enrichmentWorker", "insurerWorker", "reconcileWorker", "simCallbackSender");
@@ -48,11 +51,13 @@ class ServerlessConfigurationTest {
     private static final List<String> PROVIDERS = List.of("enrichment-sim", "alpha", "beta");
     private static final int RECONCILER_PERIOD_SECONDS = 60;
 
+    private static String text;
     private static Map<String, Object> serverless;
     private static Map<String, Object> quoteServerless;
 
     @BeforeAll
     static void load() throws IOException {
+        text = Files.readString(Path.of("..", "serverless.yml"));
         serverless = yaml(Path.of("..", "serverless.yml"));
         quoteServerless = yaml(Path.of("..", "..", "quote-solution", "serverless.yml"));
     }
@@ -192,7 +197,7 @@ class ServerlessConfigurationTest {
     void onlyTheLateBetaCallbackArrivesAfterTheInsurerWaitOfTheQuote(String stage) {
         Map<String, Object> params = params(stage);
         Object insurerWait = quoteParams(stage).get("insurerTimeoutSeconds");
-        Assumptions.assumeTrue(insurerWait != null, "the quote declares no insurer wait for " + stage);
+        assertThat(insurerWait).as("insurer wait of the quote in %s", stage).isNotNull();
         int wait = Integer.parseInt(insurerWait.toString());
         Map<String, Object> simulators = functionEnvironment("simulators");
 
@@ -315,7 +320,9 @@ class ServerlessConfigurationTest {
             assertThat(role).as("the reconciler sends back to %s and reads %s", origin, deadLetter)
                     .contains(origin + ".Arn", deadLetter + ".Arn");
         }
-        assertThat(role).contains("sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes");
+        assertThat(role).contains("sqs:ReceiveMessage", "sqs:DeleteMessage")
+                .as("the DLQs have no event source mapping, and the code reads no queue attribute")
+                .doesNotContain("sqs:GetQueueAttributes");
     }
 
     /** §9 e §12: as idades do reconciler respeitam o timeout da api, o ciclo de 1 min e a lápide da liderança. */
@@ -409,6 +416,71 @@ class ServerlessConfigurationTest {
             assertThat(resolveInt(alarm.get("Threshold"), params)).isEqualTo(50);
             assertThat(integer(params, "providerFailureAlarmPeriodSeconds")).isEqualTo(300);
         }
+    }
+
+    /** O Serverless falha na resolução de um {@code ${param:x}} sem valor no stage e sem fallback. */
+    @ParameterizedTest
+    @ValueSource(strings = {"local", "dev"})
+    void everyReferencedParameterHasAValueInTheStage(String stage) {
+        Map<String, Object> params = params(stage);
+        Set<String> referenced = new TreeSet<>();
+        Matcher matcher = PARAM_REFERENCE.matcher(text);
+        while (matcher.find()) {
+            if (matcher.group(2) == null) {
+                referenced.add(matcher.group(1));
+            }
+        }
+
+        assertThat(referenced).contains("awsEndpointUrl", "alarmEmail", "providersBaseUrl");
+        assertThat(referenced).allSatisfy(name -> assertThat(params.get(name)).as("param %s in %s", name, stage)
+                .isNotNull());
+    }
+
+    /**
+     * WHY: o SDK lê {@code AWS_ENDPOINT_URL} e {@code AWS_ENDPOINT_URL_S3} sozinho e trataria um valor vazio como
+     * endpoint, então fora do Floci a condição tira as duas variáveis.
+     */
+    @Test
+    void flociEndpointsAndPathStyleStayInTheLocalStage() {
+        Map<String, Object> local = params("local");
+        Map<String, Object> dev = params("dev");
+        Map<String, Object> environment = environment();
+
+        for (String variable : List.of("AWS_ENDPOINT_URL", "AWS_ENDPOINT_URL_S3")) {
+            assertThat(environment.get(variable)).as(variable)
+                    .isEqualTo(List.of("HasAwsEndpointUrl", "${param:awsEndpointUrl}", "AWS::NoValue"));
+        }
+        assertThat(map(map(serverless.get("resources")).get("Conditions")).get("HasAwsEndpointUrl"))
+                .isEqualTo(List.of(List.of("${param:awsEndpointUrl}", "")));
+        assertThat(local).containsEntry("awsEndpointUrl", "http://floci:4566").containsEntry("s3PathStyleAccess", "true");
+        assertThat(dev).containsEntry("awsEndpointUrl", "").containsEntry("s3PathStyleAccess", "false")
+                .containsEntry("providersBaseUrl",
+                        "https://${ApiGatewayRestApi}.execute-api.${aws:region}.amazonaws.com/${sls:stage}");
+        assertThat(dev.values()).as("no Floci address outside the local stage")
+                .noneMatch(value -> String.valueOf(value).matches(".*(floci|localhost|4566|_user_request_).*"));
+    }
+
+    @Test
+    void everyAlarmNotifiesTheAlarmsTopicAndTheEmailSubscriptionIsOptional() {
+        Map<String, Object> resources = resources();
+        Map<String, Object> subscription = map(resources.get("AlarmsEmailSubscription"));
+        List<Map<String, Object>> alarms = resources.values().stream()
+                .map(ServerlessConfigurationTest::map)
+                .filter(resource -> "AWS::CloudWatch::Alarm".equals(resource.get("Type")))
+                .map(resource -> map(resource.get("Properties")))
+                .toList();
+
+        assertThat(map(resources.get("AlarmsTopic")).get("Type")).isEqualTo("AWS::SNS::Topic");
+        assertThat(properties("AlarmsTopic").get("TopicName")).isEqualTo("${self:service}-${sls:stage}-alarms");
+        assertThat(alarms).as("the 16 alarms of §2").hasSize(16).allSatisfy(alarm -> assertThat(alarm.get("AlarmActions"))
+                .as("AlarmActions of %s", alarm.get("AlarmName")).isEqualTo(List.of("AlarmsTopic")));
+        assertThat(subscription).containsEntry("Type", "AWS::SNS::Subscription")
+                .containsEntry("Condition", "HasAlarmEmail");
+        assertThat(map(subscription.get("Properties"))).containsEntry("TopicArn", "AlarmsTopic")
+                .containsEntry("Protocol", "email").containsEntry("Endpoint", "${param:alarmEmail}");
+        assertThat(map(map(serverless.get("resources")).get("Conditions")).get("HasAlarmEmail"))
+                .isEqualTo(List.of(List.of("${param:alarmEmail}", "")));
+        assertThat(params("dev")).as("no subscription unless a stage sets the e-mail").containsEntry("alarmEmail", "");
     }
 
     private static Map<String, Object> params(String stage) {
