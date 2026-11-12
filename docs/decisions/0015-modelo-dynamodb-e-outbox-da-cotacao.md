@@ -75,3 +75,46 @@ ocorrência.
 
 O `gsi2` ganhou quatro valores de `gsi2pk` no M4: `WAITER_EXPIRED` e `SUMMARY_PENDING` na quote, e
 `FANOUT_PENDING` e `ISSUE_OPEN` na provider.
+
+## Emenda (M5)
+
+A tabela da quote ganhou três itens, e o `ISSUE#` passou a receber também as ocorrências da provider:
+
+- Seleção (`QUOTE#<quoteId>`, `V#<nnnn>#SELECTION`, `type = SELECTION`): uma por versão, gravada com
+  `attribute_not_exists` na mesma transação que atualiza o `META` com a mesma condição da nova versão,
+  então só uma das duas vence. O `selectionId` é determinístico pela versão.
+- Reconciliação manual (`OPERATION#<operationId>`, `META`, `type = OPERATION`): gravada pela API em
+  `QUEUED`, com o motivo e quem pediu, na mesma transação do outbox `QueryReconcileRequested`; o
+  `issue-projector` grava o resultado do `QueryReconciled` com a condição pela `revision`.
+- Consulta conhecida (`QUERYREF#<queryId>`, `META`, `type = QUERYREF`): gravada pelo `issue-projector` só a
+  partir de uma ocorrência da provider com `queryId` e `organizationId`; autoriza o `RECONCILE` dessa
+  organização.
+- `ISSUE#` projetado: a ocorrência da provider, com `source = provider`, o `type` do evento em
+  `issueType`, o `projectedAt` e a condição pela `revision`, na mesma transação do `CONSUMED#<eventId>`.
+  Ela usa o `gsi1` da organização, como as da quote, e nunca o `gsi2`.
+
+A listagem de cotações usa o `gsi1` (`ORG#<organizationId>`) previsto acima, e o resumo do `META` que ela
+lê passou a só avançar dentro da versão. As duas listagens paginam com o `gsi1sk` do último item como
+cursor.
+
+Valores de `gsi2pk` depois do M5, todos com `gsi2sk` = instante ISO-8601 e removidos quando o item sai do
+estado:
+
+| Solução | Valor | Item | Registrado em |
+|---|---|---|---|
+| quote | `ACTIVE_VERSION` | Versão não terminal | Decisão |
+| quote | `OUTBOX_PENDING` | Outbox ainda não publicado | Decisão |
+| quote | `WAITER_RESUMING` | Waiter em retomada | Decisão |
+| quote | `WAITER_EXPIRED` | Waiter expirado à espera da conferência da entrega | Emenda (M4) |
+| quote | `SUMMARY_PENDING` | Versão consolidada cujo resumo do `META` ainda não foi conferido | Emenda (M4) |
+| quote | `ISSUE_OPEN` | Ocorrência da quote que se resolve sozinha, ainda aberta: só a `STUCK_VERSION` | Esta emenda |
+| provider | `QUERY_IN_FLIGHT` | Consulta em voo | Decisão |
+| provider | `QUERY_UNKNOWN` | Consulta sem resposta depois do envio | Decisão |
+| provider | `INBOX_RECEIVED` | Callback recebido ainda não processado | Decisão |
+| provider | `INBOX_UNMATCHED` | Callback sem correlação | Decisão |
+| provider | `OUTBOX_PENDING` | Outbox ainda não publicado | Decisão |
+| provider | `FANOUT_PENDING` | Fan-out do líder ainda não concluído | Emenda (M4) |
+| provider | `ISSUE_OPEN` | Ocorrência que se resolve sozinha, ainda aberta (`UNKNOWN_QUERY`, `UNMATCHED_CALLBACK`, `STALE_OUTBOX`) | Emenda (M4) |
+
+O `ISSUE_OPEN` tem o mesmo nome nas duas soluções, mas cada tabela tem o seu índice: as ocorrências
+projetadas da provider na quote nunca entram no `ISSUE_OPEN` da quote.

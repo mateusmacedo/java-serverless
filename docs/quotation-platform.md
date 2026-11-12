@@ -49,12 +49,12 @@ cerca de 4,6 s de partida a frio, dentro da espera de 20 s da seguradora no stag
 | platform | Barramento | `platform-<stage>-events` |
 | quote | Tabela | `quote-solution-<stage>-quotes` (stream `NEW_IMAGE`, índices `gsi1` e `gsi2`) |
 | quote | Fila de resultados + DLQ | `quote-solution-<stage>-results`, `quote-solution-<stage>-results-dlq` |
-| quote | Fila de ocorrências + DLQ | `quote-solution-<stage>-issues`, `...-issues-dlq` (M5) |
+| quote | Fila de ocorrências + DLQ | `quote-solution-<stage>-issues`, `...-issues-dlq` (M5; consumida pelo `issue-projector`, §3 e §7) |
 | quote | Fila de falhas do stream | `quote-solution-<stage>-stream-failures` (destino `onFailure` da relay) |
 | quote | Máquina de estado | `quote-solution-<stage>-quote-flow` |
 | quote | Segredo da cifra de tokens | `quote-solution/<stage>/token-key` |
 | quote | User pool, client e grupos Cognito | `quote-solution-<stage>-users` |
-| quote | Alarmes CloudWatch | `quote-solution-<stage>-<alarme>`: 6 alarmes, sem `AlarmActions` (M4, §9) |
+| quote | Alarmes CloudWatch | `quote-solution-<stage>-<alarme>`: 8 alarmes (6 do M4 e 2 da `issues-dlq` no M5), sem `AlarmActions` (§9) |
 | provider | Tabela | `provider-solution-<stage>-queries` (stream `NEW_IMAGE`, índice `gsi2`) |
 | provider | Tabela dos simuladores | `provider-solution-<stage>-simulators` (TTL; acesso só da Lambda `simulators`) |
 | provider | Bucket de respostas brutas | `provider-solution-<stage>-payloads` |
@@ -99,13 +99,14 @@ Só a `api` e o `simCallbackSender` leem o `callback-secret`; o papel das funç�
 `ServerlessConfigurationTest` (`callbackRolesGrantOnlyWhatTheirCodeAndTheQueueConsumerUse`) confere que
 o `CallbacksApiRole` e o `SimCallbackSenderRole` têm exatamente essas ações, além das de log.
 
-Na quote, o M4 ampliou o papel do `reconciler` e o da API (§7).
+Na quote, o M4 ampliou o papel do `reconciler` e o da API (§7). O M5 acrescentou o `IssueProjectorRole`,
+do `issue-projector`, e ampliou de novo os papéis da API e do `reconciler` (§7).
 
 **Variáveis do M4.** Todas as funções das duas soluções recebem `STAGE` e `METRICS_NAMESPACE`
 (`mmda/provider-solution` e `mmda/quote-solution`), que as métricas EMF e os alarmes usam (§9). Na
 provider, o `reconciler` e o `reconcileWorker` recebem também `PROVIDERS_BASE_URL`, porque consultam a
 API de situação da beta (§8 e §9). Na quote, as variáveis do `reconciler` ficam no `environment` do
-`provider` do `serverless.yml` (§7).
+`provider` do `serverless.yml` (§7); o M5 acrescentou ali `ISSUES_QUEUE_URL` e `ISSUES_DLQ_URL`.
 
 **Memória das funções.** Todas as funções de todas as soluções usam `memorySize: 1769`, declarado no
 `provider` de cada `serverless.yml`; não há dimensionamento por função. A Lambda reparte CPU
@@ -116,7 +117,7 @@ O Floci não aplica IAM, então cinco pontos ficam para o M6: o `states:SendTask
 da máquina; o `dynamodb:ListStreams` da relay, que não aceita recurso específico e usa `*`; o papel
 que o `serverless-step-functions` gera para a máquina chamar a `dispatch` com `waitForTaskToken`; os
 papéis próprios da provider (tabela acima), inclusive os do M3, cuja restrição nenhum teste exercitou;
-e as permissões que o M4 acrescentou nas duas soluções.
+e as permissões que o M4 e o M5 acrescentaram nas duas soluções.
 
 ## 3. Eventos
 
@@ -130,7 +131,7 @@ monetários são strings decimais; datas com hora em UTC.
 | `InsurerQuoteRequested` | mmda.quote | `workRef`, `organizationId`, `quoteId`, `version`, `insurerId`, `risk` (cópia autorizada do snapshot: `product`, `usage`, `vehicle`, `principalDriver`, `coverageProfile` resolvido como objeto, com `code`, `label` e `coverages`, `desiredStartDate`), `enrichment` (resumo; `evidenceId` e `queryId` seguem os patterns da provider, `^ev_[0-9a-f]{32}$` e `^q_[0-9a-f]{32}$`), `deadlineAt` |
 | `QuoteCompleted` | mmda.quote | `quoteId`, `version`, `outcome`, `outcomeReason`, `offerCount` |
 | `OfferSelected` | mmda.quote | `quoteId`, `version`, `offerId`, `selectionId` |
-| `QueryReconcileRequested` | mmda.quote | `operationId`, `organizationId`, `queryId`, `reason`, `requestedBy` (consumido pela provider no M4; publicado pela API da quote a partir do M5) |
+| `QueryReconcileRequested` | mmda.quote | `operationId`, `organizationId`, `queryId`, `reason` (texto livre do operador, até 500 caracteres, só para auditoria), `requestedBy` (`sub` do user pool) (consumido pela provider no M4; publicado pela API da quote a partir do M5) |
 | `EnrichmentResolved` | mmda.provider | `workRef`, `quoteId`, `version`, `queryId`, `evidenceId`, `reuseDecision` (`HIT`, `JOIN`, `MISS`), `policyVersion` (política de reuso que produziu a evidência, no formato `^[A-Za-z0-9][A-Za-z0-9._-]*$`), `resultType` (`FOUND`, `NOT_FOUND`, `FAILED`), `result` (perfil normalizado, quando `FOUND`), `notFoundRefs` (quando `NOT_FOUND`: referências que o provedor declarou não encontrar, só `vehicleRef` e `principalDriverRef`, como `["vehicleRef"]`), `reusableUntil` (só em `FOUND` e `NOT_FOUND`), `errorClass` (quando `FAILED`) |
 | `InsurerResultRecorded` | mmda.provider | `workRef`, `quoteId`, `version`, `insurerId`, `queryId`, `attemptRef`, `status` (`QUOTED`, `DECLINED`, `NEEDS_INFORMATION`, `UNAVAILABLE`), `reasonCode`, `missingFields` (lista de `{path, reasonCode}`, com `path` relativo ao snapshot, como `risk.principalDriver.licenseDate`), `offer` (quando `QUOTED`: `externalOfferId`, `insurerName`, `premiumTotal`, `currency`, `installments`, `coverages` com `code`, `label` e `insuredAmount`, como o `OfferCoverage` do OpenAPI, `deductibles`, `validUntil`, `rawResponseRef`) |
 | `QueryReconciled` | mmda.provider | `operationId`, `organizationId`, `queryId`, `status` (`SUCCEEDED`, `FAILED`), `safeSummary`, `revision` (sempre 2; M4) |
@@ -195,6 +196,40 @@ No evento, o tipo da ocorrência vai no campo `type`. Nos itens `ISSUE#` das dua
 atributo `issueType`, porque `type` é o tipo do item em toda a tabela (ADR 0015): `ISSUE` nas
 ocorrências. O `issue-projector` do M5 grava o `type` do evento no `issueType` do item (§4 e §5).
 
+**Consumo pela fila `issues` (M5).** A regra `ProviderIssuesRule` da quote leva o `QueryReconciled`, o
+`OperationIssueRaised` e o `OperationIssueUpdated` à fila `issues`, que o `issue-projector` consome com
+`batchSize: 1` e `ReportBatchItemFailures`. Ele lê o `detail` e projeta:
+
+- `OperationIssueRaised` e `OperationIssueUpdated` viram o `ISSUE#<issueId>`, com um `UpdateItem` de
+  condição `attribute_not_exists(revision) OR revision < :r`. O item recebe `source = provider`,
+  `issueType`, `status`, `firstSeenAt`, `lastSeenAt`, `safeSummary`, `reconcilable`, `revision` e
+  `projectedAt` e, quando o evento os traz, `organizationId` (com o `gsi1`), `queryId` e `quoteId`. A
+  ocorrência projetada nunca entra no `gsi2`: quem a resolve é a provider, com um `OperationIssueUpdated`.
+- A mesma transação grava o `QUERYREF#<queryId>` quando a ocorrência traz `queryId` e `organizationId`.
+  É o único caminho do `QUERYREF#`, que autoriza o `RECONCILE` (§8). A gravação não tem condição e usa
+  `if_not_exists` na organização e no `firstSeenAt`: não derruba a projeção e nunca troca a organização
+  de uma consulta já conhecida.
+- `QueryReconciled` vira o `OPERATION#<operationId>`: `status`, `safeSummary`, `revision` e `updatedAt`
+  (o `occurredAt` do evento), com a condição `revision < :r` e a mesma organização. Antes, o projetor lê o
+  `OPERATION#`: se ele é de outra organização, descarta o evento sem gravar nada, registra um `WARN` com o
+  `eventId`, o `operationId` e as duas organizações e devolve `FOREIGN_ORGANIZATION`. A condição da
+  transação continua como defesa. O `QueryReconciled` não grava `QUERYREF#`, porque o par
+  `queryId`/`organizationId` dele é o do pedido e não prova que a consulta é da organização (AsyncAPI da
+  provider).
+- Toda projeção grava o `CONSUMED#<eventId>` na mesma transação. Uma transação cancelada por condição é
+  descartada, com o motivo no log ("event already consumed" ou "revision not newer than the projected
+  one"); outro cancelamento volta à fila.
+
+O evento de outra `source` ou de outro `detail-type` é ignorado, só com log, e sai da fila. O evento
+malformado (campo obrigatório ausente, tipo de ocorrência fora dos quatro da provider, `status` fora do
+enum, instante ilegível ou `revision` menor que 1) lança erro, volta à fila e, depois de
+`issuesMaxReceiveCount` recebimentos, vai para a `issues-dlq`, que o `reconciler` reprocessa (§9).
+
+Um `QueryReconciled` de uma operação que a quote nunca gravou cria o `OPERATION#`, porque a condição
+aceita `attribute_not_exists`. Sem `QUERYREF#`, isso não autoriza reconciliação, mas a organização do
+evento passa a ler essa operação no `GET /v1/operations/{operationId}`. É um comportamento conhecido do
+MVP, sem mudança.
+
 A quote também grava ocorrências próprias, direto no `ISSUE#` e sem evento, pelo `reconciler` (M4):
 
 - `WORKFLOW_FAILED`: execução `FAILED`, `TIMED_OUT` ou `ABORTED`, que o `reconciler` finaliza (§9).
@@ -208,6 +243,11 @@ A quote também grava ocorrências próprias, direto no `ISSUE#` e sem evento, p
 - `DEAD_LETTER`: mensagem apagada da `results-dlq` no limite de `dlqMaxAttempts`, ou na hora quando nem
   identifica a cotação, e, a partir do M5, da `issues-dlq` (§9). O prazo da versão não descarta.
 
+Dessas, só a `STUCK_VERSION` se resolve sozinha (M5, §9). `WORKFLOW_FAILED`, `TASK_EXPIRED` e o
+`DEAD_LETTER` da quote registram um fato e ficam `OPEN`, como o `DEAD_LETTER` da provider. Decisão do M5:
+não há reconhecimento manual no MVP, porque ele exigiria mudar o contrato compartilhado dos dois PRDs; é
+um limite conhecido, registrado também na descrição de `IssueStatus` no `contracts/openapi.yaml`.
+
 Os AsyncAPI das duas soluções definem esses schemas, inclusive o de `missingFields` com paths
 relativos ao snapshot. No M4, o da provider (0.4.0) ganhou a operação de consumo do
 `QueryReconcileRequested` e exemplos capturados no Floci implantado: `QueryReconciled` (`succeeded` e
@@ -215,6 +255,23 @@ relativos ao snapshot. No M4, o da provider (0.4.0) ganhou a operação de consu
 `InsurerResultRecorded` concluído pela API de situação (`quoted-by-status-api`). O da quote passou a
 0.2.0, com o exemplo `unknown-query` do `QueryReconcileRequested`, o pedido que gera o exemplo `failed`
 do `QueryReconciled`.
+
+No M5, o da provider passou a 0.5.0, só com descrições novas: o `QueryReconciled` e as ocorrências vão
+para a fila `issues` da quote; o `type` do evento vira o `issueType` do item; o par
+`queryId`/`organizationId` de uma ocorrência alimenta o `QUERYREF#`, e o do `QueryReconciled` é o do
+pedido; o `quoteId` do `DEAD_LETTER` segue a regra do §9. O texto registra também que os exemplos de
+`InsurerResultRecorded` com oferta são anteriores ao M5: hoje as coberturas vêm do perfil do
+`catalog.json`, com `COMPREHENSIVE` quando o pedido não traz perfil, e a franquia é de 5% na alpha e de
+4% na beta sobre a `COLLISION` (§10). Os exemplos não foram recapturados, porque o `quoted-by-callback`
+está amarrado ao exemplo de callback de `docs/api/provider-solution.openapi.yaml` pelo `EventContractTest`.
+
+O da quote passou a 0.3.0 e declara o que ela consome: os canais `resultsQueue`
+(`quote-solution-{stage}-results`) e `issuesQueue` (`quote-solution-{stage}-issues`) e as operações
+`receiveProviderResults`, `receiveQueryReconciled` e `receiveOperationIssue`, com as mensagens por `$ref`
+ao AsyncAPI da provider. As descrições dizem quais campos a quote lê, como a `revision` e o `CONSUMED#`
+descartam repetições, que o `QUERYREF#` só nasce das ocorrências, que o evento de outra organização é
+descartado e que o malformado vai à `issues-dlq`. O `QueryReconcileRequested` ganhou `maxLength` 500 no
+`reason`, e o exemplo traz um motivo em texto e um `sub` em `requestedBy`.
 
 O `insurerName` do `RESULT` vem do registro de seguradoras da quote (`Insurers`, na `quote-domain`) e
 é gravado pelo `select-insurers` (§4); o da `OFFER` vem do `offer.insurerName` que a seguradora
@@ -225,25 +282,31 @@ devolve. Os dois precisam ser iguais: `alpha` é "Alpha Seguros" e `beta`, "Beta
 
 | Item | `pk` | `sk` | Atributos principais |
 |---|---|---|---|
-| Cotação | `QUOTE#<quoteId>` | `META` | `organizationId`, `createdBy`, `currentVersion`, `createdAt`, `gsi1pk`, `gsi1sk`, resumo da versão atual (`phase`, `outcome`, `offerCount`), `selectionId`, `selectedVersion`, `selectedOfferId` |
+| Cotação | `QUOTE#<quoteId>` | `META` | `organizationId`, `createdBy`, `currentVersion`, `createdAt`, `gsi1pk`, `gsi1sk`, resumo da versão atual (`phase`, `outcome`, `offerCount`, que só avançam desde o M5; abaixo), `selectionId`, `selectedVersion`, `selectedOfferId` (M5, gravados pela seleção, §8), `updatedAt` |
 | Versão | `QUOTE#<quoteId>` | `V#<nnnn>` | `snapshot` (JSON), `inputHash`, `phase`, `outcome`, `outcomeReason`, `missingFields`, `eligibilityDecision`, `eligibilityReasonCode`, `eligibilityMissingFields`, `eligibilityRuleVersion`, `selectedInsurers`, `selectionRuleVersion`, `workflowVersion`, `executionName`, `executionArn`, `deadlineAt`, `supersededAt`, `revision`, `updatedAt`, `gsi2pk = ACTIVE_VERSION` enquanto não terminal; no `TERMINAL`, `gsi2pk = SUMMARY_PENDING`, com `gsi2sk` no instante da consolidação, até o `refreshSummary` gravar o resumo do `META` ou o `reconciler` conferi-lo e, se diverge, repará-lo (M4) |
 | Resultado da seguradora | `QUOTE#<quoteId>` | `V#<nnnn>#RESULT#<insurerId>` | `insurerName`, `status` (`PENDING`, `PROCESSING` ou terminal), `reasonCode`, `missingFields`, `queryRef`, `attemptRef`, `resultEventId` (o `eventId` do resultado gravado pela retomada; M4), `revision`, `updatedAt` |
 | Oferta | `QUOTE#<quoteId>` | `V#<nnnn>#OFFER#<offerId>` | `insurerId`, `insurerName`, `externalOfferId`, `premiumTotal`, `currency`, `installments`, `coverages`, `deductibles`, `validUntil`, `rawResponseRef`, `createdAt` |
-| Seleção | `QUOTE#<quoteId>` | `V#<nnnn>#SELECTION` | `selectionId`, `offerId`, `selectedAt`, `selectedBy` |
+| Seleção | `QUOTE#<quoteId>` | `V#<nnnn>#SELECTION` | `quoteId`, `version`, `selectionId`, `offerId`, `selectedAt`, `selectedBy` (o `sub` de quem selecionou); uma por versão, gravada com `attribute_not_exists` (M5, §8) |
 | Evidência usada | `QUOTE#<quoteId>` | `V#<nnnn>#EVIDENCE#<workRef>` | `evidenceId`, `queryId`, `reuseDecision`, `resultType`, `policyVersion` (sempre presente: evento sem ele é rejeitado, §8), `summary`, `resultEventId` (M4), `receivedAt` |
 | Resultado tardio | `QUOTE#<quoteId>` | `V#<nnnn>#LATE#<alvo>#<queryId>` | `alvo` = `insurerId` ou `ENRICHMENT`; `reason` (`LATE`, `DUPLICATE`), `status`, `queryRef`, `attemptRef`, `rawResponseRef`, resumo da oferta, `receivedAt`; no enriquecimento, também `evidenceId`, `reuseDecision` e `policyVersion`, que rastreiam a evidência de um resultado tardio ou repetido (RN10, T15) |
-| Idempotência | `IDEMPOTENCY#<orgId>#<operation>#<scope>#<key>` | `META` | `requestHash`, `resourceRef`, `createdAt` |
+| Idempotência | `IDEMPOTENCY#<orgId>#<operation>#<scope>#<key>` | `META` | `requestHash`, `resourceRef`, `createdAt` e o que o reenvio devolve: na seleção, `quoteId`, `version`, `selectionId`, `offerId` e `selectedAt`; na reconciliação, `operationId` e `queryId` (M5) |
 | Waiter | `WAITER#<workRef>` | `META` | `tokenCiphertext`, `quoteId`, `version`, `kind`, `insurerId`, `executionArn`, `expiresAt`, `status` (`WAITING`, `RESUMING`, `DONE`, `EXPIRED`), `resultEventId`, `resumePayload`, `updatedAt`, `gsi2pk = WAITER_RESUMING` quando `RESUMING`; `gsi2pk = WAITER_EXPIRED`, com `gsi2sk` no instante da expiração, quando `EXPIRED`, até o `reconciler` conferir a entrega (M4) |
 | Outbox | `OUTBOX#<eventId>` | `META` | `detailType`, `detail`, `createdAt`, `publishedAt`, `attempts`, `lastError`, `gsi2pk = OUTBOX_PENDING` até publicar, `gsi2sk` = `createdAt` até a primeira falha permanente e, depois dela, o instante da última falha permanente (§7) |
 | Evento consumido | `CONSUMED#<eventId>` | `META` | `consumedAt` (descarte de eventos de resultado repetidos) |
-| Ocorrência operacional | `ISSUE#<issueId>` | `META` | `issueId`, `organizationId`, `source` (`quote`, `provider`), `issueType` (o tipo da ocorrência: nas da quote, `WORKFLOW_FAILED`, `TASK_EXPIRED`, `STUCK_VERSION` ou `DEAD_LETTER`; o `type` do item é `ISSUE`), `status`, `queryId`, `quoteId`, `version` (nas da quote), `firstSeenAt`, `lastSeenAt`, `safeSummary`, `reconcilable`, `revision`, `gsi1pk = ISSUES#<organizationId>`, `gsi1sk = <lastSeenAt>#<issueId>` (M4) |
-| Consulta conhecida | `QUERYREF#<queryId>` | `META` | `organizationId`; gravado pelo `issue-projector`, autoriza o `RECONCILE` (M5) |
-| Reconciliação manual | `OPERATION#<operationId>` | `META` | `organizationId`, `queryId`, `status`, `safeSummary`, `revision`, `updatedAt` (M5) |
+| Ocorrência operacional | `ISSUE#<issueId>` | `META` | `issueId`, `organizationId`, `source` (`quote`, `provider`), `issueType` (o tipo da ocorrência: nas da quote, `WORKFLOW_FAILED`, `TASK_EXPIRED`, `STUCK_VERSION` ou `DEAD_LETTER`; o `type` do item é `ISSUE`), `status`, `queryId`, `quoteId`, `version` (nas da quote), `firstSeenAt`, `lastSeenAt`, `safeSummary`, `reconcilable`, `revision`, `gsi1pk = ISSUES#<organizationId>`, `gsi1sk = <lastSeenAt>#<issueId>` (M4). No M5: `projectedAt` nas projetadas da provider; `resolvedAt` na `STUCK_VERSION` resolvida; `gsi2pk = ISSUE_OPEN`, com `gsi2sk` no instante da última observação, só na `STUCK_VERSION` aberta, até ela se resolver (§9) |
+| Consulta conhecida | `QUERYREF#<queryId>` | `META` | `queryId`, `organizationId`, `firstSeenAt`; gravado pelo `issue-projector` só a partir de `OperationIssueRaised` e `OperationIssueUpdated` com `queryId` e `organizationId` (§3); autoriza o `RECONCILE` (M5) |
+| Reconciliação manual | `OPERATION#<operationId>` | `META` | `operationId`, `organizationId`, `queryId`, `reason`, `requestedBy`, `requestedAt`, `status` (`QUEUED` gravado pela API; depois `SUCCEEDED` ou `FAILED`, do `QueryReconciled`), `safeSummary`, `revision` (0 no `QUEUED`, 2 no resultado), `updatedAt` (M5, §8) |
 
 `<nnnn>` é a versão com quatro dígitos. Todo item tem o atributo `type` (ADR 0015), como `QUOTE`,
 `VERSION` ou `OUTBOX`; o filtro do stream depende dele. No `ISSUE#`, o `type` é `ISSUE`, e o tipo da
 ocorrência fica em `issueType`, como na provider (§3 e §5). A listagem de ocorrências filtra por
 `issueType` e `status` (§11).
+
+Decisão do M5 sobre dados antigos: o Floci local tinha 23 `ISSUE#` (19 `TASK_EXPIRED` e 4
+`WORKFLOW_FAILED`) gravados por um build intermediário do M4, com o tipo da ocorrência em `type` e sem
+`issueType`, e a API os devolvia com `type: null`. Eles foram migrados à mão no Floci. Não há migração no
+código, porque o código commitado sempre gravou no formato atual. Conferir que nenhum `ISSUE#` nesse
+formato existe nos ambientes da AWS fica para o M6.
 
 O passo `evaluate-eligibility` grava no `V#n` a decisão (`eligibilityDecision`,
 `eligibilityReasonCode`, `eligibilityMissingFields`) com o
@@ -257,9 +320,13 @@ mesma situação observada de novo mantém o `firstSeenAt`, atualiza o `lastSeen
 incrementa o `revision`. O `issueId` é `iss_` + os 32 primeiros caracteres hexadecimais do SHA-256 de
 `quote|<issueType>|<alvo>`; o prefixo `quote|` separa essas ocorrências das que a provider gera com o
 mesmo tipo e o mesmo alvo. O alvo é `<quoteId>|<version>` em `WORKFLOW_FAILED` e `STUCK_VERSION`, o
-`workRef` em `TASK_EXPIRED` e o `eventId` do resultado (ou, numa mensagem ilegível, o `messageId` do
-SQS) em `DEAD_LETTER`. As ocorrências da quote têm `source = quote`, `reconcilable = false` e o
-`version` da cotação; a organização vem do `META` da cotação. O waiter `EXPIRED` sai do
+`workRef` em `TASK_EXPIRED` e o `eventId` do resultado ou, a partir do M5, do evento da `issues-dlq`
+(numa mensagem ilegível, o `messageId` do SQS) em `DEAD_LETTER`. As ocorrências da quote têm
+`source = quote`, `reconcilable = false` e o `version` da cotação; a organização vem do `META` da
+cotação. O `DEAD_LETTER` da `issues-dlq` é a exceção: a organização, o `queryId` e o `quoteId` vêm do
+próprio evento, sem `version` (§9). No M5, cada gravação também volta o `status` a `OPEN` e remove o
+`resolvedAt`, e a da `STUCK_VERSION` põe `gsi2pk = ISSUE_OPEN`, com `gsi2sk` no instante da observação:
+uma `STUCK_VERSION` resolvida que volta a ser observada reabre. O waiter `EXPIRED` sai do
 `WAITER_EXPIRED` na mesma transação que grava a ocorrência, ou sozinho quando não há ocorrência (§8).
 Os waiters que a finalização pelo `reconciler` fecha não entram nesse índice: a ocorrência da versão é
 o `WORKFLOW_FAILED`.
@@ -271,13 +338,24 @@ sem ler o evento de novo.
 O `offerId` é determinístico: `of_` + os 32 primeiros caracteres hexadecimais do SHA-256 de
 `offer|<workRef>`, então a reentrega do mesmo resultado aponta para a mesma `OFFER`.
 
+O `selectionId` (M5) também é determinístico: `sel_` + os 32 primeiros caracteres hexadecimais do
+SHA-256 de `selection|<quoteId>|<version>`. Há uma seleção por versão (RN13), e o `OfferSelected` de uma
+versão tem sempre o mesmo `eventId`, mesmo numa corrida de pedidos. O `operationId` da reconciliação
+manual é opaco: `op_` + 32 caracteres hexadecimais de um UUID aleatório, sem dado do operador nem da
+consulta.
+
 **Resumo do META.** A transação principal de cada passo grava só o `V#n` e os itens filhos. O resumo do
 `META` (`phase`, `outcome`, `offerCount`) é atualizado depois, por um `UpdateItem` separado, com
 valores absolutos: `SET`, nunca `ADD`; o `offerCount` sai de uma contagem com `ConsistentRead`. A
 condição é `currentVersion = :v`, e um `ConditionalCheckFailed` é ignorado, porque indica versão
-substituída. Quando a fase gravada não é `TERMINAL`, a condição exige também que o `META` não esteja
-`TERMINAL`: um resumo lido do `V#n` antes da consolidação não rebaixa o `META` já `TERMINAL` (M4). A
-criação de versão grava o resumo inicial de `v+1` na mesma transação que muda o `currentVersion`.
+substituída ou um resumo mais novo já gravado. O M4 só impedia rebaixar o `META` já `TERMINAL`. No M5, o
+resumo é monotônico dentro da versão: a condição exige também
+`attribute_not_exists(phase) OR phase IN (:fases)`, em que `:fases` são a fase gravada e as anteriores a
+ela (`Phase.atOrBefore`), e `attribute_not_exists(offerCount) OR offerCount <= :offerCount`. Assim um
+`refreshSummary` com leitura velha do `V#n` não grava `VALIDATING` sobre `QUOTING`, nenhuma fase sobre
+`TERMINAL` nem menos ofertas. A versão sem `phase` não grava resumo. A listagem de cotações lê esse resumo
+(§11). A criação de versão grava o resumo inicial de `v+1` na mesma transação que muda o
+`currentVersion`.
 
 Essa atualização (`QuoteTable.refreshSummary`) é best-effort nos passos do `workflow-steps`, na
 `dispatch` e no `resume`. Uma falha de SDK só gera log: o passo já gravado não cai por causa dela. O
@@ -287,7 +365,7 @@ Essa atualização (`QuoteTable.refreshSummary`) é best-effort nos passos do `w
 `ACTIVE_VERSION` do `V#n` por `gsi2pk = SUMMARY_PENDING`, que o `refreshSummary` bem-sucedido remove;
 se ele falha, o `reconciler` encontra a versão no índice, confere o resumo e a tira de lá. O
 `reconciler` regrava o resumo só quando ele diverge da versão (`phase`, `outcome` e `offerCount`
-contado com `ConsistentRead`), com a mesma condição `currentVersion = :v`.
+contado com `ConsistentRead`), com a mesma condição, inclusive a monotônica do M5.
 
 **Revision.** O `revision` da versão é calculado na leitura, com `Query` e `ConsistentRead` nos itens
 `V#<nnnn>*` da cotação, como soma de contadores monotônicos:
@@ -406,6 +484,11 @@ com o outbox do evento (§3), e incrementa o `revision`. `UNKNOWN_QUERY`, `UNMAT
 confere a cada ciclo para passá-las a `RESOLVED` quando o problema some. `DEAD_LETTER` não entra nesse
 índice, porque nenhuma observação posterior traz de volta a mensagem descartada.
 
+No M5, o `queryId` e o `quoteId` de uma ocorrência passaram a ter dono conferido, porque o par
+`queryId`/`organizationId` dela autoriza a reconciliação manual na quote (`QUERYREF#`, §4). No
+`DEAD_LETTER`, o `reconciler` lê a `QUERY` (`QueryLedger.ownerOf`, que devolve a organização e o
+`quoteId` gravados nela) antes de gravar a ocorrência; a regra está no §9.
+
 O `reconciler` lê os índices em ordem de `gsi2sk` e com limite por ciclo. Para nenhum lote ficar preso nos
 mesmos itens, o item que continua pendente depois da conferência recebe no `gsi2sk` o instante dela e vai
 para o fim do índice: a consulta `UNKNOWN` de seguradora com API de situação que continua `UNKNOWN`, a
@@ -509,8 +592,8 @@ Toda tarefa declara `TimeoutSeconds`: as esperas usam os parâmetros do §12, e 
 | `dispatch` | Máquina (`waitForTaskToken`) | Waiter + outbox do pedido |
 | `resume` | Fila `results` | Grava resultado, retoma com `SendTaskSuccess`; falha que não vem de condição volta em `batchItemFailures` (§8) |
 | `outbox-relay` | Stream da tabela | Publica eventos, inicia execuções e grava o `executionArn` |
-| `issue-projector` | Fila `issues` | Projeta ocorrências e reconciliações (M5) |
-| `reconciler` | Agendamento (1 min) | M1: republica `OUTBOX_PENDING`. M4: waiters, versões presas, execuções encerradas, resumo do `META`, ocorrências da quote e DLQs (§9) |
+| `issue-projector` | Fila `issues` | Projeta ocorrências no `ISSUE#` e no `QUERYREF#` e reconciliações no `OPERATION#`, com o `CONSUMED#` na mesma transação; falha volta em `batchItemFailures` (M5, §3) |
+| `reconciler` | Agendamento (1 min) | M1: republica `OUTBOX_PENDING`. M4: waiters, versões presas, execuções encerradas, resumo do `META`, ocorrências da quote e DLQs (§9). M5: ciclo de vida das ocorrências da quote (`ISSUE_OPEN`) e `issues-dlq` |
 
 No Floci, cada função Java vira um container, e a memória da máquina de desenvolvimento é limitada.
 Por isso os passos simples ficam numa só função, `workflow-steps`. O papel IAM dela é a união dos
@@ -530,6 +613,21 @@ API ganhou `UpdateItem`, que a nova versão usa no `META` e na versão substitu�
 `STUCK_VERSION_MARGIN_SECONDS` e `RESUMING_RETRY_AFTER_SECONDS`) ficam no `environment` do `provider`
 do `serverless.yml`, e não no da função: o zip das functions valida a configuração ao subir, em
 qualquer função.
+
+No M5:
+
+- o `issue-projector` tem papel próprio, o `IssueProjectorRole`: `GetItem`, `PutItem` e `UpdateItem` na
+  tabela (o `GetItem` lê a organização do `OPERATION#` antes de projetar um `QueryReconciled`, §3) e
+  `ReceiveMessage`, `DeleteMessage` e `GetQueueAttributes` na fila `issues`. O
+  `FunctionTimingConfigurationTest` confere a lista exata. A função usa o zip das functions, com
+  `QUARKUS_LAMBDA_HANDLER = issue-projector`, timeout `issueProjectorTimeoutSeconds` e o ESM da fila
+  com `batchSize: 1` e `ReportBatchItemFailures`;
+- o papel da API ganhou `ConditionCheckItem` na tabela, que a seleção usa para conferir a oferta na
+  transação (§8), e `Query` no índice `gsi1`, das listagens de cotações e de ocorrências (§11);
+- o papel do `reconciler` ganhou `ReceiveMessage`, `DeleteMessage` e `GetQueueAttributes` na
+  `issues-dlq` e `SendMessage` na `issues`, para reprocessar a DLQ (§9); a revisão das ocorrências usa a
+  leitura do `gsi2` e o `UpdateItem` que ele já tinha. As variáveis `ISSUES_QUEUE_URL` e `ISSUES_DLQ_URL`
+  ficam, como as outras do `reconciler`, no `environment` do `provider`.
 
 O `outbox-relay` e o `resume` não usam os modelos do `aws-lambda-java-events`: leem o JSON cru do
 evento de stream ou de SQS e convertem o `NewImage` direto para o `AttributeValue` do SDK v2. O Jackson
@@ -657,25 +755,49 @@ condição que falhou é a do `META` (a 2ª ação), a API relê o `META`: com `
 dela, inclusive os que chegam depois do `createdAt` da nova versão, ficam nela. A versão substituída
 fica sem `allowedActions`, e as ofertas dela, com `unavailabilityReason = VERSION_SUPERSEDED` (T17).
 
-**Seleção** (`POST /v1/quotes/{id}/versions/{v}/selection`). Uma `TransactWriteItems` grava:
-
-1. Put do `IDEMPOTENCY`.
-2. Put do `V#<v>#SELECTION` (`attribute_not_exists`).
-3. Update do `META`: `SET selectionId, selectedVersion, selectedOfferId`, com a condição
-   `currentVersion = :v AND attribute_not_exists(selectionId) AND organizationId = :org`.
-4. `ConditionCheck` na `OFFER`: `attribute_exists(pk) AND validUntil > :agora`.
-5. Outbox `OfferSelected`.
+**Seleção** (`POST /v1/quotes/{id}/versions/{v}/selection`, M5). Registra a intenção de proposta
+(RN13), sem emitir proposta, e é permitida também durante `QUOTING`. A API exige `offers:select`, lê o
+`META` (cotação de outra organização ou inexistente responde 404) e só depois confere a
+`Idempotency-Key` e o body `{"offerId": "..."}`: campo desconhecido, `offerId` ausente, vazio ou acima de
+128 caracteres responde 400 `VALIDATION_ERROR`. O registro de idempotência já gravado decide primeiro: o
+mesmo hash devolve a seleção gravada, e outro hash responde 409 `IDEMPOTENCY_CONFLICT`. Sem registro, a
+decisão sai do `META` e da `OFFER` lidos agora (`Selections.decide`, na `quote-domain`), nesta ordem:
 
 | Situação | Resposta |
 |---|---|
-| Cotação de outra organização | 404 |
-| Seleção existente com a mesma `offerId` | Devolve a seleção existente, mesmo com chave nova (T28) |
-| Seleção existente com outra `offerId` | 409 `SELECTION_ALREADY_EXISTS` |
-| `v` diferente de `currentVersion` | 409 `VERSION_SUPERSEDED` |
-| Falha na `OFFER` | 409 `OFFER_EXPIRED` |
+| Cotação de outra organização, versão maior que `currentVersion` ou `offerId` que não está na versão | 404, sem revelar o motivo |
+| Seleção existente na mesma versão com a mesma `offerId` | 201 com a seleção existente, mesmo com chave nova e mesmo depois de a oferta expirar (T28) |
+| Seleção existente, pedido numa versão que não é a atual | 409 `VERSION_SUPERSEDED` |
+| Seleção existente com outra `offerId` | 409 `SELECTION_ALREADY_EXISTS` (T28) |
+| `v` diferente de `currentVersion`, sem seleção | 409 `VERSION_SUPERSEDED` |
+| `validUntil` igual ou anterior ao relógio do servidor | 409 `OFFER_EXPIRED` (T18) |
+| Oferta válida da versão atual, sem seleção | Grava, abaixo, e responde 201 |
 
-Seleção e nova versão escrevem o mesmo `META`. Por isso o DynamoDB deixa só uma das duas passar
-(T29).
+Em nenhuma recusa algo é gravado: nem `SELECTION`, nem `selectionId` no `META`, nem idempotência, nem
+`OfferSelected` (T18). Para gravar, uma `TransactWriteItems`, com o `TransactionConflict` repetido como
+nas outras mutações, faz:
+
+1. Put do `IDEMPOTENCY` (`attribute_not_exists`).
+2. Put do `V#<v>#SELECTION` (`attribute_not_exists`).
+3. Update do `META`: `SET selectionId, selectedVersion, selectedOfferId, updatedAt`, com a condição
+   `currentVersion = :v AND attribute_not_exists(selectionId) AND organizationId = :org`, a mesma da
+   nova versão.
+4. `ConditionCheck` na `OFFER`: `attribute_exists(pk) AND validUntil > :agora`.
+5. Outbox `OfferSelected`, com `eventId` UUIDv5 do `selectionId` (§4).
+
+A transação cancelada relê primeiro o registro de idempotência, como na criação. Sem ele, se falhou a
+condição da `SELECTION` ou a do `META` (outra seleção ou uma nova versão venceu a corrida), a API relê o
+`META` e decide de novo pela tabela acima; se falhou a da `OFFER`, responde 409 `OFFER_EXPIRED` (a oferta
+expirou entre a leitura e a gravação). Qualquer outro cancelamento, e a falha da AWS antes da aceitação
+durável, responde 503 `SERVICE_UNAVAILABLE`. O 201 traz `selectionId`, `offerId`, `selectedAt` e
+`status = INTENT_RECORDED`, e o GET da versão passa a mostrar a mesma `selection`; o `updatedAt` da
+versão considera também o `selectedAt`.
+
+Seleção e nova versão escrevem o mesmo `META`, com a mesma condição. Por isso o DynamoDB deixa só uma das
+duas passar (T29): com a seleção vencedora, as novas versões recebem 409 `QUOTE_ALREADY_SELECTED`; com a
+nova versão vencedora, as seleções recebem 409 `VERSION_SUPERSEDED`, e as outras novas versões, 409
+`VERSION_CONFLICT`. No Floci, a corrida não produz `TransactionConflict`, porque ele serializa as
+transações condicionais (§13).
 
 **Ações permitidas.** O GET deriva os campos abaixo; `serverTime` é o relógio do servidor na leitura.
 
@@ -685,19 +807,24 @@ Seleção e nova versão escrevem o mesmo `META`. Por isso o DynamoDB deixa só 
 | `SELECT_OFFER` | `v = currentVersion`, sem `selectionId`, permissão `offers:select` e ao menos uma oferta `selectable` |
 | `selectable` (oferta) | `v = currentVersion`, sem `selectionId` e `validUntil > serverTime` |
 | `unavailabilityReason` (oferta) | `VERSION_SUPERSEDED`, `SELECTION_ALREADY_EXISTS` ou `OFFER_EXPIRED`, nessa ordem de precedência; nulo quando `selectable` |
-| `RECONCILE` (ocorrência) | `queryId` presente, `reconcilable = true` e permissão `operations:reconcile` |
+| `RECONCILE` (ocorrência) | `queryId` presente, `reconcilable = true`, `status = OPEN` (M5) e permissão `operations:reconcile` (`Operations.issueActions`) |
 
 `unavailabilityReason` é um enum fechado no OpenAPI.
 
 Nenhuma dessas regras depende da fase. Durante `QUOTING`, a oferta que uma seguradora já gravou (a da
 alpha, enquanto a beta espera o callback) é `selectable`, e `SELECT_OFFER` aparece em `allowedActions`.
 É o que o PRD pede: a seleção é permitida também durante `QUOTING`, com a oferta válida e a versão
-atual, e as outras consultas continuam (PRD, "Seleção e concorrência"). O endpoint de seleção completo
-entra no M5.
+atual, e as outras consultas continuam (PRD, "Seleção e concorrência"). O endpoint de seleção entrou no
+M5 (acima). Depois da seleção, a versão fica sem `allowedActions`, mesmo que uma seguradora responda
+depois com `NEEDS_INFORMATION`: a nova versão exigiria `CREATE_VERSION`, e ela é recusada com 409
+`QUOTE_ALREADY_SELECTED` (T29). O `RECONCILE` exige a ocorrência aberta porque a resolvida não tem mais o
+que reconciliar.
 
 **Listagem de ofertas.** O `GET /v1/quotes/{id}/versions/{v}/offers` pagina com `cursor` e `limit`. O
 `limit` vai de 1 a 100; ausente ou vazio (`limit=`), vale 20. Valor não numérico ou fora da faixa
-responde 400 `VALIDATION_ERROR`, com `fieldErrors[path=limit]`.
+responde 400 `VALIDATION_ERROR`, com `fieldErrors[path=limit]`. No M5, a mesma regra de `limit`
+(`Paging`) vale para a listagem de cotações, a de ocorrências e o catálogo; os cursores e os filtros de
+cada uma estão no §11.
 
 **Pedido.** A `dispatch` recebe `kind`, `insurerId` e o `executionArn`. Ela cifra o token com
 AES-256-GCM, usando o `workRef` como dado associado. A chave é o HMAC-SHA256 do segredo `token-key`
@@ -1011,17 +1138,38 @@ O `reconciler` (M4) refaz, com o código do worker, o encontro do callback `RECE
 tentando o encontro do `UNMATCHED`: quando a correlação aparece, processa o callback, e a ocorrência se
 resolve.
 
-**Reconciliação manual.** O `POST /v1/operations/queries/{id}/reconcile` confere que o
-`QUERYREF#<queryId>` pertence à organização do operador; senão, responde 404. Depois grava, numa
-transação: `IDEMPOTENCY` (`RECONCILE`, escopo `queryId`), `OPERATION#<operationId>` (`QUEUED`) e o
-outbox `QueryReconcileRequested`. O `reconcileWorker` grava o `OPERATION#` `RUNNING` (§5), confere que
-a `QUERY` é da mesma organização, reconcilia pelo mesmo caminho do `reconciler` (§9) e grava o
-resultado com o `QueryReconciled` no outbox, numa transação. A operação já concluída não muda na
-reentrega. O resultado é `SUCCEEDED` quando a consulta já estava concluída ou foi concluída agora, e
-`FAILED` quando ela continua `UNKNOWN`, ainda está em voo (no prazo ou com uma entrega que pode estar
-viva) ou não existe. A consulta de outra organização é tratada como inexistente e não é tocada, para não
-revelar que ela existe. O `GET /v1/operations/{operationId}` responde 404 para
-operação de outra organização. A provider entra no M4; a API, no M5.
+**Reconciliação manual.** O `POST /v1/operations/queries/{id}/reconcile` exige `operations:reconcile`
+(403 antes de qualquer leitura, T30) e confere que o `QUERYREF#<queryId>` existe e pertence à organização
+do operador; senão, responde 404, sem revelar se a consulta existe. Só depois confere a
+`Idempotency-Key` e o body `{"reason": "..."}`: campo desconhecido, `reason` ausente, vazio ou acima de
+500 caracteres responde 400 `VALIDATION_ERROR`. O motivo é texto livre do operador, só para auditoria, e
+nenhuma resposta o devolve. Uma transação grava, todos com `attribute_not_exists`:
+
+1. `IDEMPOTENCY` (`RECONCILE`, escopo `queryId`), com o `operationId` e o `statusUrl`;
+2. `OPERATION#<operationId>` em `QUEUED`, com `reason`, `requestedBy` (o `sub` do operador),
+   `requestedAt`, `revision` 0 e um `safeSummary` de espera (§4);
+3. o outbox `QueryReconcileRequested`, com `eventId` aleatório: a provider deduplica pelo `operationId`
+   (§3).
+
+A resposta é 202 com `operationId`, `status = QUEUED` e `statusUrl` (`/v1/operations/<operationId>`, também
+no `Location`). O reenvio com a mesma chave e o mesmo body devolve o mesmo `operationId`, também com
+`QUEUED`: a situação real é a do `statusUrl`. A mesma chave com outro motivo responde 409
+`IDEMPOTENCY_CONFLICT`; a transação cancelada sem registro de idempotência e a falha da AWS antes da
+aceitação durável respondem 503 `SERVICE_UNAVAILABLE`, como nas outras mutações.
+
+O `reconcileWorker` grava o `OPERATION#` `RUNNING` (§5), confere que a `QUERY` é da mesma organização,
+reconcilia pelo mesmo caminho do `reconciler` (§9) e grava o resultado com o `QueryReconciled` no outbox,
+numa transação. A operação já concluída não muda na reentrega. O resultado é `SUCCEEDED` quando a
+consulta já estava concluída ou foi concluída agora, e `FAILED` quando ela continua `UNKNOWN`, ainda está
+em voo (no prazo ou com uma entrega que pode estar viva) ou não existe. A consulta de outra organização é
+tratada como inexistente e não é tocada, para não revelar que ela existe. O `RUNNING` não é publicado, então
+na quote a operação passa de `QUEUED` direto ao resultado, quando o `issue-projector` projeta o
+`QueryReconciled` (revisão 2) sobre o `OPERATION#` (§3).
+
+O `GET /v1/operations/{operationId}` exige `operations:read` e responde 404 para operação de outra
+organização ou inexistente. Devolve `operationId`, `queryId`, `status`, `safeSummary` e `updatedAt`; o
+`operationId` e o `queryId` são uma adição compatível ao contrato compartilhado. A provider entrou no M4;
+a API, no M5.
 
 ## 9. Falhas, retries e orçamento de tempo
 
@@ -1169,12 +1317,28 @@ para pedidos e para resultados:
   limite; a mensagem ilegível é apagada na hora, também com `DEAD_LETTER`. O `QueryReconcileRequested`
   descartado termina em `FAILED`, com o `QueryReconciled` (revisão 2), o `OPERATION#` que ainda está
   `RUNNING`; sem isso, a operação ficaria `RUNNING` para sempre.
+- No `DEAD_LETTER` de um pedido descartado da provider, o `organizationId` é sempre o da mensagem, mas o
+  `queryId` e o `quoteId` só vão quando a consulta é da organização do pedido (M5). O `reconciler` lê a
+  `QUERY` do `queryId`: se ela é de outra organização, a ocorrência sai sem `queryId` e sem `quoteId`; no
+  pedido de reconciliação, também quando ela não existe, como o `reconcileWorker` a trataria. Num pedido
+  de consulta, a `QUERY` derivada do `workRef` é do próprio pedido, mesmo antes de existir, e o par
+  continua. Quando a consulta é da organização e a mensagem não traz `quoteId`, como o pedido de
+  reconciliação, a ocorrência recebe o `quoteId` gravado na `QUERY`. Sem essa regra, a quote receberia um
+  par para gravar no `QUERYREF#` sem que a organização fosse dona da consulta (§3).
 - Resultados da `results-dlq`, na quote: o prazo da versão não conta. A mensagem volta à fila `results`
   enquanto a tentativa for menor que `dlqMaxAttempts`, mesmo depois do prazo, e a retomada a grava como
   resultado tardio (`LATE`) ou a descarta pelo `CONSUMED`, se já foi consumida (§8), sem chamada
   externa. No limite, é apagada com `DEAD_LETTER`. A mensagem sem `quoteId` e `version` no `detail`, que
   não identifica a cotação, é apagada na hora, também com `DEAD_LETTER`, como a ilegível da provider. O
   `safeSummary` da ocorrência diz o motivo: "no limite de N tentativas" ou "sem identificar a cotação".
+- Eventos da `issues-dlq`, na quote (M5): o mesmo padrão, com reenvio à fila `issues` abaixo de
+  `dlqMaxAttempts`. A mensagem identifica o evento pelo `eventId` e pelo `issueId` ou `operationId` do
+  `detail`; sem eles, é apagada na hora. No limite, ou sem identificação, vira `DEAD_LETTER` da quote com a
+  organização, o `queryId` e o `quoteId` do próprio evento, sem `version`. Essa ocorrência não grava
+  `QUERYREF#` e não é `reconcilable`: o par só a situa na listagem, e sem organização ela fica fora da
+  listagem, como o callback sem correlação. O `safeSummary` diz "Evento <tipo> descartado da issues-dlq
+  na tentativa N" e o motivo ("no limite de N tentativas" ou "sem identificar a ocorrência ou a
+  reconciliação").
 
 **Reconciliação (M4).** O `reconciler` de cada solução roda a cada minuto. Cada dever roda isolado: a
 falha de um fica no log, não impede os outros, e o ciclo seguinte tenta de novo.
@@ -1205,11 +1369,31 @@ no log e não impede os seguintes. Ele:
   com um resultado gravado para ele que o `GetExecutionHistory` da execução encerrada não mostra
   entregue. Com a execução viva, o waiter fica no índice para o ciclo seguinte; sem resultado gravado,
   só sai do índice;
-- reprocessa a `results-dlq` (regra acima) e, a partir do M5, a `issues-dlq`;
+- revisa as ocorrências do `ISSUE_OPEN` (M5; `IssueReviewer`), as de `gsi2sk` mais antigo primeiro, e
+  resolve a `STUCK_VERSION` cuja versão saiu do `ACTIVE_VERSION` (regra abaixo);
+- reprocessa a `results-dlq` (regra acima) e, a partir do M5, a `issues-dlq`. O relatório do ciclo traz
+  os contadores `issues` (`open` e `resolved`) e `issueDeadLetters` (`redriven` e `discarded`);
 - publica em EMF `ExpiredTasks` (ocorrências `TASK_EXPIRED` abertas no ciclo) e
   `OutboxPendingAgeSeconds` (idade, pelo `createdAt`, do `OUTBOX_PENDING` mais antigo). A linha EMF vai
   direto para a saída padrão, sem o prefixo do log, porque o CloudWatch só extrai métrica de uma linha
   que é um objeto JSON.
+
+**Ciclo de vida das ocorrências da quote (M5).** Só a `STUCK_VERSION` se resolve sozinha
+(`QuoteIssues.Type.resolvesItself`). Enquanto aberta, ela fica no índice `gsi2pk = ISSUE_OPEN` (§4), que
+na quote só ela usa; as ocorrências projetadas da provider nunca entram nele. A cada ciclo, o
+`reconciler` lê até `reconcilerBatchSize` itens do índice, confirma na tabela que a ocorrência segue
+`OPEN` e, quando o `V#n` dela já não está `ACTIVE_VERSION` (ou chegou a `TERMINAL`), a resolve: grava
+`RESOLVED`, `resolvedAt`, `lastSeenAt` e o `gsi1sk` com o instante, soma 1 à `revision` e remove o `gsi2`,
+com a condição `status = OPEN AND revision = :lida`. Se a ocorrência foi observada de novo durante a
+revisão, a condição falha, e ela continua aberta. A que segue aberta fica no índice sem mudar o `gsi2sk`.
+
+`WORKFLOW_FAILED`, `TASK_EXPIRED` e o `DEAD_LETTER` da quote ficam `OPEN`: registram um fato já ocorrido
+(execução encerrada sem consolidar, resultado não entregue, mensagem descartada), que nenhuma mudança
+posterior desfaz, como o `DEAD_LETTER` da provider, e o alarme de cada uma já as conta. O T20 do
+`quote-e2e` espera o `WORKFLOW_FAILED` aberto. Decisão do M5: não há reconhecimento manual dessas
+ocorrências no MVP, porque ele exigiria mudar o contrato compartilhado dos dois PRDs; é um limite
+conhecido, e a listagem com `status=OPEN` cresce com elas. A descrição de `IssueStatus` no
+`contracts/openapi.yaml` registra o mesmo limite.
 
 O `reconciler` da provider examina até `maxItems` (100) itens por dever e por ciclo, entrada do
 agendamento. O `ReconcileResult` do ciclo traz em `failedDuties` os deveres que falharam e ficaram para o
@@ -1272,15 +1456,16 @@ Conta como falha a chamada sem resposta de negócio: falha transitória (429, 5x
 envio), falta de resposta depois do envio, outro 4xx e resposta ilegível.
 
 **Alarmes (M4).** Declarados como `AWS::CloudWatch::Alarm` nas stacks das soluções, com os limiares
-do §12 como params do stage: 16 na provider e 6 na quote. O nome é `<solução>-<stage>-` seguido do
-sufixo da tabela. As métricas próprias saem em EMF, nos namespaces `mmda/provider-solution` e
+do §12 como params do stage: 16 na provider e 6 na quote no M4. O M5 acrescentou na quote os 2 da
+`issues-dlq`, com os mesmos limiares da `results-dlq`, e a quote passou a 8. O nome é
+`<solução>-<stage>-` seguido do sufixo da tabela. As métricas próprias saem em EMF, nos namespaces `mmda/provider-solution` e
 `mmda/quote-solution`, com a dimensão `Stage`.
 
 | Sufixo do alarme | Solução | Métrica |
 |---|---|---|
 | `<fila>-dlq-age` e `<fila>-dlq-volume`, para `enrichment-requests`, `insurer-requests`, `reconcile-requests` e `sim-callbacks` | provider | `ApproximateAgeOfOldestMessage` e `ApproximateNumberOfMessagesVisible` |
 | `stream-failures-age` e `stream-failures-volume` | provider | Idem |
-| `results-dlq-age` e `results-dlq-messages`; `stream-failures-age` e `stream-failures-messages` | quote | Idem |
+| `results-dlq-age` e `results-dlq-messages`; `issues-dlq-age` e `issues-dlq-messages` (M5); `stream-failures-age` e `stream-failures-messages` | quote | Idem |
 | `outbox-pending-age` | As duas | EMF `OutboxPendingAgeSeconds` |
 | `unmatched-callbacks` | provider | EMF `UnmatchedCallbacks` |
 | `unknown-queries` | provider | EMF `UnknownQueries` |
@@ -1291,16 +1476,16 @@ O `expired-tasks` só vê as ocorrências `TASK_EXPIRED` da regra do §8. Um wai
 resultado é o timeout normal da etapa e não conta; com a contagem de todo `EXPIRED`, o alarme, de
 limiar 1, dispararia a cada timeout de seguradora (T08, T14, T16).
 
-Nenhum alarme tem `AlarmActions`: o disparo e as ações ficam para o M6. No Floci, os alarmes são
+Nenhum alarme tem `AlarmActions`, inclusive os da `issues-dlq`: o disparo e as ações ficam para o M6. No Floci, os alarmes são
 criados, inclusive os de metric math, e aparecem no `DescribeAlarms`, mas não disparam (§13).
 
 ## 10. Simuladores e cenários
 
 | Rota | Comportamento |
 |---|---|
-| `POST /sim/enrichment/profiles` | Perfil sintético do veículo e do condutor; 404 `NOT_FOUND` com `notFoundRefs` (`vehicleRef`, `principalDriverRef` ou os dois) para referência que contém `unknown` ou `not-found`; 503 nas duas primeiras chamadas de cada referência de pedido para `vehicle-flaky`; 504 sempre para `vehicle-enrichment-down` |
-| `POST /sim/insurers/alpha/quotes` | Seguradora síncrona: oferta; `DECLINED` para `vehicle-alpha-declines`; 503 para `vehicle-alpha-down` |
-| `POST /sim/insurers/beta/quotes` | Seguradora assíncrona: recebe `clientReference`, responde `202` com `providerRequestId` e `status = PROCESSING`, grava a situação e agenda o callback na fila `sim-callbacks`, com o atraso no `DelaySeconds`; sem `clientReference` ou sem veículo, 400 |
+| `POST /sim/enrichment/profiles` | Perfil do veículo e do condutor, do catálogo quando a referência está nele e sintético fora dele (abaixo); 404 `NOT_FOUND` com `notFoundRefs` (`vehicleRef`, `principalDriverRef` ou os dois) para referência que contém `unknown` ou `not-found`, regra que vem antes do catálogo; 503 nas duas primeiras chamadas de cada referência de pedido para `vehicle-flaky`; 504 sempre para `vehicle-enrichment-down` |
+| `POST /sim/insurers/alpha/quotes` | Seguradora síncrona: oferta com as coberturas do perfil pedido (M5); `DECLINED` para `vehicle-alpha-declines`; 503 para `vehicle-alpha-down`; perfil de cobertura fora do catálogo, 400 `INVALID_REQUEST`, antes dos cenários |
+| `POST /sim/insurers/beta/quotes` | Seguradora assíncrona: recebe `clientReference`, responde `202` com `providerRequestId` e `status = PROCESSING`, grava a situação e agenda o callback na fila `sim-callbacks`, com o atraso no `DelaySeconds`; sem `clientReference` ou sem veículo, 400; perfil de cobertura fora do catálogo, 400 sem agendar nada (M5) |
 | `GET /sim/insurers/beta/quotes/{ref}` | Situação atual por `providerRequestId` ou `clientReference`: `PROCESSING` até o `readyAt` e, depois dele, `COMPLETED` com o resultado; 404 para referência desconhecida. Serve à reconciliação (M4) |
 
 Cenários da beta pelo veículo, sete ao todo, todos com `insurerName` "Beta Seguros":
@@ -1329,10 +1514,29 @@ que seja o charset que cada salto suponha (§13). Uma resposta fora de 2xx falha
 (`batchItemFailures`), que volta à fila e, depois de `simCallbacksMaxReceiveCount` recebimentos, vai para
 a DLQ.
 
-Os simuladores não leem o catálogo: decidem só pela referência recebida. O perfil do enriquecimento é
-sintético e determinístico. O ano do veículo sai de um ano de quatro dígitos na referência
-(`vehicle-classic-1998` dá 1998) ou, sem ele, de um hash da referência entre 2012 e 2023, sempre a
-partir de 2000. Por isso só uma referência com ano anterior a 2000 exercita o `NO_APPLICABLE_INSURER`.
+Desde o M5, os simuladores leem o catálogo do laboratório, o mesmo `contracts/fixtures/catalog.json` da
+quote e do frontend (abaixo). O comportamento de cada cenário continua decidido pelo id do veículo; o
+catálogo dá os dados:
+
+- Enriquecimento: para veículo do catálogo, marca, modelo e ano vêm dele. Para condutor do catálogo, os
+  anos de habilitação são os anos completos desde o `licenseDate` até a data civil de
+  `America/Sao_Paulo` (`EnrichmentSimulatorController.CIVIL_ZONE`), e não a de UTC; zero quando o
+  `licenseDate` é nulo. Valor de mercado e sinistros continuam sintéticos, porque o catálogo não os tem.
+  A regra por id (`unknown` ou `not-found` dá 404) vem antes do catálogo, então o `vehicle-not-found` e o
+  `driver-not-found`, que estão no catálogo, continuam 404.
+- Seguradoras: as coberturas da oferta são as do perfil pedido (`risk.coverageProfile.code`, ou o próprio
+  texto) e, sem perfil no pedido, as do `COMPREHENSIVE`. A franquia é calculada sobre o valor segurado da
+  `COLLISION`: 5% na alpha e 4% na beta. Perfil sem `COLLISION` sai sem franquia. Até o M4, a franquia
+  saía do valor de mercado.
+- Fora do catálogo, a referência continua 100% sintética e determinística, o que preserva os testes
+  antigos. O ano do veículo sai de um ano de quatro dígitos na referência (`vehicle-classic-1998` dá 1998)
+  ou, sem ele, de um hash da referência entre 2012 e 2023, sempre a partir de 2000. No catálogo, o
+  `vehicle-classic-1998` tem o ano 1998. Por isso só um veículo com ano anterior a 2000 exercita o
+  `NO_APPLICABLE_INSURER`.
+
+A classe `LabCatalog` lê o arquivo do classpath. Se um id de veículo ou de condutor se repete entre as
+organizações, se um perfil de cobertura se repete ou se falta o `COMPREHENSIVE`, a Lambda falha ao subir:
+o fornecedor recebe só a referência, então os ids precisam ser únicos.
 
 O estado dos simuladores fica na tabela `provider-solution-<stage>-simulators`, com TTL, que só a
 Lambda `simulators` acessa. O contador do `vehicle-flaky` é por referência do pedido (o
@@ -1388,10 +1592,18 @@ Regras de laboratório:
   (`EnrichmentProfile`, na `provider-domain`) só tem veículo e condutor.
 - O `label` de cada `missingFields` vem de uma tabela `path → label` na `quote-domain`.
 
-Os veículos, condutores, clientes e perfis de cobertura de cada organização (`org-acme` e
-`org-globex`) ficam em `contracts/fixtures/catalog.json`. O arquivo é empacotado no `quote-api` como
-recurso de classpath (um `<resource>` apontando para `contracts/fixtures`) e a API o lê do classpath.
-Um teste abre o `-lambda.zip` e confere a entrada.
+**Catálogo compartilhado.** Os veículos, condutores, clientes e perfis de cobertura de cada organização
+(`org-acme` e `org-globex`) ficam em `contracts/fixtures/catalog.json`. O arquivo é empacotado no
+`quote-api` como recurso de classpath (um `<resource>` apontando para `contracts/fixtures`) e a API o lê
+do classpath. Desde o M5, o `provider-simulators` empacota o mesmo arquivo do mesmo jeito, em
+`fixtures/catalog.json`, sem cópia no módulo. Nos dois módulos, um teste abre o `-lambda.zip` e confere
+que a entrada é igual ao arquivo do contrato (`LambdaZipCatalogIT`).
+
+No M5, o catálogo ganhou o `driver-not-found` na `org-acme`, para o laboratório integrado exercitar o 404
+com `principalDriverRef` e o caso com as duas referências. A API serve o catálogo em
+`/v1/catalog/{customers,vehicles,drivers,coverage-profiles}` (§11), e o `contracts/fixtures/catalog-pages.json`
+traz as páginas que ela responde; o T22 do `quote-e2e` confere que o catálogo servido é igual a esse
+arquivo, e as coberturas das ofertas do e2e são as do `COMPREHENSIVE` do `catalog.json`.
 
 ## 11. Autenticação
 
@@ -1422,13 +1634,73 @@ smallrye.jwt.required.claims=token_use,client_id
   `FlociResource` sobe sem `FLOCI_HOSTNAME` e o host do `jwks_uri` publicado pode não resolver fora
   do container.
 - Os testes ponta a ponta criam usuários com as APIs administrativas do Cognito e obtêm os tokens com
-  `InitiateAuth` (`USER_PASSWORD_AUTH`) no host; quem os valida é a Lambda da API.
+  `InitiateAuth` (`USER_PASSWORD_AUTH`) no host; quem os valida é a Lambda da API. No M5, o `quote-e2e`
+  passou a usar quatro usuários, cada um mantido exatamente nos seus grupos, e cria os grupos que faltarem:
+  o `e2e-acme-writer` (`quotes:read`, `quotes:write` e `offers:select`), o `e2e-acme-operator` (as cinco
+  permissões), o `e2e-acme-viewer` (sem `offers:select` nem `operations:reconcile`) e o
+  `e2e-globex-operator` (as cinco, na `org-globex`).
 
-O `GET /v1/operations/issues` consulta o `gsi1` com `gsi1pk = ISSUES#<organizationId do operador>`,
-com `issueType` e `status` em `FilterExpression`, sem `Scan` (o `type` do item é `ISSUE`, §4). Callback sem correlação não tem organização.
-No MVP, ele não é listado para nenhuma organização, porque o contrato não tem papel de operador da
-plataforma; aparece no alarme de callbacks `UNMATCHED` e no log da provider. `RECONCILE` e
-`GET /v1/operations/{operationId}` conferem a organização do operador (§8).
+**Contrato e permissões (M5).** O `contracts/openapi.yaml` está na versão 1.0.0 e cobre as 14 operações
+da seção "Contrato compartilhado de integração — versão 2.0" dos dois PRDs, com paginação por cursor,
+`Idempotency-Key`, o `ConflictError` com os seis códigos de 409 e o erro padrão. Cada operação declara a
+permissão na extensão `x-permissions`; sem ela, a resposta é 403 antes de qualquer leitura (T30), e o
+`GET /v1/me` só exige o token e a organização:
+
+| Permissão | Operações |
+|---|---|
+| `quotes:read` | `GET /v1/quotes`, `GET /v1/quotes/{id}/versions/{v}` e `GET .../offers` |
+| `quotes:write` | `POST /v1/quotes`, `POST /v1/quotes/{id}/versions` e as quatro rotas `/v1/catalog/*`, porque o catálogo existe para preencher a cotação |
+| `offers:select` | `POST /v1/quotes/{id}/versions/{v}/selection` |
+| `operations:read` | `GET /v1/operations/issues` e `GET /v1/operations/{operationId}` |
+| `operations:reconcile` | `POST /v1/operations/queries/{queryId}/reconcile` |
+
+O contrato acrescenta, de forma compatível, `quoteId` e `version` em `QuoteVersion`, `operationId` e
+`queryId` em `Operation`, o parâmetro `limit`, a resposta 415 e a extensão `x-permissions`. O 429, com
+`Retry-After`, está declarado em todas as rotas. Decisão do M5: a API não o emite no MVP, porque não há
+cota de produto; na AWS, ele pode vir do throttling do API Gateway, conferido no M6. Os 14 arquivos novos
+de `contracts/fixtures` (progresso, oferta parcial, recusa, indisponibilidade, pendência, `PARTIAL` com
+pendência, expiração, conflitos, erros, seleção, listagem, páginas do catálogo, operações e `/v1/me`)
+são trocas conferidas contra o contrato pelo `ContractFixturesTest` ([testes](testing.md)).
+
+**Identificadores de caminho e limites de chave (M5).** Um `quoteId`, `queryId` ou `operationId` de
+caminho com mais de 128 caracteres (`Items.fitsKey`, acima de qualquer id da plataforma) responde 404 sem
+ler a tabela. Sem isso, o DynamoDB recusaria a chave de partição acima de 2048 bytes com
+`ValidationException`, e a API responderia 500. O `maxLength` de `reason` (500), `offerId` (128) e
+`search` (100) conta caracteres Unicode (code points), como o JSON Schema, e não unidades UTF-16
+(`MutationRequests.characters`).
+
+**Listagens com cursor (M5).** As listagens de cotações e de ocorrências leem o `gsi1` da organização de
+quem chama (`IndexPages`), do `gsi1sk` maior para o menor, sem `Scan`. O cursor é o `gsi1sk` do último
+item devolvido, em base64url; a chave da tabela sai dele, e o `gsi1pk` vem sempre do token, então um
+cursor adulterado não lê outra organização. Uma posição fora do formato `<ordem>#<id>` ou acima de 1024
+bytes (`IndexPages.MAX_POSITION_BYTES`, o limite da chave de ordenação) responde 400 `Cursor inválido.`,
+em vez de chegar ao DynamoDB. Cada página faz até 10 consultas, de pelo menos 50 itens avaliados cada,
+para o filtro que descarta quase tudo não varrer o índice inteiro; por isso uma página pode vir menor que
+`limit` e ainda trazer `nextCursor`. Ao mudar os filtros, o cliente recomeça sem cursor.
+
+- `GET /v1/quotes` (`quotes:read`): `gsi1pk = ORG#<organizationId>` e `gsi1sk = <createdAt>#<quoteId>`,
+  as mais novas primeiro. Cada item traz `id`, `currentVersion`, `phase`, `outcome`, `createdAt` e
+  `offerCount`, do resumo do `META` (§4). `phase` e `outcome` vão em `FilterExpression`. `createdFrom` e
+  `createdTo` são inclusivos: a condição da chave limita o período ao segundo, porque o `createdAt` tem
+  precisão variável no `gsi1sk`, e o instante exato é conferido no código. Valor fora do enum, instante
+  fora do ISO 8601 ou `createdFrom` posterior a `createdTo` respondem 400; o cursor fora do período pedido
+  também, porque o DynamoDB recusaria o `ExclusiveStartKey` fora da condição da chave.
+- `GET /v1/operations/issues` (`operations:read`): `gsi1pk = ISSUES#<organizationId do operador>` e
+  `gsi1sk = <lastSeenAt>#<issueId>`, as vistas por último primeiro, com `issueType` e `status` em
+  `FilterExpression` (o `type` do item é `ISSUE`, §4). `type` aceita os sete tipos do contrato, quatro da
+  provider e três só da quote. Cada item traz `id`, `queryId`, `quoteId`, `type` (do `issueType`),
+  `status`, `firstSeenAt`, `lastSeenAt`, `safeSummary` e `allowedActions` (§8), sem payload, token nem
+  motivo informado. Callback sem correlação não tem organização. No MVP, ele não é listado para nenhuma
+  organização, porque o contrato não tem papel de operador da plataforma; aparece no alarme de callbacks
+  `UNMATCHED` e no log da provider. O mesmo vale para o `DEAD_LETTER` sem organização. `RECONCILE` e
+  `GET /v1/operations/{operationId}` conferem a organização do operador (§8).
+
+**Catálogo (M5).** As rotas `/v1/catalog/customers`, `/vehicles` e `/drivers` devolvem só as entradas da
+organização do token, com `id` e `label`; `/coverage-profiles` devolve os perfis completos, que valem para
+todas. Organização sem fixtures recebe listas vazias de clientes, veículos e condutores. A busca
+(`search`, até 100 caracteres) ignora maiúsculas e acentos e procura no rótulo e no id, na ordem do
+catálogo. O cursor é o id do último item devolvido, em base64url; um id que não está no resultado da busca
+atual responde 400, para o cliente recomeçar.
 
 ## 12. Parâmetros por stage
 
@@ -1468,8 +1740,11 @@ plataforma; aparece no alarme de callbacks `UNMATCHED` e no log da provider. `RE
 | `statusReadBudgetSeconds` | 30 | Teto, por ciclo do `reconciler`, das leituras da API de situação; chega ao `reconciler` em `STATUS_READ_BUDGET_SECONDS`. O `reconcileWorker` não tem teto (M4; provider, §9) |
 | `stuckVersionMarginSeconds` | 120 | Margem além do `deadlineAt` para `STUCK_VERSION` (M4; quote) |
 | `resumingRetryAfterSeconds` | 30 | Idade do waiter `RESUMING` a partir da qual o `reconciler` o retoma; maior que o timeout do `resume` (M4; quote) |
-| `dlqAlarmVisibleMessages` (provider), `dlqAlarmMessages` (quote) | 1 | Mensagens visíveis que disparam o alarme de volume de cada DLQ e da `stream-failures` (M4) |
-| `dlqAlarmAgeSeconds` | 300 | Idade da mensagem mais antiga que dispara o alarme de idade de cada DLQ e da `stream-failures` (M4) |
+| `issueProjectorTimeoutSeconds` | 15 | Timeout do `issue-projector`, igual ao do `resume` (M5; quote) |
+| `issuesVisibilityTimeoutSeconds` | 90 | `VisibilityTimeout` da fila `issues`, 6 vezes o timeout do `issue-projector` (M5; quote) |
+| `issuesMaxReceiveCount` | 5 | Recebimentos da fila `issues` antes da `issues-dlq` (M5; quote) |
+| `dlqAlarmVisibleMessages` (provider), `dlqAlarmMessages` (quote) | 1 | Mensagens visíveis que disparam o alarme de volume de cada DLQ e da `stream-failures` (M4; na quote, também a `issues-dlq` desde o M5) |
+| `dlqAlarmAgeSeconds` | 300 | Idade da mensagem mais antiga que dispara o alarme de idade de cada DLQ e da `stream-failures` (M4; na quote, também a `issues-dlq` desde o M5) |
 | `outboxAlarmAgeSeconds` | 120 | Limiar do alarme `outbox-pending-age` da quote (M4) |
 | `unmatchedCallbacksAlarmThreshold`, `unknownQueriesAlarmThreshold` | 1 cada | Limiares dos alarmes `unmatched-callbacks` e `unknown-queries` (M4; provider) |
 | `expiredTasksAlarmThreshold` | 1 | Limiar do alarme `expired-tasks` (M4; quote) |
@@ -1615,9 +1890,37 @@ próprio T06 descreve (§14), não um defeito do M4: a folga do T06 depende de a
 assim, os 22,4 s ficaram abaixo dos 30 s de `outboxRepublishAfterSeconds`, e nada foi republicado em
 dobro.
 
+**Medição no Floci (M5): tempo até a primeira oferta.** É a métrica do PRD (§13, "primeira oferta
+persistida menos aceitação durável"), que o plano do PRD (§15) pede no M5. Foi medida no T01 com duas
+seguradoras, que lê as ofertas a cada 250 ms. A coluna "No servidor" é o `createdAt` da primeira `OFFER`
+menos o `createdAt` do `V#0001`, gravado na transação de aceitação; "Visível no GET" conta do `POST` até a
+oferta aparecer na API. "Fria" é a primeira cotação logo depois do deploy, com só os `reconciler` ativos.
+
+| Rodada | Visível no GET | No servidor | `POST` até `TERMINAL` |
+|---|---|---|---|
+| Fria | 27,51 s | 25,21 s | 32,29 s |
+| Quente 1 | 6,29 s | 6,23 s | 11,32 s |
+| Quente 2 | 8,35 s | 8,11 s | 11,20 s |
+| Quente 3 | 7,03 s | 6,88 s | 11,97 s |
+| T01 no `quote-e2e` completo da integração | 7,45 s | 7,40 s | 10,50 s |
+| T01 no `quote-e2e` completo da verificação, máquina ociosa | 9,20 s | 8,93 s | 14,08 s |
+| T01 no `quote-e2e` completo da verificação, sob carga | 15,74 s | 15,59 s | 21,80 s |
+
+A mediana das três quentes é 7,03 s até a oferta visível. Na fria, quase toda a diferença é partida a
+frio: a alpha levou 3,2 s da `dispatch` à chamada e a beta, 8,2 s da chamada ao callback, contra 0,6 s e
+3,9 s nas quentes. Na rodada sob carga, a carga da máquina chegou perto de 14. Nas 136 versões com oferta
+da tabela implantada, gravadas do M1 ao M5, a mesma métrica do servidor teve mínimo de 6,24 s, p50 de
+7,31 s, p95 de 19,63 s, máximo de 23,92 s e média de 8,96 s.
+
+T06 com N = 12 na rodada da verificação com a máquina ociosa: um `MISS` e 11 `HIT`; os 12 `POST` levaram
+15,2 s. Do `POST` a `TERMINAL`, mínimo de 14,6 s, p50 de 31,9 s e máximo de 37,3 s. A espera do
+enriquecimento teve mínimo de 5,5 s, p50 de 17,4 s e máximo de 18,9 s, com só 1,1 s de folga nos 20 s:
+bem menos que os 7,7 s do M4. Na rodada sob carga, o T06 terminou pelo timeout da espera de 62 s
+([testes](testing.md)).
+
 ## 13. Limites do Floci 2.4.0
 
-Comportamentos verificados nas revisões do desenho, no spike do M0 e na integração do M1 ao M4. "Não
+Comportamentos verificados nas revisões do desenho, no spike do M0 e na integração do M1 ao M5. "Não
 verificado" marca o que nenhum teste cobriu ainda; nessas linhas, a coluna do meio diz a alternativa
 caso o Floci não atenda. A coluna M6 marca o que precisa ser repetido na AWS.
 
@@ -1625,7 +1928,8 @@ caso o Floci não atenda. A coluna M6 marca o que precisa ser repetido na AWS.
 |---|---|---|
 | `TransactWriteItems` com condição | Funciona; cancela tudo e informa o motivo por item | |
 | `TransactWriteItems` com 101 ações | `ValidationException` | |
-| `TransactionConflict` | Não emulado: 20 transações concorrentes no mesmo item terminam todas com sucesso. Por isso o T06 com 100 pedidos concorrentes no `provider-functions` não exercita o conflito | Repetir, com 100 pedidos concorrentes na liderança |
+| `TransactionConflict` | Não emulado: 20 transações concorrentes no mesmo item terminam todas com sucesso. Por isso o T06 com 100 pedidos concorrentes no `provider-functions` não exercita o conflito. Com condição, o Floci serializa as transações: numa sonda do M5, com 5 rodadas de 20 transações condicionais concorrentes, cada rodada teve uma vencedora, e nenhuma recebeu `TransactionConflict`. A corrida entre seleção e nova versão (T29; 4 rodadas de 6 pedidos no `QuoteApiFlociIT`) só exercita a condição do `META` | Repetir, com 100 pedidos concorrentes na liderança e com a corrida do T29 |
+| Limites de chave e `ExclusiveStartKey` do DynamoDB | Não reproduzidos pelo Floci nem pelo mock dos testes: chave de partição acima de 2048 bytes, de ordenação acima de 1024 e `ExclusiveStartKey` fora da condição da chave não são recusados. Na AWS, as três respondem `ValidationException`. A API não chega a elas (§11), e os testes de contrato da API usam uma tabela simulada que reproduz as recusas (`DynamoDbLimits`, [testes](testing.md)) | |
 | `ReturnValuesOnConditionCheckFailure = ALL_OLD` em `TransactWriteItems` | Não verificado. O desenho não depende dele: o conflito de idempotência relê com `GetItem` e `ConsistentRead` (§8) | |
 | `StartExecution` repetido com mesmo nome e entrada | Idempotente | |
 | `lambda:invoke.waitForTaskToken` e `sqs:sendMessage.waitForTaskToken` | Funcionam | Repetir |
@@ -1660,10 +1964,10 @@ caso o Floci não atenda. A coluna M6 marca o que precisa ser repetido na AWS.
 | `iss` do Cognito | `http://floci:4566/<poolId>`, com o host do `FLOCI_HOSTNAME` mesmo em chamada por `localhost`; igual ao `issuer` do `openid-configuration`. O `jwks_uri` usa o mesmo host. Tokens `RS256` com `kid = <poolId>`; a assinatura confere com o JWKS | Repetir (issuer da AWS) |
 | Claims dos tokens do Cognito | Access token: `token_use = access`, `client_id`, `cognito:groups`, sem `aud`. ID token: `token_use = id`, `aud = client_id`, `cognito:groups`. `InitiateAuth` com `USER_PASSWORD_AUTH` devolve tokens sem challenge para usuário `CONFIRMED` | |
 | Containers de Lambda ociosos | Removidos depois de 300 s sem invocação (verificação a cada 30 s); a invocação seguinte paga o cold start. Chave `floci.services.lambda.container-idle-timeout-seconds`; a variável de ambiente equivalente não foi testada | |
-| CloudFormation de Cognito, KMS, Scheduler, alarmes e EventSourceMapping | Tipos reconhecidos. Os 22 alarmes do M4 são criados, inclusive os de metric math, e o `DescribeAlarms` lista métrica e limiar de cada um; o alarme não dispara | Repetir (disparo e `AlarmActions` dos alarmes) |
+| CloudFormation de Cognito, KMS, Scheduler, alarmes e EventSourceMapping | Tipos reconhecidos. Os 22 alarmes do M4 e os 2 da `issues-dlq` do M5 são criados, inclusive os de metric math, e o `DescribeAlarms` lista métrica e limiar de cada um; o alarme não dispara | Repetir (disparo e `AlarmActions` dos alarmes) |
 | Métricas EMF | A linha EMF dos `reconciler` das duas soluções chega ao CloudWatch Logs como JSON puro. A extração da métrica não foi verificada | Repetir (extração) |
 | `DescribeExecution` | Devolve `FAILED`, `TIMED_OUT` e `ABORTED` das execuções encerradas e `ExecutionDoesNotExist` para execução ausente, que o `reconciler` da quote trata como inexistente (§9) | |
-| `StopExecution` | Marca a execução `ABORTED`, mas o interpretador do Floci continua executando os estados sem registrá-los no histórico. Na primeira tentativa do T20, isso consolidou a versão com `STEP_TIMEOUT` antes de o `reconciler` rodar; por isso o T20 alinha a parada ao ciclo dele (§14) | Repetir |
+| `StopExecution` | Marca a execução `ABORTED`, mas o interpretador do Floci continua executando os estados sem registrá-los no histórico. Na primeira tentativa do T20, isso consolidou a versão com `STEP_TIMEOUT` antes de o `reconciler` rodar; por isso o T20 alinha a parada ao ciclo dele (§14). Sob carga, numa rodada do M5, a continuação gravou `STEP_TIMEOUT` na beta, mas o `reconciler` finalizou a versão antes do `ConsolidateQuote`, o que é legítimo e o T20 ainda não reconhece (§14) | Repetir |
 | Vazão da relay e da `dispatch` sob carga | Cai com a máquina carregada: no T06 de uma rodada do M4, com load de 7,7, a relay da quote publicou até 22,4 s depois do `createdAt`, e a `dispatch` rodou em série, a cerca de 1,6 s por chamada (§12) | |
 
 ## 14. Testes por marco
@@ -1674,7 +1978,7 @@ caso o Floci não atenda. A coluna M6 marca o que precisa ser repetido na AWS.
 | M2 | T04, T05, T06, T15, T25, T27 | Unitários em `provider-domain` e `quote-functions`; integração com Floci em `provider-functions` (T04, T05, T06 com 100 pedidos, T15) e `quote-functions` (lado da quote de T04, T25, T27 e `JOIN`); `quote-e2e` (T04, T05, T06, T25 e T27, com 11 testes ao todo) |
 | M3 | T01, T07, T08, T11, T12, T21, T26 | Unitários em `provider-domain`, `provider-simulators`, `quote-domain` e `quote-functions`; contrato em `provider-api` e `quote-api`; integração com Floci em `provider-api` (T11, T12), `provider-functions` (T11, T12, T21), `provider-simulators`, `quote-api` (T07, T08) e `quote-functions` (T01, T07, T08, T11, T26); `quote-e2e` (T01 com duas seguradoras, T07, T08, T11, T12, T21 e T26, com 18 testes ao todo) |
 | M4 | T09, T10, T13, T14, T16, T17, T20, T31 | Unitários em `provider-domain`, `provider-functions`, `quote-domain` e `quote-functions`; contrato e configuração em `provider-functions`, `quote-api` e `quote-functions`; integração com Floci em `provider-api`, `provider-functions` (T14, T16, T31), `quote-api` (T17) e `quote-functions` (T09, T10, T13, T16, T17, T20, T31); `quote-e2e` (os oito casos, com 26 testes ao todo) |
-| M5 | T18, T22, T28, T29, T30 | Contrato em `quote-api` contra `contracts/openapi.yaml`, `quote-e2e` |
+| M5 | T18, T22, T28, T29, T30 | Unitários em `quote-domain` (seleção e operações) e `provider-simulators` (catálogo); contrato em `quote-api` contra `contracts/openapi.yaml` e as fixtures (T18, T22, T28, T29, T30) e em `quote-functions` (AsyncAPI); integração com Floci em `provider-functions`, `provider-simulators`, `quote-api` (T18, T28, T29, listagem e reconciliação) e `quote-functions` (`issue-projector`, `issues-dlq`, `STUCK_VERSION` e resumo do `META`); `quote-e2e` (os cinco casos, a reconciliação manual e o catálogo com a listagem, com 33 testes ao todo) |
 | M6 | Itens marcados no §13 | Stage `dev` na AWS |
 
 Além dos casos do PRD:
@@ -1785,7 +2089,12 @@ Além dos casos do PRD:
     continuação do Floci consolidou antes do ciclo, confere as invariantes: as ofertas mantidas, nenhum
     `WORKFLOW_FAILED` e o `QuoteCompleted` com o `outcome` da versão. A tentativa que o `reconciler`
     finaliza confere `PARTIAL`, a beta `TIMED_OUT` com `WORKFLOW_ABORTED`, as ofertas mantidas, a versão
-    fora do `ACTIVE_VERSION`, o `WORKFLOW_FAILED` aberto e o `QuoteCompleted` no outbox.
+    fora do `ACTIVE_VERSION`, o `WORKFLOW_FAILED` aberto e o `QuoteCompleted` no outbox. Limite conhecido,
+    visto sob carga numa rodada do M5: o caso classifica a tentativa só pelo `reasonCode` da beta. A
+    continuação do Floci gravou `STEP_TIMEOUT` na beta, mas o `reconciler` finalizou a versão antes do
+    `ConsolidateQuote` (`TERMINAL` e `WORKFLOW_FAILED` no mesmo instante), o que é legítimo, e o teste
+    acusou "consolidated before the reconciler". Decidir pela transição a `TERMINAL` ou pela presença da
+    ocorrência evitaria o falso negativo; o teste não mudou.
   - O T31 põe as entregas direto nas DLQs. Primeiro confere a `RedrivePolicy` implantada nas filas
     `results`, `insurer-requests` e `reconcile-requests`. Depois, com uma cotação já concluída, o caso
     põe a versão fora do prazo (`deadlineAt` no passado) antes de pôr o `InsurerResultRecorded` na
@@ -1803,18 +2112,49 @@ Além dos casos do PRD:
     versão; o T16, o callback tardio guardado como `LATE` sem reabrir a cotação. O T17 cria a v2 com a
     v1 ainda em andamento, e o usuário do e2e ganhou o grupo `perm_offers_select`, para conferir que só
     a versão atual oferece `SELECT_OFFER`.
-- M5, o que o M4 deixou: a publicação do `QueryReconcileRequested` pela API da quote; a regra e a fila
-  `issues` da quote, com o `issue-projector`, que grava o `type` do evento no `issueType` do item; a
-  `issues-dlq`, com reprocessamento e alarme; o `GET /v1/operations` e a projeção das ocorrências na API;
-  o `/v1/me`, o catálogo e a listagem. Até lá, os eventos novos da provider chegam ao barramento sem
-  consumidor.
-- M5, também do M4: a resolução da `STUCK_VERSION` e das demais ocorrências da quote, que o M4 só abre.
-  E uma corrida herdada do M1 ao M3: um `refreshSummary` com leitura velha do `V#n` ainda pode gravar no
-  `META` uma fase não terminal mais antiga, como `VALIDATING` sobre `QUOTING`. O M4 fechou só a
-  regressão de `TERMINAL` (§4), e o M5 usa o `META` na listagem.
-- M5: endpoint de seleção completo. Também entram a descrição de `QuoteVersion.missingFields` no
-  `contracts/openapi.yaml` e um fixture de `PARTIAL` com pendência: em `PARTIAL`, as pendências ficam
-  em `insurerResults[].missingFields`, e o `missingFields` da versão fica vazio, o que o PRD permite (§6).
+- M5, o que o M4 deixou e entrou: a publicação do `QueryReconcileRequested` pela API da quote (§8); a
+  regra e a fila `issues` da quote, com o `issue-projector`, que grava o `type` do evento no `issueType`
+  do item (§3); a `issues-dlq`, com reprocessamento e alarmes (§9); o `GET /v1/operations/issues`, o
+  `GET /v1/operations/{operationId}`, o catálogo e a listagem de cotações (§11).
+- M5, também do M4: o ciclo de vida das ocorrências da quote. Só a `STUCK_VERSION` se resolve sozinha;
+  `WORKFLOW_FAILED`, `TASK_EXPIRED` e `DEAD_LETTER` ficam `OPEN`, sem reconhecimento manual, por decisão
+  do M5 (§9). E a corrida herdada do M1 ao M3 (um `refreshSummary` com leitura velha do `V#n` gravando
+  no `META` uma fase mais antiga, como `VALIDATING` sobre `QUOTING`) foi fechada: o resumo do `META` só
+  avança, em fase e em número de ofertas (§4), e a listagem o lê.
+- M5: o endpoint de seleção (§8), a descrição de `QuoteVersion.missingFields` no `contracts/openapi.yaml`
+  e o fixture `quote-partial-needs-information.json`: em `PARTIAL`, as pendências ficam em
+  `insurerResults[].missingFields`, e o `missingFields` da versão fica vazio, o que o PRD permite (§6). Os
+  simuladores passaram a ler o `catalog.json` (§10), e o `DEAD_LETTER` da provider passou a levar o par
+  `queryId`/`organizationId` só da consulta da organização do pedido (§9).
+- M5, testes por módulo: no `quote-domain`, o `SelectionsTest` e o `OperationsTest`. No `quote-api`, o
+  `SelectionContractTest`, o `OperationsContractTest`, o `ContractFixturesTest` e casos novos no
+  `QuoteApiContractTest` e no `QuoteApiFlociIT` (T18, T28, T29, listagem e reconciliação). No
+  `quote-functions`, casos novos no `QuoteFunctionsFlociIT` (`issue-projector`, `issues-dlq`,
+  `STUCK_VERSION`, resumo monotônico e o ciclo do `reconciler`), no `ProviderEventsConsumptionTest`, no
+  `QuoteEventsContractTest` e no `FunctionTimingConfigurationTest`. No `provider-simulators`, o
+  `LabCatalogTest`, o `LambdaZipCatalogIT` e casos novos nos testes dos três simuladores. No
+  `provider-functions`, casos novos no `DeadLetterReprocessingIT` e no `EnrichmentReuseIT`. O que cada
+  classe cobre está em [testes](testing.md).
+- M5, `quote-e2e`: 33 testes, os 26 do M1 ao M4 mais T18, T22, T28, T29, T30 e dois casos sem número no
+  PRD, que usam o prefixo `m5_`: a reconciliação manual (`m5_manualReconciliationOfAConcludedQuery…`) e o
+  catálogo com a listagem (`m5_catalogAndQuoteListingPageWithCursorAndFilters`). Toda troca com a API da
+  quote, nos 33 testes, passa pelo `ContractClient`, que a confere contra o `contracts/openapi.yaml`. Os
+  números da rodada de fechamento ficam só em [testes](testing.md). Adaptações ao laboratório e ao Floci:
+  - Decisão do M5: a reconciliação manual de ponta a ponta usa uma `UNKNOWN_QUERY` publicada no barramento
+    pelo próprio teste, em nome da provider, apontando a consulta já concluída da alpha de uma cotação do
+    `vehicle-flaky`, porque nenhum cenário do laboratório deixa uma consulta `UNKNOWN` de forma
+    determinística. O resultado conferido é `SUCCEEDED` ("já concluída"), nas duas tabelas. O teste remove
+    no `finally` a ocorrência, o `QUERYREF#` e o `CONSUMED#` que ele criou.
+  - O T18 fabrica a oferta expirada: grava no passado o `validUntil` da oferta e o devolve no `finally`.
+  - O vencedor do T29 varia entre rodadas: em umas, a seleção vence uma disputa; em outras, a nova versão
+    vence as três, e a seleção é feita sem disputa na versão 4. O teste afirma que o `NEEDS_INFORMATION`
+    da beta chega depois da seleção, o caso "pendência posterior" do PRD. No Floci, a corrida não gera
+    `TransactionConflict` (§13).
+- M6, o que o M5 deixou: o IAM efetivo do `IssueProjectorRole` e das permissões novas da API e do
+  `reconciler`; o disparo e as `AlarmActions` dos alarmes da `issues-dlq`; os tempos reais de DLQ da fila
+  `issues`; o `TransactionConflict` na corrida do T29; o 429 do API Gateway; o T18, o T29 e o T30 com os
+  grupos reais do Cognito; os params do stage `dev`; e a conferência de que nenhum `ISSUE#` no formato
+  anterior ao ADR 0015 existe nos ambientes da AWS (§4).
 - M6: task token, callbacks (inclusive com corpo fora do ASCII), IAM (inclusive os papéis próprios da
   provider), timeouts, `TransactionConflict` (inclusive com 100 pedidos concorrentes na liderança),
   `JOIN` ponta a ponta, retry e divisão de lote do stream, visibilidade × timeout, issuer do Cognito,

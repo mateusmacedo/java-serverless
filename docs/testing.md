@@ -8,7 +8,7 @@ convenção de nome, para o build do dia a dia não depender de deploy.
 |---|---|---|---|---|
 | Unitário e contrato | `*Test` | `mvn test` | Nada além do JDK | Segundos |
 | Integração com Floci | `*IT` | `mvn verify` | Docker | Cerca de 30 s |
-| Ponta a ponta | `*E2E` | `pnpm test:e2e` | Docker, Floci do `compose.yaml` no ar e login no Serverless | O `QuoteFlowE2E` leva cerca de 13 min ([rodada de fechamento do M4](#rodada-de-fechamento-do-m4)), além do deploy e dos outros módulos |
+| Ponta a ponta | `*E2E` | `pnpm test:e2e` | Docker, Floci do `compose.yaml` no ar e login no Serverless | O `QuoteFlowE2E` leva cerca de 16 min com a máquina ociosa ([rodada de fechamento do M5](#rodada-de-fechamento-do-m5)), além do deploy e dos outros módulos |
 
 O `mvn verify` roda os dois primeiros níveis em todas as soluções. Os módulos `sample-solution/e2e`,
 `receipt-solution/e2e` e `quote-solution/e2e` só entram no build com o perfil `-Pe2e`.
@@ -27,7 +27,11 @@ Antes de um `verify` que valida um marco, recompile tudo, tocando os fontes ou c
 IDE grava classes em `target/`, e uma classe que ela compilou com erro ("Unresolved compilation
 problems") parece em dia para o Maven: o javac não a recompila, e o surefire a pula sem aviso. No
 primeiro `verify` da integração do M4, isso tirou o `QuoteEventsContractTest` da contagem (79 testes
-unitários no `quote-functions` em vez de 85), sem nenhuma falha.
+unitários no `quote-functions` em vez de 85), sem nenhuma falha. No M5, a extensão Java do VS Code
+recompilou em `target/` cada fonte tocado antes do Maven, e um `touch` em massa com a IDE aberta deixou
+14 classes de teste quebradas no `quote-functions`: o failsafe rodou 0 testes, sem falha. Feche a IDE ou
+desligue o `java.autobuild` antes do `verify` de um marco e confira, depois dele, que toda classe de teste
+tem relatório novo e que nenhum `.class` tem "Unresolved compilation".
 
 ```bash
 find platform/spring-aws provider-solution quote-solution -path '*/src/*' -name '*.java' -exec touch {} +
@@ -70,6 +74,13 @@ Quarkus, nas do BOM do Quarkus, com o AssertJ fixado no `quarkus-parent` na mesm
 | `quote-functions` | `ReconcilerMetricsTest` (M4) | A linha EMF declara `ExpiredTasks` e `OutboxPendingAgeSeconds` no namespace configurado, com a dimensão `Stage` |
 | `quote-functions` | `ExpiredTaskDeliveryTest` (M4) | Saídas de `TaskSucceeded` no formato do histórico do Step Functions: o resultado levado pelo `SendTaskSuccess` e o `Payload` do passo de timeout que leu o resultado gravado contam como entrega, na seguradora e no enriquecimento; o passo de timeout sem o resultado, a saída de outra seguradora e a de outra tarefa, como a consolidação, não contam |
 | `provider-functions` | `StatusReadsTest` (M4) | As leituras da API de situação param no teto do ciclo (`statusReadBudgetSeconds`) e, para a seguradora que não respondeu, até o ciclo seguinte, sem parar as das outras; o `reconcileWorker` não tem teto |
+| `quote-domain` | `SelectionsTest` (M5) | Decisão da seleção sem AWS: oferta válida da versão atual é gravada; T28 (a mesma oferta devolve a seleção existente, mesmo depois de expirar, e outra oferta é conflito); T18 (oferta expirada recusada também no instante exato do `validUntil`); versão substituída vem antes da seleção existente e da expiração; versão que ainda não existe e oferta fora da versão são 404; `selectionId` único por versão e opaco |
+| `quote-domain` | `OperationsTest` (M5) | `RECONCILE` só na ocorrência aberta, com consulta, `reconcilable` e para quem tem `operations:reconcile`; tipos de ocorrência das duas soluções, com só os da provider projetados; só a `STUCK_VERSION` se resolve sozinha; `operationId` opaco e único; as fases só avançam (`Phase.atOrBefore`) |
+| `provider-simulators` | `LabCatalogTest` (M5) | O catálogo empacotado é o próprio `contracts/fixtures/catalog.json`; todo veículo de cenário dos simuladores está nele, inclusive os das regras que a quote aplica; anos de habilitação completos desde o `licenseDate`; perfis com as coberturas e o `COMPREHENSIVE` presente; id de veículo repetido entre organizações, condutor ou perfil repetido e catálogo sem o `COMPREHENSIVE` são recusados na subida |
+| `provider-simulators` | `EnrichmentSimulatorControllerTest`, `AlphaInsurerSimulatorControllerTest` e `BetaInsurerSimulatorControllerTest` (casos do M5) | Veículo e condutor do catálogo perfilados por ele; anos de habilitação pela data civil de `America/Sao_Paulo` (relógio fixo em 2026-03-15T01:30Z, 22h30 de 14/03 em São Paulo: a Ana, habilitada em 2012-03-15, tem 13 anos); `vehicle-classic-1998` do catálogo mantém o ano anterior a 2000; `vehicle-not-found` do catálogo continua 404 declarado; condutor sem `licenseDate` tem zero anos; ofertas com as coberturas do perfil pedido e franquia sobre a `COLLISION` do perfil padrão; perfil fora do catálogo recusado, na beta sem agendar nada |
+| `quote-functions` | `FunctionTimingConfigurationTest` (casos do M5) | A fila `issues` recebe os três eventos operacionais da provider pela regra própria, com DLQ, visibilidade e alarmes de idade e volume da `issues-dlq`; o `reconciler` reprocessa a DLQ; o `IssueProjectorRole` tem exatamente as ações do código e do consumo da fila; dois consumidores SQS (`resume` e `issue-projector`) |
+| `quote-functions` | `ProviderEventsConsumptionTest` (caso do M5) | Os exemplos operacionais do AsyncAPI da provider (`QueryReconciled`, `OperationIssueRaised` e `OperationIssueUpdated`) passam pelo `issue-projector` com tabela simulada e viram `ISSUE#` ou `OPERATION#` com o `CONSUMED#`; só a ocorrência grava `QUERYREF#` |
+| `quote-functions` | `QuoteEventsContractTest` (casos do M5) | O `OfferSelected` e o `QueryReconcileRequested` que a API grava seguem o AsyncAPI da quote; toda operação `receive` aponta uma mensagem que existe no AsyncAPI da provider, e o conjunto consumido é exatamente `EnrichmentResolved` e `InsurerResultRecorded` na fila `results` e `QueryReconciled`, `OperationIssueRaised` e `OperationIssueUpdated` na fila `issues` |
 
 Os testes das functions da `sample-solution` simulam os clients do SDK com
 `Answers.CALLS_REAL_METHODS`: o código chama a sobrecarga com `Consumer`, que monta o request e chama
@@ -103,6 +114,26 @@ a atual é `409 VERSION_CONFLICT`; nova versão depois de uma seleção é `409 
 reenvio com a mesma chave e o mesmo body é replay; body inválido é `400 VALIDATION_ERROR`; sem a
 permissão de escrita, `403`; cotação de outra organização, `404`. No M4, o `QuoteEventsContractTest` passou a conferir também o exemplo
 `unknown-query` do `QueryReconcileRequested`, com 5 exemplos contra o schema.
+
+No M5, o `contracts/openapi.yaml` 1.0.0 é o contrato compartilhado com o frontend, e o `quote-api` o
+confere em quatro classes. As três primeiras chamam a API com o filtro do RestAssured e uma tabela
+simulada no lugar do DynamoDB; o `ContractFixturesTest` passa as fixtures direto pelo validador:
+
+| Classe | O que cobre |
+|---|---|
+| `QuoteApiContractTest` (casos do M5) | Toda rota implementada está no contrato e toda rota do contrato está implementada (T22); toda rota responde 403 sem a permissão que o `x-permissions` declara (T30); token de outra chave ou com payload adulterado é 401; o catálogo responde exatamente as páginas de `catalog-pages.json` (T22), só da organização, com busca e paginação; a listagem lê o índice da organização com filtros e cursor; filtros inválidos são 400; cursor fora do período ou acima do limite da chave é 400; `quoteId` maior que uma chave é 404 sem chegar à tabela; o `search` conta caracteres como o contrato (60 emojis passam, 101 não) |
+| `SelectionContractTest` | Seleção durante `QUOTING` grava a intenção e o evento numa transação; T28 (a mesma oferta devolve a seleção existente, mesmo com outra chave; outra oferta é `SELECTION_ALREADY_EXISTS`); T18 (oferta expirada recusada sem gravar nada; oferta fora da versão e cotação de outra organização são 404); versão substituída é conflito; T29 (a nova versão que vence a corrida torna a seleção `VERSION_SUPERSEDED`, a seleção concorrente que vence decide a resposta da outra, e depois da seleção um `NEEDS_INFORMATION` posterior não oferece ação); oferta que expira entre a leitura e a gravação é `OFFER_EXPIRED`; reenvio com a mesma chave é replay e outro body é conflito; falha antes da seleção durável é 503; sem `offers:select`, 403 (T30); pedidos inválidos são 400 |
+| `OperationsContractTest` | Ocorrências conforme o contrato, com `RECONCILE` só onde é permitido; filtros no índice da organização; reconciliação de consulta conhecida grava auditoria e pedido numa transação; consulta desconhecida ou de outra organização é 404; sem `operations:reconcile`, 403 (T30); reenvio com a mesma chave devolve a mesma operação; `reason` ausente é 400 e conta caracteres como o contrato (266 code points, 516 unidades UTF-16, passam; 501 emojis não); ids e cursor maiores que uma chave são 404 ou 400, sem erro interno; a operação segue o contrato e é da organização |
+| `ContractFixturesTest` | T22: as trocas dos 14 arquivos de `contracts/fixtures` (hoje 61, com o mínimo de 50 afirmado no teste) seguem o contrato, a requisição também, menos nas trocas marcadas `invalidRequest`, que são inválidas de propósito; as fixtures cobrem as fases, os `outcome`, os status de seguradora, os motivos de indisponibilidade, os seis códigos de 409 e os erros 400, 401, 403, 404, 409, 429 e 503; os enums do contrato são os do Java |
+
+A tabela simulada dos testes de contrato (`DynamoDbLimits`) reproduz três recusas do DynamoDB que o
+mock e o Floci não fazem: chave de partição acima de 2048 bytes, chave de ordenação acima de 1024 e
+`ExclusiveStartKey` fora da condição da chave, todas com `ValidationException`. Sem ela, os testes de
+cursor e de id longo passariam mesmo com a API respondendo 500 na AWS.
+
+No `quote-functions`, o `QuoteEventsContractTest` confere o `OfferSelected` e o `QueryReconcileRequested`
+contra o AsyncAPI da quote (0.3.0) e o consumo declarado nele, e o `ProviderEventsConsumptionTest` passa
+pelo `issue-projector` os exemplos operacionais do AsyncAPI da provider (tabela dos unitários).
 
 Entre as soluções, `CompletedRequestContractTest`, na `receipt-solution`, lê o exemplo do
 `RequestCompleted` documentado no [AsyncAPI da sample](events/asyncapi.yaml), copiado em
@@ -210,9 +241,27 @@ mudou.
 | `QuoteFunctionsFlociIT` (casos do M4) | T09 (todas recusam: `NO_OFFER`, sem retry na recusa); T10 (todas indisponíveis: `TECHNICAL_FAILURE`, nunca `NO_OFFER`); T16 (resultado depois do prazo final guardado como evidência, sem reabrir a versão terminal); T17 (resultado da versão substituída fica nela e não toca o resumo atual); T13 (resultado gravado cuja retomada falhou retomado pelo `reconciler`, sem pedido novo); T20 (execução `FAILED`, `TIMED_OUT` ou `ABORTED` finalizada com as ofertas gravadas e `WORKFLOW_FAILED`); `STUCK_VERSION` aberta uma vez e resumo perdido reparado; resumo da versão consolidada cujo `refreshSummary` falhou reparado pelo `reconciler`, e resumo lido antes da consolidação que não rebaixa o `META` terminal; waiter ou versão que sempre falha não bloqueia os outros; waiter expirado sem resultado é o timeout normal e não abre ocorrência; resultado gravado que a execução encerrada nunca recebeu abre `TASK_EXPIRED` uma vez, e o resultado entregue não abre; T31 (resultado que sempre falha chega à DLQ, e o reprocessamento não o duplica; resultado reprocessado depois do prazo da versão volta à retomada e fica como `LATE`); ciclo com todos os deveres e o relatório |
 | `QuoteApiFlociIT` (casos do M4) | T17: nova versão substitui a atual e bloqueia a seleção na antiga; nova versão idempotente e serializada pelo `expectedVersion`; cotação de outra organização é 404, e um leitor não cria versão |
 
+O M5 acrescenta o contrato integrado e as operações. As regras estão no §3, §8, §9, §10 e §11 do
+[desenho técnico](quotation-platform.md). No `quote-functions`, o `FlociResource` ganhou a fila `issues`
+com a DLQ. No `quote-api`, o `FlociResource` ganhou dois operadores (`olga-operator` na `org-acme` e
+`gil-globex-operator` na `org-globex`) e os grupos de operação, e o usuário da Globex ganhou
+`perm_offers_select`, para a seleção em cotação de outra organização responder 404 pela organização, e não
+pela permissão (T18). Das asserções do M1 ao M4, só mudaram duas contagens do
+`FunctionTimingConfigurationTest`: os consumidores SQS passaram de 1 para 2, e a `issues-dlq` entrou no
+conjunto de DLQs com alarme.
+
+| Classe | O que cobre |
+|---|---|
+| `QuoteFunctionsFlociIT` (casos do M5) | `issue-projector` projeta a ocorrência da provider uma vez por `eventId` e por `revision`; `QueryReconciled` atualiza uma vez a operação da sua organização, sem criar `QUERYREF#`, e o de outra organização é `FOREIGN_ORGANIZATION` e não muda a operação; eventos malformados ou de outra origem não são projetados; a `issues-dlq` é reenviada abaixo do limite e descartada no limite com a organização do evento; a `STUCK_VERSION` é resolvida quando a versão sai do `ACTIVE_VERSION`; uma leitura velha do resumo não rebaixa a fase nem o número de ofertas; o ciclo do `reconciler` roda os deveres do M5 e os reporta |
+| `QuoteApiFlociIT` (casos do M5) | Listagem das cotações da organização por cursor, com o resumo do `META`; T28 (seleção definitiva, idempotente e que bloqueia novas versões); T18 (oferta expirada, oferta de outra versão e cotação de outra organização recusadas sem intenção gravada); T29 (corrida entre seleção e nova versão com exatamente um vencedor, em 4 rodadas de 6 pedidos, conferindo o `status` e o `code` de cada perdedor); reconciliação de consulta conhecida auditada, enfileirada e restrita à organização |
+| `DeadLetterReprocessingIT` (caso do M5) | O `DEAD_LETTER` de um pedido de reconciliação descartado só leva a consulta que existe e é da organização do pedido, e recebe o `quoteId` gravado na `QUERY` |
+| `EnrichmentReuseIT` (casos do M5) | Seguidor já registrado por outra entrega espera o líder sem segundo registro (`ReuseLedger.Registration.ALREADY_REGISTERED`); entrega que perde a consulta para outra entrega do mesmo pedido não chama nem publica (`QueryLedger.Leading.QUERY_EXISTS`), com um `@MockitoSpyBean` do `QueryLedger` que repassa às chamadas reais |
+| `SimulatorsLambdaFlociIT` (caso do M5) | O handler da Lambda perfila um veículo do catálogo que está no próprio classpath |
+| `LambdaZipCatalogIT` (`provider-simulators`, M5) | O zip da Lambda dos simuladores leva o mesmo `catalog.json` do contrato, byte a byte, como o do `quote-api` |
+
 O `mvn verify` dos módulos da provider e da quote roda com o comando abaixo. As contagens da rodada de
-fechamento do M4 estão em [Rodada de fechamento do M4](#rodada-de-fechamento-do-m4). Na integração do
-M4, eram 515; no fechamento do M3, 435; no do M2, 341.
+fechamento do M5 estão em [Rodada de fechamento do M5](#rodada-de-fechamento-do-m5). No fechamento do M4,
+eram 538; na integração do M4, 515; no fechamento do M3, 435; no do M2, 341.
 
 ```bash
 mvn -B verify -pl provider-solution/domain,provider-solution/api,provider-solution/functions,provider-solution/simulators,quote-solution/domain,quote-solution/api,quote-solution/functions -am
@@ -241,9 +290,17 @@ fluxo, e não contagens exatas de reinício.
 
 A regra e a fila que capturam o `ReceiptIssued` são criadas pelo teste e removidas ao final.
 
-`QuoteFlowE2E`, no módulo `quote-solution/e2e`, cobre do M1 ao M4 da plataforma de cotação, com o
-barramento da plataforma, a `provider-solution` e a `quote-solution` implantados. São 26 testes: os 11
-do M1 e do M2, os 7 do M3 e os 8 do M4.
+`QuoteFlowE2E`, no módulo `quote-solution/e2e`, cobre do M1 ao M5 da plataforma de cotação, com o
+barramento da plataforma, a `provider-solution` e a `quote-solution` implantados. São 33 testes: os 11
+do M1 e do M2, os 7 do M3, os 8 do M4 e os 7 do M5.
+
+**Conferência de contrato no e2e (M5).** Toda troca com a API da quote, nos 33 testes, passa pelo
+`ContractClient`, que a confere contra o `contracts/openapi.yaml`, o mesmo arquivo do frontend, com o
+`openapi-request-validator-core` (dependência de teste do `quote-e2e`). A resposta é sempre conferida; a
+requisição, só nos 2xx, porque os casos de erro a fazem inválida de propósito. Qualquer violação falha o
+teste que fez a chamada. O cliente guarda as operações exercitadas e, à parte, as que tiveram resposta 2xx
+conferida (`succeeded()`). Foi essa conferência que achou, na integração do M5, os `ISSUE#` antigos do
+Floci que a API devolvia com `type: null` ([desenho técnico](quotation-platform.md), §4).
 
 - **T01, variante com uma seguradora:** `vehicle-van-2022` com uso `COMMERCIAL` cota só na alpha e
   termina `COMPLETED`, com uma oferta selecionável, a evidência do enriquecimento na quote e na provider
@@ -346,6 +403,39 @@ do M1 e do M2, os 7 do M3 e os 8 do M4.
   descartado com `DEAD_LETTER` e `OperationIssueRaised`. A cotação e a consulta não mudam. A passagem
   real pela `RedrivePolicy`, com as visibilidades do stage, levaria mais de 7 min por mensagem e fica no
   `QuoteFunctionsFlociIT` e no `DeadLetterReprocessingIT`.
+- **T18** (M5): a Globex recebe 404 na seleção e na leitura da cotação da Acme. A oferta com `validUntil`
+  fabricado no passado recebe `409 OFFER_EXPIRED`, e a versão fica só com `CREATE_VERSION`. Nada é
+  gravado: nem `SELECTION`, nem `selectionId`, nem idempotência, nem `OfferSelected`. O `validUntil`
+  original volta no `finally`.
+- **T22** (M5): as 14 operações do contrato são exercitadas, e o T22 afirma o 2xx de 11 delas. As três
+  que ele só exercita com 409 ou 404 (`createQuoteVersion`, `reconcileQuery` e `getOperation`) têm o 2xx
+  conferido contra o contrato no T17, no T29 e no `m5_manual…`, porque o `ContractClient` confere toda
+  resposta. O caso confere o `/v1/me` dos quatro usuários; o catálogo servido igual a `catalog-pages.json`;
+  o `PARTIAL` com a pendência da beta igual à fixture; o `NEEDS_INFORMATION` com as duas referências
+  (`vehicle-not-found` com `driver-not-found`); os erros 400 e 401 iguais aos de `errors.json`; e também
+  401 com token adulterado, 403, 404, `409 VERSION_CONFLICT` e 415.
+- **T28** (M5): a mesma oferta devolve a mesma seleção, com a mesma chave ou com outra; outra oferta
+  recebe `409 SELECTION_ALREADY_EXISTS`; a chave reutilizada com outra oferta, `409 IDEMPOTENCY_CONFLICT`.
+  Ficam uma `SELECTION` e um `OfferSelected`.
+- **T29** (M5): 3 seleções e 3 novas versões soltas juntas, por até 3 rodadas; só um lado vence, e, se a
+  nova versão vence, a disputa se repete na versão criada. Depois da seleção, a nova versão recebe
+  `409 QUOTE_ALREADY_SELECTED`, e o `PARTIAL` com a beta `NEEDS_INFORMATION` sai sem `CREATE_VERSION`. O
+  teste afirma que o `NEEDS_INFORMATION` da beta chega depois da seleção, o caso "pendência posterior" do
+  PRD, e registra os dois instantes no log.
+- **T30** (M5): o viewer recebe 403 na seleção e na reconciliação, e o writer também na reconciliação e
+  na listagem de ocorrências. Nada é gravado: nem idempotência, nem `OPERATION#`.
+- **Reconciliação manual** (`m5_manualReconciliationOfAConcludedQueryRoundTripsThroughTheProviderAndTheIssueProjector`):
+  o teste publica no barramento, em nome da provider, uma `UNKNOWN_QUERY` que aponta a consulta concluída
+  da alpha de uma cotação. Ela chega ao `issue-projector`, que grava o `QUERYREF#`, e a listagem mostra
+  `RECONCILE` só para quem tem a permissão. O `reconcile` responde `202 QUEUED` com `Location`; o reenvio
+  devolve o mesmo id, a mesma chave com outro motivo recebe 409, e a Globex recebe 404. A operação termina
+  `SUCCEEDED` nas duas tabelas, e o `QueryReconciled` de volta fica consumido na quote. A listagem só traz
+  ocorrências da `org-acme`, sem dado bruto. No `finally`, o teste remove a ocorrência, o `QUERYREF#` e o
+  `CONSUMED#` que criou.
+- **Catálogo e listagem** (`m5_catalogAndQuoteListingPageWithCursorAndFilters`): as 4 rotas do catálogo,
+  paginadas, iguais ao `catalog.json` da organização, com busca sem acento nem maiúscula; a listagem de
+  cotações, com `limit=1` e cursor, da mais nova para a mais antiga, com os filtros `outcome`, `phase` e a
+  janela inclusiva; a Globex não vê as cotações da Acme; erros 400 de filtro, de intervalo e de cursor.
 
 Cada caso de reuso usa um par veículo/condutor próprio: T01 e T02, `vehicle-van-2022` com
 `driver-acme-bruno`; T04, `vehicle-sedan-2019` com `driver-acme-ana`; T05, `vehicle-classic-1998` com
@@ -376,6 +466,22 @@ nenhum veículo faz as duas seguradoras recusarem e a beta não tem cenário de 
 que dependem do `reconciler` esperam os ciclos dele com prazo, sem pausa fixa. O usuário do e2e ganhou o
 grupo `perm_offers_select`, para o T17 conferir que só a versão atual oferece `SELECT_OFFER`.
 
+Nos casos do M5, cada um apaga o reuso do par antes e no `finally`: T18, `vehicle-alpha-declines` com
+`driver-acme-ana`; T22, `vehicle-beta-needs-info` com `driver-acme-ana` e `vehicle-not-found` com
+`driver-not-found`; T28, `vehicle-beta-duplicate` com `driver-acme-ana`; T29, `vehicle-beta-needs-info`
+com `driver-acme-bruno`; T30, `vehicle-alpha-down` com `driver-acme-ana`; reconciliação manual,
+`vehicle-flaky` com `driver-acme-ana`. O caso do catálogo e da listagem usa o `vehicle-salvage` e o
+`driver-no-license`, que terminam sem consulta externa. Dois casos não têm número no PRD e usam o prefixo
+`m5_`. A reconciliação manual usa uma `UNKNOWN_QUERY` publicada pelo próprio teste, porque nenhum cenário
+do laboratório deixa uma consulta `UNKNOWN` de forma determinística; o resultado conferido é `SUCCEEDED`
+("já concluída").
+
+O M5 usa quatro usuários do Cognito, cada um mantido exatamente nos seus grupos, e cria os grupos que
+faltarem: `e2e-acme-writer`, o que já existia (`quotes:read`, `quotes:write` e `offers:select`);
+`e2e-acme-operator`, com as cinco permissões; `e2e-acme-viewer`, sem `offers:select` nem
+`operations:reconcile`; e `e2e-globex-operator`, da `org-globex`, com as cinco permissões, para o 404 dele
+vir da organização, e não da permissão.
+
 O usuário de teste é criado pelas APIs administrativas do Cognito (`AdminCreateUser`,
 `AdminSetUserPassword` e `AdminAddUserToGroup`, nos grupos da organização e das permissões), e o
 access token vem de `InitiateAuth` com `USER_PASSWORD_AUTH`. Quem valida o token é a Lambda da API. O
@@ -390,7 +496,8 @@ mais N segundos (62 s com N = 12), porque o worker do Floci recebe cerca de 1 pe
 T19 depende do agendamento, não da máquina: espera até 3 min, com polling de 5 s. Ele também é coberto
 pela integração do `quote-functions`.
 
-O resultado da rodada de fechamento do M4 está em
+O resultado da rodada de fechamento do M5, com os tempos de cada teste, está em
+[Rodada de fechamento do M5](#rodada-de-fechamento-do-m5); o do M4, em
 [Rodada de fechamento do M4](#rodada-de-fechamento-do-m4). Na rodada de integração do M4, com a máquina
 ociosa e sem build em paralelo, os 26 testes do `QuoteFlowE2E` passaram em 747,6 s (12:31,84 min no
 comando inteiro). Numa rodada anterior, com a máquina carregada (load de 7,7), 25 de 26 passaram em
@@ -470,6 +577,94 @@ numa rodada um `HIT` chegou 0,43 s depois do prazo, com 1 das 20 versões em `TE
 ([desenho técnico](quotation-platform.md), §12). O caso de 100 pedidos concorrentes fica no
 `EnrichmentReuseIT`.
 
+## Rodada de fechamento do M5
+
+Números da rodada de verificação do M5, depois das correções da revisão. Este é o único lugar com as
+contagens e os tempos dessa rodada: eles valem para ela e podem mudar a cada rodada, com teste novo ou com
+a carga da máquina.
+
+Antes do `verify`, todos os fontes de `platform/spring-aws` e dos 7 módulos foram recompilados com
+`touch` (comando no início deste documento). Depois dele, as 62 classes de teste tinham relatório
+surefire ou failsafe novo, e nenhum `.class` dos 8 módulos tinha "Unresolved compilation".
+
+O `mvn verify` dos 7 módulos (comando em [Integração com Floci](#integração-com-floci)), com o
+`spring-aws` que entra pelo `-am`, rodou 626 testes em 3:35 min: nenhuma falha e 1 pulado, o mesmo caso
+`dev` do `ServerlessConfigurationTest` do M4. Eram 538 no fechamento do M4; 616 antes das correções da
+revisão do M5, que acrescentaram 10 testes.
+
+| Módulo | Testes |
+|---|---|
+| `spring-aws` | 5 |
+| `provider-domain` | 72 |
+| `provider-api` | 19 (7 de contrato e 12 de integração) |
+| `provider-functions` | 153 (61 unitários, 1 deles pulado, e 92 de integração) |
+| `provider-simulators` | 47 (41 unitários e 6 de integração) |
+| `quote-domain` | 111 |
+| `quote-api` | 84 (65 de contrato e 19 de integração, 18 no `QuoteApiFlociIT` e 1 no `LambdaZipCatalogIT`) |
+| `quote-functions` | 135 (92 unitários e 43 de integração) |
+| Total | 626 (1 pulado) |
+
+Foram feitas 14 provas por mutação nas correções da revisão do M5: cada correção, desfeita no código, fez
+falhar o teste que a protege.
+
+O `QuoteFlowE2E` rodou duas vezes:
+
+| Rodada | Resultado | Tempo | Carga da máquina |
+|---|---|---|---|
+| Sob carga | 31 de 33: o T06 terminou pelo timeout de 62 s da espera, com cotações ainda sem `TERMINAL`, e o T20 deu o falso negativo descrito em [Limites conhecidos](#limites-conhecidos) | 1301 s (21:47 min no Maven) | 2,33 no início, perto de 14 durante |
+| Máquina ociosa | 33 de 33 | 944,6 s (15:49 min no Maven) | 1,80 no início |
+
+Na rodada de integração do M5, antes da revisão, os 33 testes passaram em 877,2 s, com carga de 1,89.
+Tempos por teste na rodada com a máquina ociosa:
+
+| Teste | Tempo |
+|---|---|
+| T01, variante com uma seguradora | 13,7 s |
+| T02 | 9,3 s |
+| T03 | 3,3 s |
+| T04 | 21,8 s |
+| T05 | 12,8 s |
+| T06 (N = 12) | 50,3 s |
+| T19 | 50,7 s |
+| T23 | 3,4 s |
+| T24 | 3,6 s |
+| T25 | 6,3 s |
+| T27 | 9,3 s |
+| T01 com duas seguradoras | 17,2 s |
+| T07 | 15,3 s |
+| T08 | 27,3 s |
+| T11 | 29,7 s |
+| T12 | 12,5 s |
+| T21 | 35,2 s |
+| T26 | 6,3 s |
+| T09 | 10,1 s |
+| T10 | 12,7 s |
+| T13 | 89,5 s |
+| T14 | 72,8 s |
+| T16 | 42,6 s |
+| T17 | 20,3 s |
+| T20 | 126,1 s |
+| T31 | 94,7 s |
+| T18 | 16,2 s |
+| T22 | 19,6 s |
+| T28 | 15,9 s |
+| T29 | 43,5 s |
+| T30 | 15,8 s |
+| Reconciliação manual (`m5_manual…`) | 23,3 s |
+| Catálogo e listagem (`m5_catalog…`) | 10,7 s |
+
+| Medida (máquina ociosa) | Valor |
+|---|---|
+| T06 com N = 12 | 1 `MISS` e 11 `HIT` |
+| T06: espera do enriquecimento | Mínimo de 5,5 s, p50 de 17,4 s e máximo de 18,9 s |
+| T06: `POST` até `TERMINAL` | Mínimo de 14,6 s, p50 de 31,9 s e máximo de 37,3 s |
+| T01 com duas seguradoras: `POST` até a primeira oferta visível no GET | 9,2 s (8,9 s pelo `createdAt` da oferta) |
+| T01 com duas seguradoras: `POST` até `TERMINAL` | 14,1 s |
+| T29: seleção e `NEEDS_INFORMATION` da beta | A nova versão venceu as três disputas, e a seleção foi feita na versão 4; o `NEEDS_INFORMATION` chegou 2,9 s depois da seleção (4,8 s na rodada sob carga, em que a seleção venceu a segunda disputa) |
+
+As medições do tempo até a primeira oferta, fria e quentes, estão no §12 do
+[desenho técnico](quotation-platform.md).
+
 ## Rodada de fechamento do M4
 
 Números da rodada de fechamento do M4, que substituem os da rodada de integração.
@@ -517,7 +712,25 @@ O `QuoteFlowE2E` passou nos 26 testes em 793,8 s (13:17 min no Maven), com a má
   stack do exemplo não tem assinante.
 - O caminho de falha da `receipt-solution` (execução `FAILED` depois das novas tentativas) não tem
   teste; o exemplo também não tem DLQ para ele.
-- O T06 do `QuoteFlowE2E` pode falhar com a máquina carregada, como numa rodada da integração do M4.
+- O T06 do `QuoteFlowE2E` pode falhar com a máquina carregada, como numa rodada da integração do M4 e
+  na rodada sob carga da verificação do M5. Mesmo com a máquina ociosa, a folga da espera do
+  enriquecimento caiu para 1,1 s no M5 ([Rodada de fechamento do M5](#rodada-de-fechamento-do-m5)).
 - O T20 do `QuoteFlowE2E` depende do comportamento do Floci depois do `StopExecution`; por isso tenta até
-  3 cotações e registra cada tentativa no log.
+  3 cotações e registra cada tentativa no log. Ele classifica a tentativa só pelo `reasonCode` da beta, e
+  isso falha sob carga: na rodada sob carga do M5, a continuação do Floci gravou `STEP_TIMEOUT` na beta,
+  mas o `reconciler` finalizou a versão antes do `ConsolidateQuote` (`TERMINAL` e `WORKFLOW_FAILED` no
+  mesmo instante). A finalização e o `WORKFLOW_FAILED` são legítimos, e o teste acusou "consolidated before
+  the reconciler". Decidir pela transição a `TERMINAL` ou pela presença da ocorrência evitaria o falso
+  negativo.
 - O disparo dos alarmes e a extração das métricas EMF não têm teste no Floci; ficam para o M6.
+- O `ContractClient` confere a requisição só nos 2xx; nos erros, só a resposta. O T22 afirma o 2xx de 11
+  das 14 operações; o de `createQuoteVersion`, `reconcileQuery` e `getOperation` é conferido em outros
+  casos do mesmo `QuoteFlowE2E`.
+- A reconciliação manual de ponta a ponta parte de uma `UNKNOWN_QUERY` publicada pelo próprio teste, e não
+  de uma consulta `UNKNOWN` real, que nenhum cenário do laboratório produz de forma determinística.
+- O 429 está declarado no contrato, mas a API não o emite no MVP; ele não tem teste, e o do API Gateway
+  fica para o M6.
+- O `TransactionConflict` da corrida do T29 não é exercitado: o Floci serializa as transações
+  condicionais.
+- O consumo do contrato e das fixtures pelo frontend não é conferido, porque o frontend ainda não existe no
+  repositório; a igualdade das fixtures está conferida no backend e nos simuladores.
