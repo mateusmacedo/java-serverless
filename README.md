@@ -113,6 +113,9 @@ O stage `local` ativa o `serverless-localstack`, que direciona o deploy para `lo
 Ao final, o Serverless mostra o endpoint da API, no formato
 `http://localhost:4566/restapis/<api-id>/local/_user_request_`.
 
+Para implantar a plataforma de cotação no stage `dev` de uma conta AWS e verificar o que o Floci não
+reproduz, siga o [guia de implantação na AWS](docs/implantacao-aws-dev.md).
+
 ## Fluxo de exemplo
 
 `POST /requests` grava o payload no S3 e inicia a máquina de estado `sample-solution-local-request-flow`:
