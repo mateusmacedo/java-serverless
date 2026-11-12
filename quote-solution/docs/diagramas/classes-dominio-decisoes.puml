@@ -1,0 +1,161 @@
+@startuml classes-dominio-decisoes
+!include ../../../docs/diagramas/tema-plataforma.iuml
+hide empty members
+hide stereotype
+
+title $I_QUARKUS quote-domain — decisões da API e do reconciler, chaves e eventos
+
+package "API" #FFFAF3 {
+    class Selections <<serviço>> {
+        {static} decide(version, currentVersion, Existing, offerId,\n  offerFound, validUntil, now) : Decision
+    }
+    enum "Selections.Decision" as SelDecision {
+        RECORD
+        EXISTING
+        NOT_FOUND
+        VERSION_SUPERSEDED
+        SELECTION_ALREADY_EXISTS
+        OFFER_EXPIRED
+    }
+    class QuoteActions <<serviço>> {
+        CREATE_VERSION
+        SELECT_OFFER
+        {static} unavailabilityReason(QuoteState, validUntil, serverTime) : UnavailabilityReason
+        {static} allowedActions(QuoteState, permissions, anySelectableOffer) : List<String>
+    }
+    class "QuoteActions.QuoteState" as QuoteState <<valor>> {
+        version : int
+        currentVersion : int
+        selected : boolean
+    }
+    class Operations <<serviço>> {
+        RECONCILE
+        {static} issueActions(queryId, reconcilable, open, permissions) : List<String>
+        {static} newOperationId() : String (op_ + 32 hex)
+    }
+    enum "Operations.IssueType" as IssueType {
+        UNKNOWN_QUERY, UNMATCHED_CALLBACK,
+        DEAD_LETTER, STALE_OUTBOX (provider)
+        WORKFLOW_FAILED, TASK_EXPIRED,
+        STUCK_VERSION (só quote)
+    }
+    enum "Operations.OperationStatus" as OperationStatus {
+        QUEUED
+        RUNNING
+        SUCCEEDED
+        FAILED
+    }
+    class Idempotency <<serviço>> {
+        NO_SCOPE = "-"
+        {static} isValidKey(key) : boolean
+        {static} requestHash(body) : String
+        {static} compare(stored, request) : Decision (REPLAY, CONFLICT)
+    }
+    class "Idempotency.Key" as IdemKey <<valor>> {
+        organizationId, scope, key : String
+        operation : Operation
+        pk() : IDEMPOTENCY#…
+    }
+    enum Permission {
+        QUOTES_READ (perm_quotes_read)
+        QUOTES_WRITE (perm_quotes_write)
+        OFFERS_SELECT (perm_offers_select)
+        OPERATIONS_READ (perm_operations_read)
+        OPERATIONS_RECONCILE (perm_operations_reconcile)
+        {static} fromGroups(groups)
+        {static} organizationFromGroups(groups) : org_<id> único
+    }
+}
+
+package "reconciler" #F5FAFF {
+    class Reconciliation <<serviço>> {
+        {static} versionAction(ExecutionState, deadlineAt, stuckMargin, now) : VersionAction
+        {static} endedResultReason(ExecutionState) : WORKFLOW_<estado>
+        {static} expiredTask(resultRecorded, delivered, ended) : ExpiredTaskReview
+        {static} deadLetter(attempt, maxAttempts, identified) : DeadLetterDecision
+    }
+    enum "Reconciliation.ExecutionState" as ExecutionState {
+        RUNNING, SUCCEEDED, FAILED,
+        TIMED_OUT, ABORTED, MISSING
+    }
+    enum "Reconciliation.VersionAction" as VersionAction {
+        NONE
+        FINALIZE
+        STUCK
+    }
+    class QuoteIssues <<serviço>> {
+        SOURCE = "quote"
+        {static} issueId(Type, target) : iss_ + 32 hex
+    }
+    enum "QuoteIssues.Type" as QIType {
+        WORKFLOW_FAILED
+        TASK_EXPIRED
+        STUCK_VERSION
+        DEAD_LETTER
+        resolvesItself() : só STUCK_VERSION
+    }
+}
+
+package "Chaves, eventos e utilitários" #FBF6FC {
+    class QuoteKeys <<valor>> {
+        pk, sk, type, gsi1pk/gsi1sk, gsi2pk/gsi2sk
+        ACTIVE_VERSION, OUTBOX_PENDING, WAITER_RESUMING,
+        WAITER_EXPIRED, SUMMARY_PENDING, ISSUE_OPEN
+        {static} versionSk(n) : V#<nnnn>
+        {static} selectionId(quoteId, version) : sel_…
+        {static} offerId(WorkRef) : of_…
+        {static} executionName(quoteId, version) : q-<quoteId>-v<n>
+    }
+    class QuoteEvents <<evento>> {
+        SOURCE = "mmda.quote"
+        quoteAccepted, startQuoteRequested,
+        enrichmentRequested, insurerQuoteRequested,
+        quoteCompleted, offerSelected,
+        queryReconcileRequested
+    }
+    class WorkRef <<valor>> {
+        value : wr_ + 32 hex
+        {static} of(quoteId, version, Kind, insurerId)
+        requestEventId() : UUIDv5
+    }
+    class Deadlines <<serviço>> {
+        {static} versionDeadline(acceptedAt, quoteDeadline)
+        {static} requestDeadline(dispatchedAt, stepTimeout, versionDeadline)
+    }
+    class Revisions <<serviço>> {
+        {static} versionRevision(...)
+        {static} offersRevision(...)
+    }
+    class Retries <<serviço>> {
+        {static} transactionConflicts() : 4 tentativas, 50 a 800 ms
+    }
+    class "Hashes + CanonicalJson" as Hashes <<serviço>> {
+        sha256Hex, uuidV5 (namespace URL da RFC 9562)
+        JSON canônico (RFC 8785)
+    }
+}
+
+Selections --> SelDecision
+QuoteActions ..> QuoteState
+QuoteActions ..> Permission
+Operations --> IssueType
+Operations --> OperationStatus
+Operations ..> Permission
+Idempotency +-- IdemKey
+Reconciliation --> ExecutionState
+Reconciliation --> VersionAction
+QuoteIssues +-- QIType
+QuoteEvents ..> WorkRef
+QuoteEvents ..> QuoteKeys
+QuoteIssues ..> Hashes
+Idempotency ..> Hashes
+
+legend right
+    <b>Leitura</b>
+    <back:$COR_APLICACAO>    </back> Decisão sem acesso à AWS
+    <back:#F1F8E9>    </back> Valor ou identificador
+    <back:$COR_SAIDA>    </back> Montagem dos detail do outbox
+    Quem usa: QuoteStore e QuoteViews (api); VersionReconciler,
+    WaiterReconciler e DeadLetterReprocessor (functions)
+endlegend
+@enduml

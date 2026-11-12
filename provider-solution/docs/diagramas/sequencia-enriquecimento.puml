@@ -1,0 +1,73 @@
+@startuml sequencia-enriquecimento
+!include ../../../docs/diagramas/tema-plataforma.iuml
+
+title $I_LAMBDA Enriquecimento: EnrichmentRequested até EnrichmentResolved (HIT, JOIN ou MISS)
+autonumber
+
+box "Barramento" #F7F9FA
+    participant "$I_EVENTBRIDGE\nplatform-{stage}-events" as bus <<infra>>
+    participant "$I_SQS\nenrichment-requests" as fila <<infra>>
+end box
+box "Aplicação" #F5FAFF
+    participant "$I_LAMBDA\nenrichmentWorker\n(EnrichmentRequestHandler)" as worker <<aplicacao>>
+end box
+box "Infraestrutura" #F7F9FA
+    participant "$I_DYNAMODB\nqueries" as db <<infra>>
+    participant "$I_S3\npayloads" as s3 <<infra>>
+end box
+box "Fornecedor" #FCF5F8
+    participant "$I_SIMULADOR\nPOST /sim/enrichment/profiles" as sim <<externo>>
+end box
+
+bus -> fila : EnrichmentRequested (regra source mmda.quote)
+fila -> worker : SQSEvent, lote 1
+
+== Reentrega (antes de qualquer decisão) ==
+worker -> db : GetItem QUERY#<queryId> (q_ + SHA-256 do workRef)
+alt consulta já existe
+    worker -> worker : redelivered: concluída refaz o fan-out se liderou; em voo adia\nenquanto outra entrega pode estar viva, senão conclui como interrompida
+else CONSUMED#<UUIDv5 do workRef> existe
+    worker -> worker : pedido já respondido por HIT, JOIN ou fan-out; nada a fazer
+else FOLLOWER#<v>#<workRef> na cadeia corrente
+    worker -> db : INFLIGHT# COMPLETED: publica para si o resultado gravado (JOIN)\nIN_FLIGHT: espera o fan-out do líder
+end
+
+== Prazo e plano (ReusePlan, até 5 rodadas) ==
+worker -> db : GetItem REUSE#<queryKey> e INFLIGHT#<queryKey> (ConsistentRead)
+note right of worker
+    queryKey = HMAC-SHA256 (query-key-secret) de
+    organizationId|provider|operation|contractVersion|
+    vehicleRef|principalDriverRef
+end note
+alt #FFEBEE deadlineAt vencido (conferido antes do índice)
+    worker -> db : Transação: QUERY# FAILED nova, EVIDENCE#, OUTBOX# EnrichmentResolved MISS\n(DEADLINE_EXCEEDED_BEFORE_CALL), CONSUMED#; sem liderança
+else HIT: REUSE# válido, reutilizável e da policyVersion em vigor
+    worker -> db : Transação: OUTBOX# EnrichmentResolved HIT + CONSUMED#
+else JOIN: INFLIGHT# IN_FLIGHT com lease válida
+    worker -> db : Transação: ConditionCheck INFLIGHT# (state = IN_FLIGHT, fencingVersion = v)\n+ Put FOLLOWER#<v>#<workRef> (attribute_not_exists)
+    note right of worker : o fan-out do líder responde depois
+else #E8F5E9 Liderança: sem INFLIGHT#, COMPLETED sem evidência válida ou lease vencida
+    worker -> db : Transação: Update INFLIGHT# (fencingVersion + 1, leaseUntil = agora + 30 s)\n+ ConditionCheck REUSE# (revision lida) + Put QUERY# IN_FLIGHT + ATTEMPT#0001\n+ ADD QUOTA#enrichment-sim#default#<janela> used (used < limite)
+    alt #FFEBEE quota esgotada
+        worker -> fila : SendMessage com DelaySeconds até a virada da janela, se couber no prazo;\nsenão, conclui sem chamada com FAILED e QUOTA_EXHAUSTED
+    else condição do INFLIGHT# ou do REUSE# falhou
+        worker -> db : relê e decide de novo (próxima rodada)
+    else liderança adquirida
+        loop tentativa inicial + workerRetries (2), backoff com jitter, prazo e quota antes de cada retry
+            worker -> sim : POST, clientReference = queryId (timeout de 5 s)
+            sim --> worker : 200 perfil, 404 com notFoundRefs, 503 ou 504
+        end
+        worker -> s3 : PutObject raw/<queryId>/<nnnn>.json
+        worker -> db : Transação: QUERY# concluída, ATTEMPT# finishedAt, INFLIGHT# COMPLETED (lápide, ttl),\nREUSE# só em FOUND e NOT_FOUND, EVIDENCE#, FANOUT (FANOUT_PENDING), OUTBOX# MISS, CONSUMED#
+        worker -> db : Query FOLLOWER# da cadeia (firstFencingVersion até fencingVersion)
+        loop cada seguidor, menos o próprio líder
+            worker -> db : Transação: OUTBOX# EnrichmentResolved JOIN (UUIDv5 de queryId|workRef) + CONSUMED#
+        end
+        worker -> db : UpdateItem FANOUT: fannedOutAt, sai do FANOUT_PENDING
+    end
+end
+worker --> fila : SQSBatchResponse (só a mensagem com erro volta)
+note over db : Cada OUTBOX# segue pela outboxRelay (sequencia-publicacao-outbox)
+
+$legenda_camadas()
+@enduml

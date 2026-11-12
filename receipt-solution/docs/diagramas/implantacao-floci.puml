@@ -1,0 +1,41 @@
+@startuml implantacao-floci
+!include ../../../docs/diagramas/tema-plataforma.iuml
+!$LEGEND_TITLE_TEXT = "Legenda"
+!include <C4/C4_Deployment>
+
+UpdateElementStyle("node", $bgColor="#F7F9FA", $fontColor="#37474F", $borderColor="#455A64", $legendText="Nó de implantação")
+UpdateElementStyle("person", $bgColor="#FFFDE7", $fontColor="#37474F", $borderColor="#F9A825", $legendText="Ator")
+UpdateElementStyle("container", $bgColor="#1565C0", $fontColor="#FFFFFF", $borderColor="#0D47A1", $legendText="Lambda Java 21 (Quarkus)")
+AddElementTag("emulado", $bgColor="#ECEFF1", $fontColor="#37474F", $borderColor="#455A64", $legendText="Recurso emulado pelo Floci")
+AddElementTag("ferramenta", $bgColor="#FFF3E0", $fontColor="#37474F", $borderColor="#EF6C00", $legendText="Ferramenta de implantação")
+AddElementTag("externo", $bgColor="#FCE4EC", $fontColor="#37474F", $borderColor="#AD1457", $legendText="Stack de outra solução")
+
+title $I_FLOCI receipt-solution — implantação no Floci (stage local)
+
+Person(dev, "Desenvolvedor", "mvn -B package e pnpm deploy:receipt, depois do deploy:sample", $sprite="user_cog")
+
+Deployment_Node(host, "Máquina do desenvolvedor", "Docker, JDK 21, Node.js e pnpm", $sprite="docker") {
+    Container(sls, "Serverless Framework v4", "serverless-localstack e serverless-step-functions", "sls deploy --stage local para localhost:4566; envia receipt-api-lambda.zip e receipt-functions-lambda.zip", $tags="ferramenta")
+    Deployment_Node(compose, "Docker Compose mmda-serverless", "rede floci") {
+        Deployment_Node(floci, "floci", "floci/floci:2.4.0, porta 4566, FLOCI_HOSTNAME=floci, volume floci-data") {
+            Container(samplestack, "Stack sample-solution-local", "CloudFormation emulado", "Barramento sample-solution-local-events, onde fica a regra da receipt", $tags="externo")
+            Container(stack, "Stack receipt-solution-local", "CloudFormation emulado", "API local-receipt-solution, receipt-flow, receipts, events e a regra com o papel do EventBridge", $tags="emulado")
+        }
+        Deployment_Node(lambdas, "Contêineres das Lambdas", "public.ecr.aws/lambda/java:21, criados pelo Floci pelo socket do Docker") {
+            Container(api, "api", "receipt-api-lambda.zip", "QuarkusStreamHandler + ReceiptResource")
+            Container(fns, "issue e announce", "receipt-functions-lambda.zip", "QuarkusStreamHandler + QUARKUS_LAMBDA_HANDLER")
+        }
+    }
+}
+
+Rel(dev, sls, "pnpm deploy:receipt")
+Rel(sls, stack, "CloudFormation", "localhost:4566")
+Rel(stack, samplestack, "Regra desta stack, criada pelo serverless-step-functions no barramento da sample")
+Rel(samplestack, stack, "RequestCompleted inicia a receipt-flow")
+Rel(stack, api, "Invoca pela integração do API Gateway")
+Rel(stack, fns, "Invoca pelos estados da receipt-flow")
+Rel(api, stack, "DynamoDB e Step Functions", "AWS_ENDPOINT_URL aponta para floci:4566")
+Rel(fns, stack, "DynamoDB e EventBridge", "AWS_ENDPOINT_URL aponta para floci:4566")
+
+SHOW_LEGEND()
+@enduml

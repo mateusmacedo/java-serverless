@@ -1,0 +1,32 @@
+@startuml estados-operacao
+!include ../../../docs/diagramas/tema-plataforma.iuml
+
+hide stereotype
+title $I_OPERADOR Reconciliação manual OPERATION#<operationId> META — estados (ReconcileStatus)
+
+state "$I_LAMBDA RUNNING" as RUNNING <<espera>> : revision 1, safeSummary de andamento\nnão é publicado
+state "SUCCEEDED" as SUCCEEDED <<ativo>> : revision 2
+state "FAILED" as FAILED <<erro>> : revision 2
+
+[*] --> RUNNING : reconcileWorker recebe o QueryReconcileRequested\n(Put com attribute_not_exists)
+RUNNING --> RUNNING : reentrega encontra RUNNING e reconcilia de novo
+RUNNING --> SUCCEEDED : a consulta já estava concluída ou foi concluída agora\n+ OUTBOX# QueryReconciled (condição status = RUNNING)
+RUNNING --> FAILED : consulta inexistente ou de outra organização, em voo\nno prazo ou com entrega viva, ou ainda UNKNOWN\n+ OUTBOX# QueryReconciled
+RUNNING -[#C62828]-> FAILED : mensagem descartada da reconcile-requests-dlq\n(DeadLetterReprocessor) + OUTBOX# QueryReconciled
+SUCCEEDED --> [*]
+FAILED --> [*]
+
+note right of SUCCEEDED
+    A reentrega depois do resultado não faz nada.
+    O eventId do QueryReconciled é UUIDv5 de operationId|2.
+    Na quote, a operação nasce QUEUED (revisão 0) e passa
+    direto ao resultado quando o issue-projector o projeta.
+end note
+
+legend right
+    <b>Leitura</b>
+    <back:$COR_ENTRADA>    </back> Em andamento na provider
+    <back:$COR_DOMINIO>    </back> Consulta concluída
+    <back:$COR_ERRO>    </back> Consulta não concluída ou pedido descartado
+endlegend
+@enduml

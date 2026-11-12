@@ -1,0 +1,81 @@
+@startuml sequencia-reconciliacao
+!include ../../../docs/diagramas/tema-plataforma.iuml
+
+title $I_AGENDADOR Ciclo do reconciler: os 6 deveres e as métricas
+autonumber
+
+box "Infraestrutura" #F7F9FA
+    participant "$I_AGENDADOR\nEventBridge Scheduler\nrate(1 minute)" as sched <<infra>>
+end box
+box "Aplicação" #F5FAFF
+    participant "$I_LAMBDA\nreconciler\n(ReconcilerFunction)" as rec <<aplicacao>>
+end box
+box "Infraestrutura" #F7F9FA
+    participant "$I_DYNAMODB\nqueries (gsi2)" as db <<infra>>
+    participant "$I_SQS\n4 DLQs" as dlq <<infra>>
+end box
+box "Saída" #FBF6FC
+    participant "$I_EVENTBRIDGE\nplatform-{stage}-events" as bus <<saida>>
+end box
+box "Fornecedor" #FCF5F8
+    participant "$I_SEGURADORA\nGET /sim/insurers/beta/quotes/{ref}" as beta <<externo>>
+end box
+box "Observabilidade" #F7F9FA
+    participant "$I_ALARME\nCloudWatch (EMF)" as cw <<infra>>
+end box
+
+sched -> rec : ReconcileCommand {maxItems: 100}
+
+group 1. outbox (OutboxReconciliation)
+    rec -> db : Query OUTBOX_PENDING em ordem de gsi2sk
+    rec -> bus : republica os de gsi2sk mais antigo que 30 s
+    rec -> db : STALE_OUTBOX para createdAt além de 120 s (exceto eventos de ocorrência)
+end
+group 2. fan-out (FanOutRecovery)
+    rec -> db : Query FANOUT_PENDING com concludedAt antes de agora - 25 s - 5 s
+    rec -> db : por seguidor da cadeia gravada no FANOUT: OUTBOX# JOIN + CONSUMED#; depois fannedOutAt
+end
+group 3. consultas (QueryReconciliation)
+    rec -> db : Query QUERY_IN_FLIGHT com gsi2sk (deadlineAt) antes de agora
+    alt sem entrega viva (última tentativa há mais de 25 s + 5 s)
+        rec -> db : enriquecimento: conclui como interrompida (UNKNOWN com tentativa aberta, senão FAILED)\ne, se a liderança ainda é dela, INFLIGHT# COMPLETED com FAILED e fan-out
+        rec -> db : seguradora com 202 ou tentativa aberta: UNKNOWN (com 202, refaz a metade do worker no CORR#)
+        rec -> db : seguradora sem tentativa aberta: UNAVAILABLE com DEADLINE_EXCEEDED_BEFORE_CALL,\ncondicionado a não existir ATTEMPT#<n+1>
+    end
+    rec -> db : Query QUERY_UNKNOWN
+    alt seguradora com API de situação (beta), dentro do teto de 30 s por ciclo
+        rec -> beta : GET pelo providerRequestId (ou pelo queryId, se o 202 se perdeu)
+        alt #E8F5E9 COMPLETED
+            rec -> db : conclui como o callback: raw/<queryId>/status-<nnnn>.json, EVIDENCE#,\nInsurerResultRecorded, CONSUMED#; resolve UNKNOWN_QUERY
+        else PROCESSING ou sem resposta
+            rec -> db : continua UNKNOWN, gsi2sk = agora (sem resposta: para as leituras dessa seguradora no ciclo)
+        else #FFEBEE 404
+            rec -> db : abre UNKNOWN_QUERY e continua no índice
+        end
+        rec -> db : metade do worker no CORR#, com o providerRequestId da consulta ou da resposta
+    else sem API de situação (alpha e enriquecimento)
+        rec -> db : abre UNKNOWN_QUERY (reconcilable) e tira a consulta do QUERY_UNKNOWN
+    end
+end
+group 4. inbox (InboxReconciliation)
+    rec -> db : INBOX_RECEIVED com receivedAt há mais de 30 s: refaz o encontro\n(clientReference, depois o queryId do CORR#)
+    rec -> db : sem correlação e receivedAt há mais de 60 s: UNMATCHED + UNMATCHED_CALLBACK
+    rec -> db : INBOX_UNMATCHED: tenta o encontro de novo; sem ele, gsi2sk = agora
+end
+group 5. DLQs (DeadLetterReprocessor, sequencia-reprocessamento-dlq)
+    rec -> dlq : ReceiveMessage, até 10 por DLQ
+    rec -> dlq : reenvia à origem com dlqAttempt + 1 ou descarta com DEAD_LETTER
+end
+group 6. ocorrências (IssueReview)
+    rec -> db : Query ISSUE_OPEN: resolve UNKNOWN_QUERY, UNMATCHED_CALLBACK e STALE_OUTBOX\ncujo problema sumiu; as demais recebem gsi2sk = agora
+end
+rec -> cw : linha EMF: UnmatchedCallbacks, UnknownQueries, OutboxPendingAgeSeconds (dimensão Stage)
+rec --> sched : ReconcileResult, com failedDuties
+note over rec
+    Cada dever roda isolado: a exceção vai para o log e para failedDuties,
+    e o ciclo seguinte tenta de novo. Toda ocorrência aberta ou atualizada
+    grava o ISSUE# e o OUTBOX# do evento numa transação.
+end note
+
+$legenda_camadas()
+@enduml

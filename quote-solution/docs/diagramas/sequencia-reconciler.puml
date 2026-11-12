@@ -1,0 +1,73 @@
+@startuml sequencia-reconciler
+!include ../../../docs/diagramas/tema-plataforma.iuml
+
+title $I_AGENDADOR Ciclo do reconciler: EventBridge Scheduler, rate(1 minute)
+
+autonumber
+participant "$I_AGENDADOR\nScheduler" as scheduler <<infra>>
+box "Aplicação" #F5FAFF
+    participant "$I_LAMBDA\nreconciler\nReconcilerHandler" as rec <<aplicacao>>
+end box
+box "Infraestrutura" #F7F9FA
+    database "$I_DYNAMODB\nquotes (gsi2)" as table <<infra>>
+    participant "$I_MAQUINA\nquote-flow" as sfn <<infra>>
+    queue "$I_DLQ\nresults-dlq\nissues-dlq" as dlqs <<infra>>
+    queue "$I_SQS\nresults\nissues" as queues <<infra>>
+    participant "$I_EVENTBRIDGE\nplatform-<stage>-events" as bus <<saida>>
+    participant "$I_ALARME\nCloudWatch" as cw <<infra>>
+end box
+
+scheduler -> rec : {source: schedule}
+note over rec : cada dever roda isolado: a falha vai ao log\n(<dever>Error no relatório) e o ciclo seguinte tenta de novo;\naté reconcilerBatchSize (50) itens por dever
+
+== 1. outbox ==
+rec -> table : Query gsi2 OUTBOX_PENDING, gsi2sk mais antigo que 30 s
+rec -> bus : republica (PutEvents) ou StartExecution (StartQuoteRequested)
+rec -> table : publishedAt; log com eventId, detailType e createdAt
+
+== 2. resuming (T13) ==
+rec -> table : Query gsi2 WAITER_RESUMING, parado há mais de 30 s
+rec -> sfn : SendTaskSuccess com o resumePayload gravado
+rec -> table : waiter DONE ou EXPIRED; refreshSummary
+
+== 3. versions (T20) ==
+rec -> table : Query gsi2 ACTIVE_VERSION (prazo mais antigo primeiro); confirma na tabela
+rec -> sfn : DescribeExecution (executionArn gravado ou derivado do nome)
+alt #FFEBEE FAILED, TIMED_OUT ou ABORTED
+    rec -> table : fecha os waiters WAITING; RESULT abertos → TIMED_OUT (WORKFLOW_*);\nconsolida pelo código do consolidate: TERMINAL, QuoteCompleted\ne ISSUE# WORKFLOW_FAILED na mesma transação
+else #FFF3E0 viva, SUCCEEDED ou inexistente, além de deadlineAt + 120 s
+    rec -> table : ISSUE# STUCK_VERSION (gsi2pk = ISSUE_OPEN)
+end
+rec -> table : Query gsi2 SUMMARY_PENDING: repara o META se diverge e tira do índice
+
+== 4. expiredTasks ==
+rec -> table : Query gsi2 WAITER_EXPIRED
+rec -> sfn : GetExecutionHistory (só com resultado gravado para o waiter)
+alt #FFEBEE execução encerrada sem a entrega
+    rec -> table : ISSUE# TASK_EXPIRED e waiter fora do índice (mesma transação)
+else #FFF3E0 execução viva
+    rec -> rec : deixa no índice para o próximo ciclo
+else #E8F5E9 sem resultado gravado ou entrega no histórico
+    rec -> table : só tira o waiter do índice
+end
+
+== 5. issues ==
+rec -> table : Query gsi2 ISSUE_OPEN; resolve a STUCK_VERSION cuja versão saiu do ACTIVE_VERSION
+
+== 6 e 7. deadLetters e issueDeadLetters (ADR 0007) ==
+rec -> dlqs : ReceiveMessage (atributo dlqAttempt; ausente = 1)
+alt #E8F5E9 identifica o recurso e dlqAttempt < dlqMaxAttempts (3)
+    rec -> queues : SendMessage com dlqAttempt + 1
+    rec -> dlqs : DeleteMessage
+else #FFEBEE no limite ou sem identificar (sem quoteId e version; sem eventId e issueId/operationId)
+    rec -> table : ISSUE# DEAD_LETTER
+    rec -> dlqs : DeleteMessage
+end
+
+== 8 e 9. outboxAge e métricas ==
+rec -> table : idade do OUTBOX_PENDING mais antigo, pelo createdAt
+rec -> cw : linha EMF no stdout: ExpiredTasks e OutboxPendingAgeSeconds\n(namespace mmda/quote-solution, dimensão Stage)
+rec -> rec : log "reconciler report: {…}"
+
+$legenda_erros()
+@enduml

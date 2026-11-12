@@ -1,0 +1,63 @@
+@startuml sequencia-criacao-cotacao
+!include ../../../docs/diagramas/tema-plataforma.iuml
+
+title $I_API Criação da cotação: POST /v1/quotes
+
+autonumber
+participant "$I_CLIENTE\nFrontend" as cliente <<ator>>
+box "Entrada" #FFFAF3
+    participant "$I_API\nAPI Gateway" as apigw <<entrada>>
+    participant "$I_LAMBDA\napi\nQuoteResource.create" as api <<entrada>>
+end box
+box "Aplicação" #F5FAFF
+    participant "$I_LAMBDA\nQuoteStore" as store <<aplicacao>>
+    participant "$I_OUTBOX\noutboxRelay\nOutboxPublisher" as relay <<aplicacao>>
+end box
+box "Infraestrutura" #F7F9FA
+    database "$I_DYNAMODB\nquotes" as table <<infra>>
+    participant "$I_MAQUINA\nquote-flow" as sfn <<infra>>
+    participant "$I_EVENTBRIDGE\nplatform-<stage>-events" as bus <<saida>>
+end box
+
+== Validação ==
+cliente -> apigw : POST /v1/quotes\nBearer, Idempotency-Key, body
+apigw -> api : AWS_PROXY
+api -> api : access token (token_use, client_id)\ne caller.require(QUOTES_WRITE)
+alt #FFEBEE sem a permissão
+    api --> cliente : <color:#C62828>403</color>
+else #FFEBEE Idempotency-Key, JSON, campo desconhecido ou referência fora do catálogo
+    api --> cliente : <color:#C62828>400 VALIDATION_ERROR com fieldErrors</color>
+else #E8F5E9 válido
+    api -> api : resolve applicantRef, vehicleRef, principalDriverRef\ne coverageProfile no catálogo da organização (snapshot)
+end
+
+== Aceitação durável ==
+api -> store : create(NewQuote): requestHash do body canônico,\ndeadlineAt = agora + quoteDeadlineSeconds
+store -> table : TransactWriteItems (TransactionConflict repetido até 4 vezes)\nIDEMPOTENCY#…#CREATE_QUOTE#-#<key>, META (resumo inicial),\nV#0001 (RECEIVED, ACTIVE_VERSION), OUTBOX StartQuoteRequested,\nOUTBOX QuoteAccepted — todos com attribute_not_exists
+alt #FFEBEE transação cancelada
+    store -> table : GetItem IDEMPOTENCY (ConsistentRead)
+    alt #E8F5E9 mesmo requestHash
+        api --> cliente : <color:#2E7D32>202 com a mesma cotação</color>
+    else #FFEBEE outro requestHash
+        api --> cliente : <color:#C62828>409 IDEMPOTENCY_CONFLICT</color>
+    else #FFEBEE sem registro
+        api --> cliente : <color:#C62828>503 SERVICE_UNAVAILABLE</color>
+    end
+else #FFEBEE timeout do SDK, throttling ou 5xx do DynamoDB
+    api --> cliente : <color:#C62828>503 SERVICE_UNAVAILABLE (reenviar com a mesma Idempotency-Key)</color>
+else #E8F5E9 ok
+    api --> cliente : <color:#2E7D32>202 {quoteId, version: 1, phase: RECEIVED, statusUrl}</color>\n<color:#2E7D32>Location = statusUrl (caminho relativo)</color>
+end
+
+== Publicação pelo outbox ==
+table -> relay : stream: INSERT de OUTBOX (filtro type = OUTBOX)
+relay -> sfn : StartExecution q-<quoteId>-v1, entrada {quoteId, version}
+note right of sfn : ExecutionAlreadyExists com a mesma\nentrada conta como sucesso
+relay -> table : V#0001: SET executionArn, executionName
+relay -> table : OUTBOX StartQuoteRequested: publishedAt, sai do gsi2
+relay -> bus : PutEvents QuoteAccepted (source mmda.quote)
+relay -> table : OUTBOX QuoteAccepted: publishedAt, sai do gsi2
+note over relay, bus : Falha transitória devolve o registro em batchItemFailures; falha permanente\ngrava attempts e lastError, e o reconciler republica depois de 30 s.
+
+$legenda_camadas()
+@enduml

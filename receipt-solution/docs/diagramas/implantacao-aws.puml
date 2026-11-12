@@ -1,0 +1,45 @@
+@startuml implantacao-aws
+!include ../../../docs/diagramas/tema-plataforma.iuml
+!$LEGEND_TITLE_TEXT = "Legenda"
+!include <C4/C4_Deployment>
+
+UpdateElementStyle("node", $bgColor="#F7F9FA", $fontColor="#37474F", $borderColor="#455A64", $legendText="Nó de implantação")
+UpdateElementStyle("person", $bgColor="#FFFDE7", $fontColor="#37474F", $borderColor="#F9A825", $legendText="Ator")
+UpdateElementStyle("container", $bgColor="#1565C0", $fontColor="#FFFFFF", $borderColor="#0D47A1", $legendText="Lambda Java 21 (Quarkus)")
+AddElementTag("gerenciado", $bgColor="#ECEFF1", $fontColor="#37474F", $borderColor="#455A64", $legendText="Serviço gerenciado da AWS")
+AddElementTag("externo", $bgColor="#FCE4EC", $fontColor="#37474F", $borderColor="#AD1457", $legendText="Stack de outra solução")
+AddElementTag("pendente", $bgColor="#FFEBEE", $fontColor="#37474F", $borderColor="#C62828", $legendText="Não preparado para a AWS")
+
+title $I_LAMBDA receipt-solution — implantação na AWS (topologia alvo, não verificada)
+
+Person(dev, "Desenvolvedor", "sls deploy --stage <stage>, depois da sample-solution", $sprite="user_cog")
+
+Deployment_Node(conta, "Conta AWS", "região us-east-1, fixa em provider.region") {
+    Deployment_Node(samplecfn, "Stack sample-solution-<stage>", "CloudFormation") {
+        Container(samplebus, "sample-solution-<stage>-events", "EventBridge", "Recebe a regra da receipt, criada pelo serverless-step-functions", $tags="externo")
+    }
+    Deployment_Node(cfn, "Stack receipt-solution-<stage>", "CloudFormation gerado pelo Serverless Framework v4") {
+        Container(apigw, "API <stage>-receipt-solution", "API Gateway REST", "GET /receipts/{requestId} e POST /receipts, sem autorizador", $tags="gerenciado")
+        Container(api, "receipt-solution-<stage>-api", "Lambda java21, 1769 MB, 29 s", "receipt-api-lambda.zip")
+        Container(fns, "receipt-solution-<stage>-issue e -announce", "Lambda java21, 1769 MB, 30 s", "receipt-functions-lambda.zip")
+        Container(sfn, "receipt-solution-<stage>-receipt-flow", "Step Functions Standard", "Papel gerado pelo serverless-step-functions", $tags="gerenciado")
+        Container(dados, "receipts e events", "DynamoDB e EventBridge", "receipt-solution-<stage>-receipts e -events", $tags="gerenciado")
+        Container(logs, "/aws/lambda/receipt-solution-<stage>-<função>", "CloudWatch Logs", "Sem logRetentionInDays no serverless.yml", $tags="gerenciado")
+    }
+}
+
+Container(params, "params do stage", "serverless.yml", "Só existe params.local: sem valor para awsEndpointUrl em outro stage", $tags="pendente")
+
+Rel(dev, cfn, "sls deploy")
+Rel(dev, params, "Precisa declarar antes")
+Rel(samplebus, sfn, "Regra RequestCompleted, alvo nativo")
+Rel(apigw, api, "Lambda proxy")
+Rel(api, sfn, "StartExecution")
+Rel(api, dados, "GetItem")
+Rel(sfn, fns, "Invoca issue e announce")
+Rel(fns, dados, "PutItem, GetItem e PutEvents")
+Rel(api, logs, "stdout")
+Rel(fns, logs, "stdout")
+
+SHOW_LEGEND()
+@enduml

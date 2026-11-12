@@ -1,0 +1,54 @@
+@startuml pacotes-maven
+!include ../../../docs/diagramas/tema-plataforma.iuml
+set separator none
+hide stereotype
+skinparam linetype ortho
+title $I_SPRING Parents e módulos Maven (ADR 0010)
+
+package "pom.xml da raiz\nserverless-parent (pom)" as raiz {
+    component "Java 21, encoding, versões e configuração dos plugins Maven\n(failsafe, parameters=true), testcontainers-floci-aws" as raizconf <<infra>>
+}
+
+package "platform/" {
+    component "spring-parent (pom)\nBOM do Spring Boot primeiro, Spring Cloud, AWS SDK;\nexclui apache-client e netty-nio-client;\nzip da Lambda (maven-dependency + maven-assembly)" as springparent <<aplicacao>>
+    component "quarkus-parent (pom)\nBOMs do Quarkus e do Quarkus Amazon Services;\nquarkus-maven-plugin; function.zip copiado\npara <artifactId>-lambda.zip" as quarkusparent <<aplicacao>>
+    component "spring-aws (jar)\nAwsClientsAutoConfiguration" as springaws <<dominio>>
+}
+
+package "Soluções Spring" {
+    component "sample-solution\napi, functions (e2e com -Pe2e)" as sample <<entrada>>
+    component "provider-solution\ndomain, api, functions, simulators" as provider <<entrada>>
+}
+
+package "Soluções Quarkus" {
+    component "receipt-solution\napi, functions (e2e com -Pe2e)" as receipt <<entrada>>
+    component "quote-solution\ndomain, api, functions (e2e com -Pe2e)" as quote <<entrada>>
+}
+
+springparent -up-|> raiz : parent
+quarkusparent -up-|> raiz : parent
+springaws -up-|> springparent : parent
+sample -up-|> springparent : parent
+provider -up-|> springparent : parent
+receipt -up-|> quarkusparent : parent
+quote -up-|> quarkusparent : parent
+sample ..> springaws : api e functions
+provider ..> springaws : api, functions e simulators
+
+note right of raiz
+  A raiz agrega os módulos na ordem:
+  spring-parent, quarkus-parent, spring-aws,
+  sample, receipt, provider e quote.
+  Versões que só um framework usa
+  ficam no parent dele.
+end note
+
+legend right
+    <b>Leitura</b>
+    <back:#ECEFF1>    </back> Raiz neutra
+    <back:#E3F2FD>    </back> Parent por framework
+    <back:#E8F5E9>    </back> Biblioteca compartilhada (só Spring)
+    <back:#FFF3E0>    </back> Agregador de solução
+    Seta cheia: herança de parent; tracejada: dependência
+endlegend
+@enduml

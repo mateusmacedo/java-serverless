@@ -1,0 +1,72 @@
+@startuml sequencia-selecao
+!include ../../../docs/diagramas/tema-plataforma.iuml
+
+title $I_API Seleção de oferta: POST /v1/quotes/{quoteId}/versions/{version}/selection
+
+autonumber
+participant "$I_CLIENTE\nFrontend" as cliente <<ator>>
+box "Entrada" #FFFAF3
+    participant "$I_LAMBDA\napi\nQuoteResource.select" as api <<entrada>>
+end box
+box "Aplicação" #F5FAFF
+    participant "$I_LAMBDA\nQuoteStore.select" as store <<aplicacao>>
+end box
+box "Domínio" #F6FBF6
+    participant "$I_QUARKUS\nSelections.decide" as decide <<dominio>>
+end box
+box "Infraestrutura" #F7F9FA
+    database "$I_DYNAMODB\nquotes" as table <<infra>>
+end box
+
+== Validação ==
+cliente -> api : POST {offerId}\nBearer, Idempotency-Key
+api -> api : caller.require(OFFERS_SELECT)
+api -> table : GetItem META
+alt #FFEBEE sem offers:select
+    api --> cliente : <color:#C62828>403</color>
+else #FFEBEE cotação inexistente ou de outra organização
+    api --> cliente : <color:#C62828>404</color>
+else #FFEBEE Idempotency-Key, campo desconhecido, offerId ausente, vazio ou acima de 128 code points
+    api --> cliente : <color:#C62828>400 VALIDATION_ERROR</color>
+end
+
+== Decisão ==
+api -> store : select(NewSelection, META)
+store -> table : GetItem IDEMPOTENCY (SELECT_OFFER, escopo quoteId)
+alt #E8F5E9 registro com o mesmo requestHash
+    api --> cliente : <color:#2E7D32>201 com a seleção gravada</color>
+else #FFEBEE registro com outro requestHash
+    api --> cliente : <color:#C62828>409 IDEMPOTENCY_CONFLICT</color>
+else sem registro
+    store -> table : GetItem OFFER da versão pedida
+    store -> decide : decide(version, currentVersion, seleção do META, offerId, oferta, validUntil, agora)
+    alt #FFEBEE NOT_FOUND: versão > currentVersion ou oferta fora da versão
+        api --> cliente : <color:#C62828>404, sem revelar o motivo</color>
+    else #E8F5E9 EXISTING: mesma versão e mesma offerId já selecionadas
+        api --> cliente : <color:#2E7D32>201 com a seleção existente (T28)</color>
+    else #FFEBEE VERSION_SUPERSEDED, SELECTION_ALREADY_EXISTS ou OFFER_EXPIRED
+        api --> cliente : <color:#C62828>409 com o código da decisão; nada é gravado</color>
+    else #E8F5E9 RECORD
+        store -> table : TransactWriteItems\n1. Put IDEMPOTENCY  2. Put V#<v>#SELECTION (attribute_not_exists)\n3. Update META: selectionId, selectedVersion, selectedOfferId,\n   condição currentVersion = :v AND attribute_not_exists(selectionId) AND organizationId = :org\n4. ConditionCheck OFFER: attribute_exists(pk) AND validUntil > :agora\n5. Outbox OfferSelected (eventId = UUIDv5 do selectionId)
+        alt #FFEBEE cancelada pela SELECTION ou pelo META (outra seleção ou nova versão venceu)
+            store -> table : relê o META
+            store -> decide : decide de novo
+            api --> cliente : <color:#C62828>409</color>, <color:#2E7D32>201 existente</color> ou, se a decisão ainda é RECORD, <color:#C62828>503</color>
+        else #FFEBEE cancelada pela OFFER
+            api --> cliente : <color:#C62828>409 OFFER_EXPIRED</color>
+        else #FFEBEE outro cancelamento ou falha da AWS
+            api --> cliente : <color:#C62828>503 SERVICE_UNAVAILABLE</color>
+        else #E8F5E9 ok
+            api --> cliente : <color:#2E7D32>201 {selectionId, offerId, selectedAt, status: INTENT_RECORDED}</color>
+        end
+    end
+end
+
+note over api, table
+    selectionId = sel_ + 32 hex do SHA-256 de selection|<quoteId>|<version>: uma seleção por versão (RN13).
+    Seleção e nova versão escrevem o mesmo META com a mesma condição: o DynamoDB deixa só uma passar (T29).
+    A seleção é aceita também durante QUOTING, com a oferta válida e a versão atual.
+end note
+
+$legenda_erros()
+@enduml

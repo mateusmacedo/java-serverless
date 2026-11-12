@@ -1,0 +1,69 @@
+@startuml c4-componente-reconciler-e-relay
+!include ../../../docs/diagramas/tema-plataforma.iuml
+!include <C4/C4_Component>
+
+!$LEGEND_TITLE_TEXT = "Legenda"
+UpdateElementStyle("external_system", $bgColor="#FCE4EC", $fontColor="#37474F", $borderColor="#AD1457", $legendText="Fora da stack ou fornecedor simulado")
+UpdateElementStyle("container", $bgColor="#ECEFF1", $fontColor="#37474F", $borderColor="#455A64", $legendText="Recurso AWS")
+UpdateElementStyle("component", $bgColor="#E3F2FD", $fontColor="#37474F", $borderColor="#1565C0", $legendText="Componente do provider-functions")
+UpdateBoundaryStyle($bgColor="#FFFFFF", $fontColor="#37474F", $borderColor="#90A4AE", $legendText="Limite da Lambda")
+AddElementTag("entrada", $bgColor="#FFF3E0", $fontColor="#37474F", $borderColor="#EF6C00", $legendText="Função da Lambda")
+AddElementTag("dever", $bgColor="#E3F2FD", $fontColor="#37474F", $borderColor="#1565C0", $legendText="Dever do ciclo, isolado dos outros")
+AddElementTag("saida", $bgColor="#F3E5F5", $fontColor="#37474F", $borderColor="#6A1B9A", $legendText="Adaptador AWS")
+AddRelTag("assincrono", $textColor="#6A1B9A", $lineColor="#6A1B9A", $lineStyle=DashedLine(), $legendText="Assíncrono")
+
+title $I_AGENDADOR reconciler e outboxRelay — componentes (C4 nível 3)
+
+Container(scheduler, "EventBridge Scheduler", "method: scheduler", "rate(1 minute), entrada {maxItems: 100}", $sprite="clock")
+ContainerDb(stream, "Stream da tabela de consultas", "DynamoDB Streams", "Filtro: INSERT com NewImage.type = OUTBOX", $sprite="database")
+
+Boundary(rec, "reconciler", "Lambda, timeout 60 s, papel compartilhado") {
+    Component(recfn, "ReconcilerFunction", "Function<ReconcileCommand, ReconcileResult>", "Roda os 6 deveres em ordem; a falha de um vai para o log e para failedDuties", $sprite="clock", $tags="entrada")
+    Component(outboxrec, "OutboxReconciliation", "1. outbox", "Republica OUTBOX_PENDING com gsi2sk mais antigo que 30 s; STALE_OUTBOX depois de 120 s pelo createdAt", $sprite="paper_plane", $tags="dever")
+    Component(fanout, "FanOutRecovery", "2. fan-out", "FANOUT_PENDING concluído há mais de 25 + 5 s; descarta o que passou da lápide", $sprite="project_diagram", $tags="dever")
+    Component(queries, "QueryReconciliation", "3. consultas", "QUERY_IN_FLIGHT com deadlineAt vencido e QUERY_UNKNOWN; API de situação com teto de 30 s por ciclo", $sprite="clock", $tags="dever")
+    Component(inbox, "InboxReconciliation", "4. inbox", "INBOX_RECEIVED parado há 30 s, UNMATCHED depois de 60 s, nova tentativa no INBOX_UNMATCHED", $sprite="inbox", $tags="dever")
+    Component(dlq, "DeadLetterReprocessor", "5. DLQs", "Até 10 mensagens por DLQ por ciclo; DeadLetterPolicy decide reenvio ou descarte", $sprite="exclamation_triangle", $tags="dever")
+    Component(review, "IssueReview", "6. ocorrências", "ISSUE_OPEN: resolve o que sumiu; o resto vai para o fim do índice", $sprite="bell", $tags="dever")
+    Component(issues, "OperationIssues", "DynamoDB", "ISSUE# com revision e o outbox OperationIssueRaised ou OperationIssueUpdated", $sprite="database", $tags="saida")
+    Component(metrics, "Metrics", "EMF", "UnmatchedCallbacks, UnknownQueries e OutboxPendingAgeSeconds por Stage", $sprite="bell", $tags="saida")
+}
+
+Boundary(relay, "outboxRelay", "Lambda, timeout 60 s, papel compartilhado") {
+    Component(relayfn, "OutboxRelayFunction", "Function<DynamodbEvent, StreamsEventResponse>", "Um registro por vez; no primeiro erro transitório devolve o número de sequência dele", $sprite="paper_plane", $tags="entrada")
+}
+
+Component(publisher, "OutboxPublisher e OutboxStore", "EventBridge e DynamoDB", "PutEvents com FailedEntryCount por entrada; publishedAt ou attempts, lastError e gsi2sk novo", $sprite="exchange_alt", $tags="saida")
+
+ContainerDb(table, "provider-solution-{stage}-queries", "DynamoDB, índice gsi2", "Itens indexados pelo trabalho pendente", $sprite="database")
+System_Ext(bus, "platform-{stage}-events", "EventBridge", $sprite="exchange_alt")
+ContainerQueue(dlqs, "4 DLQs e filas de origem", "SQS", "enrichment-, insurer-, reconcile-requests e sim-callbacks", $sprite="inbox")
+System_Ext(beta, "Situação da beta", "GET /sim/insurers/beta/quotes/{ref}", $sprite="robot")
+Container(cw, "CloudWatch", "Logs e métricas EMF", "Namespace mmda/provider-solution", $sprite="bell")
+
+Rel(scheduler, recfn, "ReconcileCommand", "Invoke", $tags="assincrono")
+Rel(recfn, outboxrec, "run(limit, agora)")
+Rel(recfn, fanout, "run")
+Rel(recfn, queries, "run")
+Rel(recfn, inbox, "run")
+Rel(recfn, dlq, "run(agora)")
+Rel(recfn, review, "run")
+Rel(recfn, metrics, "reconcilerGauges")
+Rel(outboxrec, publisher, "publish")
+Rel(outboxrec, issues, "STALE_OUTBOX")
+Rel(queries, issues, "UNKNOWN_QUERY")
+Rel(inbox, issues, "UNMATCHED_CALLBACK")
+Rel(dlq, issues, "DEAD_LETTER")
+Rel(review, issues, "resolve, deferReview")
+Rel(queries, beta, "Leitura da situação", "HTTP")
+Rel(dlq, dlqs, "ReceiveMessage, SendMessage (dlqAttempt), DeleteMessage")
+Rel(stream, relayfn, "Lote de até 100", "ESM", $tags="assincrono")
+Rel(relayfn, publisher, "publish")
+Rel(publisher, bus, "PutEvents, source mmda.provider", $tags="assincrono")
+Rel(publisher, table, "markPublished, recordFailure")
+Rel(issues, table, "TransactWriteItems")
+Rel(fanout, table, "Query FANOUT_PENDING, outbox e CONSUMED# por seguidor")
+Rel(metrics, cw, "Linha JSON na saída padrão")
+
+SHOW_LEGEND()
+@enduml

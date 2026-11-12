@@ -1,0 +1,68 @@
+@startuml c4-conteiner
+!include ../../../docs/diagramas/tema-plataforma.iuml
+!include <C4/C4_Container>
+
+!$LEGEND_TITLE_TEXT = "Legenda"
+UpdateElementStyle("person", $bgColor="#FFFDE7", $fontColor="#37474F", $borderColor="#F9A825", $legendText="Ator")
+UpdateElementStyle("external_system", $bgColor="#FCE4EC", $fontColor="#37474F", $borderColor="#AD1457", $legendText="Sistema fora da stack")
+UpdateElementStyle("container", $legendText="Contêiner")
+UpdateBoundaryStyle($bgColor="#FFFFFF", $fontColor="#37474F", $borderColor="#90A4AE", $legendText="Limite da stack")
+AddElementTag("lambda", $bgColor="#1565C0", $fontColor="#FFFFFF", $borderColor="#0D47A1", $legendText="Lambda da plataforma (Spring)")
+AddElementTag("simulador", $bgColor="#FCE4EC", $fontColor="#37474F", $borderColor="#AD1457", $legendText="Fornecedor simulado, na própria stack")
+AddElementTag("entrada", $bgColor="#FFF3E0", $fontColor="#37474F", $borderColor="#EF6C00", $legendText="API Gateway")
+AddElementTag("dados", $bgColor="#ECEFF1", $fontColor="#37474F", $borderColor="#455A64", $legendText="Recurso AWS (dados, fila, segredo, alarme)")
+AddRelTag("assincrono", $textColor="#6A1B9A", $lineColor="#6A1B9A", $lineStyle=DashedLine(), $legendText="Assíncrono (EventBridge, SQS, stream)")
+
+title $I_SPRING provider-solution — contêineres (C4 nível 2)
+
+System_Ext(quote, "quote-solution", "Pede enriquecimento, cotação e reconciliação; consome resultados e ocorrências", $sprite="cubes")
+System_Ext(bus, "platform-{stage}-events", "Barramento EventBridge da plataforma (platform/events)", $sprite="exchange_alt")
+Person(operacao, "Operação", "Recebe os alarmes por e-mail, se alarmEmail estiver preenchido", $sprite="user_cog")
+
+Boundary(provider, "provider-solution", "stack provider-solution-{stage}") {
+    Container(apigw, "API Gateway {stage}-provider-solution", "REST API, sem autorizador", "POST /v1/providers/{provider}/callbacks e ANY /sim/{proxy+}", $sprite="globe", $tags="entrada")
+    Container(api, "api", "provider-api: Spring MVC + serverless-java-container", "Confere X-Signature, grava a inbox, correlaciona e conclui a consulta", $sprite="bolt", $tags="lambda")
+    Container(workers, "enrichmentWorker, insurerWorker, reconcileWorker", "provider-functions: Spring Cloud Function", "Reuso, liderança, quota, chamadas HTTP aos fornecedores e reconciliação manual", $sprite="bolt", $tags="lambda")
+    Container(relay, "outboxRelay", "provider-functions: Spring Cloud Function", "Publica os itens OUTBOX# lidos do stream", $sprite="paper_plane", $tags="lambda")
+    Container(reconciler, "reconciler", "provider-functions, EventBridge Scheduler rate(1 minute)", "Outbox pendente, fan-out, consultas vencidas e UNKNOWN, inbox, DLQs, ocorrências e EMF", $sprite="clock", $tags="lambda")
+    Container(sims, "simulators", "provider-simulators: Spring MVC", "enrichment-sim, alpha (síncrona) e beta (assíncrona, com API de situação)", $sprite="robot", $tags="simulador")
+    Container(sender, "simCallbackSender", "provider-simulators: handler sem Spring", "Assina e entrega os callbacks agendados pela beta", $sprite="robot", $tags="simulador")
+    ContainerDb(queries, "provider-solution-{stage}-queries", "DynamoDB: pk/sk, gsi2, stream NEW_IMAGE, TTL", "Consultas, reuso, liderança, inbox, correlação, quota, outbox, ocorrências e operações", $sprite="database", $tags="dados")
+    ContainerDb(simtable, "provider-solution-{stage}-simulators", "DynamoDB: pk, TTL", "Contador do vehicle-flaky e situação da beta", $sprite="database", $tags="dados")
+    ContainerDb(payloads, "provider-solution-{stage}-payloads", "S3, prefixo raw/", "Respostas brutas dos fornecedores", $sprite="archive", $tags="dados")
+    ContainerQueue(requests, "enrichment-requests, insurer-requests, reconcile-requests", "SQS, cada uma com DLQ", "Pedidos vindos do barramento", $sprite="inbox", $tags="dados")
+    ContainerQueue(simq, "sim-callbacks", "SQS com DLQ", "Callbacks agendados com DelaySeconds", $sprite="inbox", $tags="dados")
+    ContainerQueue(streamfail, "stream-failures", "SQS sem consumidor", "Destino onFailure do stream da relay", $sprite="exclamation_triangle", $tags="dados")
+    Container(secrets, "query-key-secret e callback-secret", "Secrets Manager", "Chave HMAC da queryKey e da assinatura dos callbacks", $sprite="key", $tags="dados")
+    Container(alarms, "16 alarmes e tópico provider-solution-{stage}-alarms", "CloudWatch e SNS", "DLQs, stream-failures, outbox, UNMATCHED, UNKNOWN e falhas por provedor", $sprite="bell", $tags="dados")
+}
+
+Rel(quote, bus, "EnrichmentRequested, InsurerQuoteRequested, QueryReconcileRequested", "PutEvents", $tags="assincrono")
+Rel(bus, requests, "Regras source mmda.quote", "EventBridge para SQS", $tags="assincrono")
+Rel(requests, workers, "Lote 1, ReportBatchItemFailures", "ESM", $tags="assincrono")
+Rel(workers, apigw, "POST /sim/... e GET /sim/insurers/beta/quotes/{ref}", "HTTP, PROVIDERS_BASE_URL")
+Rel(reconciler, apigw, "GET /sim/insurers/beta/quotes/{ref}", "HTTP, PROVIDERS_BASE_URL")
+Rel(apigw, sims, "ANY /sim/{proxy+}")
+Rel(apigw, api, "POST /v1/providers/{provider}/callbacks")
+Rel(sims, simtable, "GetItem, PutItem, UpdateItem")
+Rel(sims, simq, "Agenda o callback", "SendMessage com DelaySeconds", $tags="assincrono")
+Rel(simq, sender, "Lote 1, ReportBatchItemFailures", "ESM", $tags="assincrono")
+Rel(sender, apigw, "Callback assinado", "HTTP, CALLBACKS_BASE_URL")
+Rel(api, queries, "INBOX#, CORR#, conclusão e OUTBOX#", "TransactWriteItems")
+Rel(workers, queries, "QUERY#, REUSE#, INFLIGHT#, QUOTA#, CORR#, OPERATION#, OUTBOX#", "TransactWriteItems")
+Rel(api, payloads, "raw/{queryId}/callback-*.json", "PutObject")
+Rel(workers, payloads, "raw/{queryId}/{nnnn}.json", "PutObject")
+Rel(api, secrets, "callback-secret", "GetSecretValue")
+Rel(sender, secrets, "callback-secret", "GetSecretValue")
+Rel(workers, secrets, "query-key-secret (só o enrichmentWorker)", "GetSecretValue")
+Rel(queries, relay, "INSERT com type = OUTBOX, lote de 100", "DynamoDB Streams", $tags="assincrono")
+Rel(relay, bus, "EnrichmentResolved, InsurerResultRecorded, QueryReconciled, OperationIssueRaised e OperationIssueUpdated", "PutEvents, source mmda.provider", $tags="assincrono")
+Rel(relay, streamfail, "Registro com retries esgotados", "onFailure", $tags="assincrono")
+Rel(reconciler, queries, "Índice gsi2 e conclusões", "Query, TransactWriteItems")
+Rel(reconciler, bus, "Republica OUTBOX_PENDING", "PutEvents", $tags="assincrono")
+Rel(reconciler, requests, "Reprocessa as 4 DLQs (inclusive a da sim-callbacks)", "Receive, Send e DeleteMessage", $tags="assincrono")
+Rel(bus, quote, "Resultados e ocorrências", "Regras source mmda.provider da quote", $tags="assincrono")
+Rel(alarms, operacao, "Notificação", "SNS e-mail", $tags="assincrono")
+
+SHOW_LEGEND()
+@enduml

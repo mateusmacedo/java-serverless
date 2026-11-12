@@ -1,0 +1,78 @@
+@startuml casos-de-uso
+!include ../../../docs/diagramas/tema-plataforma.iuml
+
+title $I_SPRING provider-solution — casos de uso
+left to right direction
+hide stereotype
+
+actor "$I_QUARKUS\nquote-solution\n(pelo barramento)" as quote
+actor "$I_SEGURADORA\nSeguradora assíncrona\n(beta simulada)" as seguradora
+actor "$I_AGENDADOR\nEventBridge Scheduler\n(1 min)" as agendador
+actor "$I_OPERADOR\nOperação\n(alarmes por e-mail)" as operacao
+
+package "<$robot,scale=0.8,color=#AD1457> Fornecedores simulados (simulators)" as SIMS <<externo>> {
+    usecase "Perfilar veículo e condutor\n(POST /sim/enrichment/profiles)" as UC_sim_enr <<sistema>>
+    usecase "Cotar de forma síncrona\n(POST /sim/insurers/alpha/quotes)" as UC_sim_alpha <<sistema>>
+    usecase "Aceitar a cotação e agendar o callback\n(POST /sim/insurers/beta/quotes)" as UC_sim_beta <<sistema>>
+    usecase "Informar a situação\n(GET /sim/insurers/beta/quotes/{ref})" as UC_sim_status <<leitura>>
+    usecase "Assinar e entregar o callback\n(simCallbackSender)" as UC_sim_send <<sistema>>
+}
+
+package "<$bolt,scale=0.8,color=#1565C0> Plataforma (provider-functions e provider-api)" as PLAT <<aplicacao>> {
+    usecase "Resolver enriquecimento\n(enrichmentWorker)" as UC_enr
+    usecase "Reutilizar evidência válida (HIT)" as UC_hit <<leitura>>
+    usecase "Esperar consulta equivalente em voo (JOIN)" as UC_join
+    usecase "Liderar a consulta e responder aos seguidores (MISS)" as UC_lead
+    usecase "Cotar numa seguradora\n(insurerWorker)" as UC_quote
+    usecase "Reservar quota por provedor e janela" as UC_quota
+    usecase "Receber callback assinado\n(api)" as UC_callback
+    usecase "Correlacionar pelo clientReference ou CORR#" as UC_corr
+    usecase "Publicar eventos do outbox\n(outboxRelay)" as UC_relay <<sistema>>
+    usecase "Reconciliar a cada minuto\n(reconciler)" as UC_rec <<sistema>>
+    usecase "Reprocessar as DLQs" as UC_dlq <<sistema>>
+    usecase "Abrir e resolver ocorrências" as UC_issue <<sistema>>
+    usecase "Reconciliar uma consulta a pedido\n(reconcileWorker)" as UC_manual
+    usecase "Publicar métricas EMF e disparar alarmes" as UC_alarm <<sistema>>
+}
+
+quote --> UC_enr : EnrichmentRequested
+quote --> UC_quote : InsurerQuoteRequested
+quote --> UC_manual : QueryReconcileRequested
+agendador --> UC_rec
+seguradora --> UC_callback
+UC_alarm --> operacao
+
+UC_enr ..> UC_hit : <<extend>>
+UC_enr ..> UC_join : <<extend>>
+UC_enr ..> UC_lead : <<extend>>
+UC_lead ..> UC_quota : <<include>>
+UC_quote ..> UC_quota : <<include>>
+UC_lead ..> UC_sim_enr : chama
+UC_quote ..> UC_sim_alpha : chama
+UC_quote ..> UC_sim_beta : chama
+UC_sim_beta ..> UC_sim_send : agenda
+UC_sim_send ..> UC_callback : POST
+UC_callback ..> UC_corr : <<include>>
+UC_rec ..> UC_relay : republica o pendente
+UC_rec ..> UC_dlq : <<include>>
+UC_rec ..> UC_issue : <<include>>
+UC_rec ..> UC_sim_status : consulta UNKNOWN
+UC_manual ..> UC_sim_status : consulta UNKNOWN
+UC_rec ..> UC_alarm : <<include>>
+
+note right of UC_relay
+    Toda resposta à quote sai por OUTBOX#:
+    EnrichmentResolved, InsurerResultRecorded,
+    QueryReconciled, OperationIssueRaised e
+    OperationIssueUpdated.
+end note
+
+legend right
+    <b>Como ler</b>
+    <back:$COR_APLICACAO>    </back> Caso de uso da plataforma
+    <back:$COR_DOMINIO>    </back> Leitura sem chamada externa ou sem efeito
+    <back:$COR_INFRA>    </back> Rotina de sistema ou do fornecedor simulado
+    O contrato do callback vale para seguradoras assíncronas; no laboratório,
+    quem chama a api é o simCallbackSender, em nome da beta.
+endlegend
+@enduml

@@ -1,0 +1,61 @@
+@startuml sequencia-cotacao-seguradora
+!include ../../../docs/diagramas/tema-plataforma.iuml
+
+title $I_SEGURADORA Cotação numa seguradora: InsurerQuoteRequested até InsurerResultRecorded ou 202
+autonumber
+
+box "Barramento" #F7F9FA
+    participant "$I_EVENTBRIDGE\nplatform-{stage}-events" as bus <<infra>>
+    participant "$I_SQS\ninsurer-requests" as fila <<infra>>
+end box
+box "Aplicação" #F5FAFF
+    participant "$I_LAMBDA\ninsurerWorker\n(InsurerRequestHandler)" as worker <<aplicacao>>
+end box
+box "Infraestrutura" #F7F9FA
+    participant "$I_DYNAMODB\nqueries" as db <<infra>>
+    participant "$I_S3\npayloads" as s3 <<infra>>
+end box
+box "Seguradoras simuladas" #FCF5F8
+    participant "$I_SEGURADORA\nalpha (síncrona)" as alpha <<externo>>
+    participant "$I_SEGURADORA\nbeta (assíncrona)" as beta <<externo>>
+end box
+
+bus -> fila : InsurerQuoteRequested (regra source mmda.quote)
+fila -> worker : SQSEvent, lote 1
+worker -> db : GetItem QUERY#<queryId>
+alt consulta já existe
+    worker -> worker : tabela de reentrega (estados-consulta): concluída ou UNKNOWN não faz nada;\ncom providerRequestId refaz só a metade do worker no CORR#; nunca repete a chamada
+else #FFEBEE deadlineAt vencido ou insurerId sem rota
+    worker -> db : Transação: QUERY# FAILED nova, EVIDENCE# UNAVAILABLE, OUTBOX# InsurerResultRecorded,\nCONSUMED# (DEADLINE_EXCEEDED_BEFORE_CALL ou UNSUPPORTED_INSURER)
+else consulta nova
+    worker -> db : Transação: Put QUERY# IN_FLIGHT (clientReference = queryId) + ATTEMPT#0001 startedAt\n+ ADD QUOTA#<insurerId>#default#<janela> used (used < limite)
+    alt #FFEBEE quota esgotada
+        worker -> fila : SendMessage com DelaySeconds até a virada da janela, se couber no prazo;\nsenão, UNAVAILABLE com QUOTA_EXHAUSTED
+    else quota reservada
+        loop tentativa inicial + workerRetries (2), só em 429, 5xx ou falha antes do envio
+            alt alpha
+                worker -> alpha : POST /sim/insurers/alpha/quotes
+                alpha --> worker : 200 com oferta ou DECLINED, 400 ou 503
+            else beta
+                worker -> beta : POST /sim/insurers/beta/quotes
+                beta --> worker : 202 com providerRequestId, status PROCESSING
+            end
+        end
+        alt #E8F5E9 resposta terminal (QUOTED, DECLINED, NEEDS_INFORMATION ou UNAVAILABLE)
+            worker -> s3 : PutObject raw/<queryId>/<nnnn>.json
+            worker -> db : Transação: EVIDENCE#, QUERY# COMPLETED (FAILED no UNAVAILABLE), ATTEMPT# finishedAt,\nOUTBOX# InsurerResultRecorded (UUIDv5 do queryId), CONSUMED# do pedido
+        else 202 da beta
+            worker -> db : Transação: providerRequestId na QUERY# (condição state = IN_FLIGHT)\ne acceptedAt, httpStatus e providerRequestId na ATTEMPT# aberta
+            worker -> db : UpdateItem CORR#beta#<providerRequestId> SET queryId\n(attribute_not_exists(queryId) OR queryId = :queryId), ALL_NEW
+            opt pendingEvents já gravados pela api (callback chegou antes)
+                worker -> db : processa as pendências em ordem de externalEventId (sequencia-callback)
+            end
+        else sem resposta depois do envio
+            worker -> db : QUERY# UNKNOWN (gsi2pk = QUERY_UNKNOWN), sem evento: fica para a reconciliação
+        end
+    end
+end
+worker --> fila : SQSBatchResponse
+
+$legenda_camadas()
+@enduml

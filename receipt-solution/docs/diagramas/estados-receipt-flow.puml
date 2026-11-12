@@ -1,0 +1,32 @@
+@startuml estados-receipt-flow
+!include ../../../docs/diagramas/tema-plataforma.iuml
+hide empty description
+title $I_MAQUINA Máquina de estado receipt-solution-<stage>-receipt-flow
+
+state "$I_LAMBDA Issue\nTask: Lambda issue\nInputPath $.detail" as Issue <<inicial>>
+state "$I_LAMBDA Announce\nTask: Lambda announce" as Announce <<ativo>>
+state "Falha da execução\n(sem estado Fail declarado)" as Falhou <<erro>>
+
+[*] --> Issue : regra no barramento da sample (evento inteiro)\nou POST /receipts ({"detail": corpo})
+Issue --> Issue : Retry States.ALL\nintervalo 2 s, backoff 2, até 2 novas tentativas
+Issue --> Announce : Receipt
+Announce --> Announce : Retry igual ao do Issue
+Announce --> [*] : SUCCEEDED
+Issue -[#C62828]-> Falhou : erro depois das novas tentativas
+Announce -[#C62828]-> Falhou : erro depois das novas tentativas
+Falhou -[#C62828]-> [*] : FAILED
+
+note right of Falhou
+  Não há Catch nem DLQ: a execução FAILED
+  só aparece no histórico do Step Functions.
+  Esse caminho não tem teste.
+end note
+
+legend right
+    <b>Leitura</b>
+    <back:#E3F2FD>    </back> Estado inicial
+    <back:#E8F5E9>    </back> Passo seguinte
+    <back:#FFEBEE>    </back> Fim com falha (implícito)
+    Seta vermelha: caminho de falha
+endlegend
+@enduml

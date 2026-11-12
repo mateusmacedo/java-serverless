@@ -1,0 +1,52 @@
+@startuml estados-ocorrencia
+!include ../../../docs/diagramas/tema-plataforma.iuml
+hide stereotype
+
+title $I_ALARME Ocorrência operacional (ISSUE#<issueId>) — status OPEN e RESOLVED
+
+state "Ocorrências da quote (source = quote, gravadas pelo reconciler)" as DaQuote {
+    state "STUCK_VERSION OPEN" as StuckOpen <<espera>> : gsi2pk = ISSUE_OPEN\ngsi2sk = instante da observação
+    state "STUCK_VERSION RESOLVED" as StuckResolved <<terminal>> : resolvedAt; sai do gsi2
+    state "WORKFLOW_FAILED, TASK_EXPIRED\nou DEAD_LETTER OPEN" as FatoOpen <<erro>> : fato já ocorrido;\nfica OPEN no MVP
+
+    [*] --> StuckOpen : V#n ACTIVE_VERSION além de\ndeadlineAt + stuckVersionMarginSeconds (120 s)
+    StuckOpen --> StuckResolved : IssueReviewer: a versão saiu do ACTIVE_VERSION\nou é TERMINAL (status = OPEN AND revision = :lida)
+    StuckResolved --> StuckOpen : observada de novo: reabre
+    StuckOpen --> StuckOpen : observada de novo:\nlastSeenAt e revision + 1
+    [*] --> FatoOpen : finalização (T20), waiter EXPIRED sem entrega\nou mensagem descartada de uma DLQ
+    FatoOpen --> FatoOpen : observada de novo:\nlastSeenAt e revision + 1
+}
+
+state "Ocorrências projetadas da provider (source = provider, issue-projector)" as DaProvider {
+    state "OPEN" as ProvOpen <<espera>>
+    state "RESOLVED" as ProvResolved <<terminal>>
+    [*] --> ProvOpen : OperationIssueRaised\n(UNKNOWN_QUERY, UNMATCHED_CALLBACK,\nDEAD_LETTER ou STALE_OUTBOX)
+    ProvOpen --> ProvResolved : OperationIssueUpdated com status RESOLVED
+    ProvResolved --> ProvOpen : OperationIssueUpdated com status OPEN
+    ProvOpen --> ProvOpen : OperationIssueUpdated\n(revision maior)
+}
+
+note bottom of DaQuote
+    issueId = iss_ + 32 hex do SHA-256 de quote|<issueType>|<alvo>.
+    Toda gravação volta o status a OPEN, remove o resolvedAt e soma 1 ao revision;
+    firstSeenAt fica, lastSeenAt e gsi1sk = <lastSeenAt>#<issueId> mudam.
+    Só a STUCK_VERSION entra no ISSUE_OPEN (QuoteIssues.Type.resolvesItself).
+end note
+
+note bottom of DaProvider
+    UpdateItem com attribute_not_exists(revision) OR revision < :r,
+    na mesma transação do CONSUMED#<eventId> e do QUERYREF#<queryId>
+    (quando o evento traz queryId e organizationId).
+    Nunca entra no gsi2: quem resolve é a provider.
+    A ação RECONCILE exige queryId, reconcilable = true (a provider só
+    marca UNKNOWN_QUERY), status OPEN e a permissão operations:reconcile.
+end note
+
+legend right
+    <b>Leitura</b>
+    <back:$COR_ENTRADA>    </back> Aberta e revisável
+    <back:$COR_ERRO>    </back> Aberta, registra um fato (sem resolução no MVP)
+    <back:$COR_INFRA>    </back> Resolvida
+    gsi1pk = ISSUES#<organizationId> quando há organização
+endlegend
+@enduml

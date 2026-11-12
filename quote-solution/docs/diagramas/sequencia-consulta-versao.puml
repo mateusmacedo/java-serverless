@@ -1,0 +1,50 @@
+@startuml sequencia-consulta-versao
+!include ../../../docs/diagramas/tema-plataforma.iuml
+
+title $I_API Acompanhamento: GET /v1/quotes/{quoteId}/versions/{version} e GET .../offers
+
+autonumber
+participant "$I_CLIENTE\nFrontend" as cliente <<ator>>
+box "Entrada" #FFFAF3
+    participant "$I_LAMBDA\napi\nQuoteResource" as api <<entrada>>
+end box
+box "Aplicação" #F5FAFF
+    participant "$I_LAMBDA\nQuoteViews" as views <<aplicacao>>
+end box
+box "Domínio" #F6FBF6
+    participant "$I_QUARKUS\nQuoteActions\nRevisions" as actions <<dominio>>
+end box
+box "Infraestrutura" #F7F9FA
+    database "$I_DYNAMODB\nquotes" as table <<infra>>
+end box
+
+== Versão ==
+cliente -> api : GET /v1/quotes/{quoteId}/versions/{version}
+api -> api : caller.require(QUOTES_READ)
+api -> table : GetItem META (organização do token)
+api -> table : Query QUOTE#<quoteId>, sk começando por V#<nnnn> (ConsistentRead)
+alt #FFEBEE sem quotes:read
+    api --> cliente : <color:#C62828>403</color>
+else #FFEBEE cotação de outra organização, inexistente ou versão sem item
+    api --> cliente : <color:#C62828>404</color>
+else #E8F5E9 encontrada
+    api -> views : version(META, itens da versão, permissões, serverTime)
+    views -> actions : QuoteState(version, currentVersion, selected)\nunavailabilityReason por oferta e allowedActions
+    views -> actions : versionRevision(V#n.revision, revisões dos RESULT, ofertas, seleção)
+    api --> cliente : <color:#2E7D32>200 {phase, outcome, outcomeReason, missingFields com label,</color>\n<color:#2E7D32>insurerResults, selection, allowedActions, revision, serverTime,</color>\n<color:#2E7D32>retryAfterSeconds (nulo em TERMINAL)}</color>
+end
+
+== Ofertas ==
+cliente -> api : GET .../offers?cursor&limit (limit de 1 a 100; padrão 20)
+api -> table : META e itens da versão, como acima
+api -> views : offers(...): selectable e unavailabilityReason\n(VERSION_SUPERSEDED, SELECTION_ALREADY_EXISTS, OFFER_EXPIRED)
+api --> cliente : <color:#2E7D32>200 {revision, serverTime, items, nextCursor}</color>
+
+note over cliente, table
+    O cliente consulta de novo depois de retryAfterSeconds (3) enquanto a fase não é TERMINAL.
+    Nenhuma regra de ação depende da fase: durante QUOTING, a oferta já gravada é selecionável.
+    A listagem GET /v1/quotes lê o gsi1 (ORG#<organizationId>) e o resumo do META, as mais novas primeiro.
+end note
+
+$legenda_erros()
+@enduml

@@ -1,0 +1,36 @@
+@startuml estados-request-flow
+!include ../../../docs/diagramas/tema-plataforma.iuml
+hide empty description
+title $I_MAQUINA Máquina de estado sample-solution-<stage>-request-flow
+
+state "$I_LAMBDA Validate\nTask: Lambda validate" as Validate <<inicial>>
+state "$I_LAMBDA Persist\nTask: Lambda persist" as Persist <<ativo>>
+state "$I_LAMBDA Notify\nTask: Lambda notify" as Notify <<ativo>>
+state "$I_DLQ SendToDeadLetterQueue\nTask: arn:aws:states:::sqs:sendMessage" as SendToDeadLetterQueue <<espera>>
+state "RequestFailed\nFail: Error RequestFailed" as RequestFailed <<erro>>
+
+[*] --> Validate : StartExecution da api (nome requestId)\nou do reprocess (nome requestId-attempt)
+Validate --> Persist : RequestContext com signature e payloadBytes
+Persist --> Notify : RequestContext
+Notify --> [*] : SUCCEEDED
+Validate -[#C62828]-> SendToDeadLetterQueue : Catch States.ALL\nResultPath $.error
+Persist -[#C62828]-> SendToDeadLetterQueue : Catch States.ALL\nResultPath $.error
+Notify -[#C62828]-> SendToDeadLetterQueue : Catch States.ALL\nResultPath $.error
+SendToDeadLetterQueue -[#C62828]-> RequestFailed : MessageBody.$ = $
+RequestFailed -[#C62828]-> [*] : FAILED
+
+note right of Validate
+  Nenhum estado tem Retry: o primeiro erro
+  vai direto para a DLQ, e a nova tentativa
+  é do reprocess (ADR 0007).
+end note
+
+legend right
+    <b>Leitura</b>
+    <back:#E3F2FD>    </back> Estado inicial
+    <back:#E8F5E9>    </back> Passo de negócio
+    <back:#FFF3E0>    </back> Integração direta com o SQS
+    <back:#FFEBEE>    </back> Fim com falha
+    Seta vermelha: caminho de falha
+endlegend
+@enduml

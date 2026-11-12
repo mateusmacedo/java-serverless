@@ -1,0 +1,52 @@
+@startuml implantacao-aws
+!include ../../../docs/diagramas/tema-plataforma.iuml
+!$LEGEND_TITLE_TEXT = "Legenda"
+!include <C4/C4_Deployment>
+
+UpdateElementStyle("node", $legendText="Nó de implantação")
+UpdateElementStyle("container", $legendText="Contêiner")
+UpdateElementStyle("person", $bgColor="#FFFDE7", $fontColor="#37474F", $borderColor="#F9A825", $legendText="Pessoa")
+AddElementTag("quarkus", $bgColor="#1565C0", $fontColor="#FFFFFF", $borderColor="#0D47A1", $legendText="Lambda Quarkus da quote")
+AddElementTag("gerenciado", $bgColor="#ECEFF1", $fontColor="#37474F", $borderColor="#455A64", $legendText="Recurso gerenciado da stack")
+AddElementTag("verificar", $bgColor="#FFEBEE", $fontColor="#37474F", $borderColor="#C62828", $legendText="Comportamento a conferir na AWS (M6)")
+AddElementTag("outra", $bgColor="#FCE4EC", $fontColor="#37474F", $borderColor="#AD1457", $legendText="Outra stack da plataforma")
+AddElementTag("ferramenta", $bgColor="#FFF3E0", $fontColor="#37474F", $borderColor="#EF6C00", $legendText="Ferramenta de implantação")
+
+title $I_QUARKUS quote-solution — implantação na AWS (stage dev, us-east-1)
+
+Person(operador, "Quem implanta", "Credenciais da cadeia padrão do SDK", $sprite="user_cog")
+Container(sls, "Serverless Framework v4", "pnpm sls deploy --stage dev, com o param alarmEmail", "Envia os zips ao bucket serverless-framework-deployments-us-east-1-<id> e cria a stack", $tags="ferramenta")
+
+Deployment_Node(conta, "Conta AWS", "região us-east-1 (provider.region)", $sprite="building") {
+    Deployment_Node(platform, "Stack platform-dev", "platform/events/serverless.yml") {
+        Container(bus, "platform-dev-events", "EventBridge", "Barramento da plataforma, por convenção de nome", $sprite="exchange_alt", $tags="outra")
+    }
+    Deployment_Node(provider, "Stack provider-solution-dev", "provider-solution/serverless.yml") {
+        Container(prov, "Workers, api de callbacks e simuladores", "Spring", "Regras sobre mmda.quote", $sprite="building", $tags="outra")
+    }
+    Deployment_Node(quote, "Stack quote-solution-dev", "quote-solution/serverless.yml, params.default") {
+        Container(apigw, "API Gateway REST", "stage dev", "https:~//<api-id>.execute-api.us-east-1.amazonaws.com/dev/v1/...", $sprite="globe", $tags="gerenciado")
+        Container(lambdas, "7 Lambdas", "java21, 1769 MB (1 vCPU), papel próprio cada", "api, workflowSteps, dispatch, resume, issueProjector, outboxRelay, reconciler; sem AWS_ENDPOINT_URL (HasAwsEndpointUrl falsa)", $sprite="bolt", $tags="quarkus")
+        Container(sfn, "quote-solution-dev-quote-flow", "Step Functions", "insurerTimeoutSeconds = 90; papel gerado pelo serverless-step-functions", $sprite="project_diagram", $tags="verificar")
+        Container(ddb, "quote-solution-dev-quotes", "DynamoDB PAY_PER_REQUEST, stream NEW_IMAGE", "gsi1 e gsi2", $sprite="database", $tags="gerenciado")
+        Container(sqs, "results, issues, results-dlq, issues-dlq, stream-failures", "SQS", "Retenção de 14 dias nas DLQs e na stream-failures", $sprite="inbox", $tags="gerenciado")
+        Container(sched, "Agendamento do reconciler", "EventBridge Scheduler, rate(1 minute)", "Papel de execução: ReconcilerRole (confiança em scheduler.amazonaws.com)", $sprite="clock", $tags="verificar")
+        Container(cognito, "quote-solution-dev-users", "Cognito", "JWT_ISSUER = https:~//cognito-idp.us-east-1.amazonaws.com/<poolId>", $sprite="user_shield", $tags="gerenciado")
+        Container(secret, "quote-solution/dev/token-key", "Secrets Manager", "Gerado na criação (64 caracteres)", $sprite="key", $tags="gerenciado")
+        Container(alarms, "8 alarmes + quote-solution-dev-alarms", "CloudWatch e SNS", "AlarmsEmailSubscription só com alarmEmail; disparo e extração EMF a conferir", $sprite="bell", $tags="verificar")
+    }
+}
+
+Rel(operador, sls, "Executa")
+Rel(sls, quote, "CloudFormation")
+Rel(apigw, lambdas, "AWS_PROXY")
+Rel(lambdas, ddb, "SDK v2 (client CRT), endpoint pela região")
+Rel(lambdas, sfn, "StartExecution, SendTaskSuccess")
+Rel(sfn, lambdas, "lambda:invoke e waitForTaskToken")
+Rel(lambdas, bus, "PutEvents")
+Rel(bus, sqs, "ProviderResultsRule e ProviderIssuesRule")
+Rel(sched, lambdas, "Invoca o reconciler")
+Rel(prov, bus, "Eventos mmda.provider")
+
+SHOW_LEGEND()
+@enduml

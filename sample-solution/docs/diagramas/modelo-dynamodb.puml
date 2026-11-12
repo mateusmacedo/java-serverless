@@ -1,0 +1,44 @@
+@startuml modelo-dynamodb
+!include ../../../docs/diagramas/tema-plataforma.iuml
+hide circle
+hide stereotype
+skinparam linetype ortho
+title $I_DYNAMODB sample-solution — modelo de dados (DynamoDB e S3)
+
+package "DynamoDB: sample-solution-<stage>-requests (PAY_PER_REQUEST, sem índices, sem stream, sem TTL)" #F6FBF6 {
+    entity "$I_DYNAMODB <b>Item de requisição</b>\ngravado pelo PersistFunction" as item <<dominio>> {
+        * requestId : S <<PK, HASH>>
+        --
+        s3Key : S
+        signature : S (HMAC-SHA256 em hexadecimal)
+        payloadBytes : N
+        attempt : N
+        persistedAt : S (ISO-8601, Instant.now())
+    }
+}
+
+package "S3: sample-solution-<stage>-payloads" #F7F9FA {
+    entity "$I_S3 <b>Objeto do payload</b>\ngravado pelo RequestController" as objeto <<infra>> {
+        * requests/<requestId>.json <<chave>>
+        --
+        corpo : JSON recebido, sem alteração
+        Content-Type : application/json
+    }
+}
+
+objeto ||--o| item : "s3Key (zero ou um item por payload)"
+
+note bottom of item
+  Só há uma forma de acesso: PutItem pela chave.
+  Nenhum código da solução lê a tabela; a consulta
+  é manual (get-item) ou pelos testes.
+end note
+
+legend right
+    <b>Leitura</b>
+    <back:#E8F5E9>    </back> Item do DynamoDB
+    <back:#ECEFF1>    </back> Objeto no S3
+    S = texto, N = número (tipos do DynamoDB)
+    Só requestId é declarado no AttributeDefinitions
+endlegend
+@enduml

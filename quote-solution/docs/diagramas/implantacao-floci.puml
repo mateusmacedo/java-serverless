@@ -1,0 +1,50 @@
+@startuml implantacao-floci
+!include ../../../docs/diagramas/tema-plataforma.iuml
+!$LEGEND_TITLE_TEXT = "Legenda"
+!include <C4/C4_Deployment>
+
+UpdateElementStyle("node", $legendText="Nó de implantação")
+UpdateElementStyle("container", $legendText="Contêiner")
+UpdateElementStyle("person", $bgColor="#FFFDE7", $fontColor="#37474F", $borderColor="#F9A825", $legendText="Pessoa")
+AddElementTag("quarkus", $bgColor="#1565C0", $fontColor="#FFFFFF", $borderColor="#0D47A1", $legendText="Lambda Quarkus da quote")
+AddElementTag("emulado", $bgColor="#ECEFF1", $fontColor="#37474F", $borderColor="#455A64", $legendText="Serviço emulado pelo Floci")
+AddElementTag("limite", $bgColor="#FFEBEE", $fontColor="#37474F", $borderColor="#C62828", $legendText="Emulado com limite conhecido")
+AddElementTag("ferramenta", $bgColor="#FFF3E0", $fontColor="#37474F", $borderColor="#EF6C00", $legendText="Ferramenta de build e implantação")
+
+title $I_FLOCI quote-solution — implantação local no Floci (stage local)
+
+Person(dev, "Desenvolvedor", "docker compose up -d; pnpm deploy:local ou pnpm deploy:quote", $sprite="user")
+
+Deployment_Node(host, "Máquina do desenvolvedor", "Linux ou macOS com Docker", $sprite="docker") {
+    Container(build, "Maven + Serverless Framework v4", "mvn -B -q package -DskipTests; sls deploy --stage local", "Gera quote-api-lambda.zip e quote-functions-lambda.zip; o serverless-localstack aponta para localhost:4566", $tags="ferramenta")
+    Deployment_Node(rede, "Rede Docker floci", "compose.yaml") {
+        Deployment_Node(floci, "floci", "imagem floci/floci:2.4.0, porta 4566, FLOCI_HOSTNAME=floci, armazenamento persistente (volume floci-data)", $sprite="docker") {
+            Container(apigw, "API Gateway REST", "/restapis/<api-id>/local/_user_request_/v1/...", "Rota /v1/{proxy+}", $sprite="globe", $tags="emulado")
+            Container(sfn, "Step Functions", "quote-solution-local-quote-flow", "Ignora TimeoutSecondsPath; StopExecution continua os estados", $sprite="project_diagram", $tags="limite")
+            Container(ddb, "DynamoDB + Streams", "quote-solution-local-quotes", "Não emula TransactionConflict; serializa transações condicionais", $sprite="database", $tags="limite")
+            Container(sqs, "SQS", "results, issues, as DLQs e stream-failures", "Reentrega em cerca de VisibilityTimeout + 5 s", $sprite="inbox", $tags="emulado")
+            Container(events, "EventBridge + Scheduler", "platform-local-events; regras da quote; rate(1 minute)", "O Scheduler dispara a cada 60 ou 70 s", $sprite="exchange_alt", $tags="emulado")
+            Container(cognito, "Cognito", "quote-solution-local-users", "iss = http:~//floci:4566/<poolId>", $sprite="user_shield", $tags="emulado")
+            Container(secrets, "Secrets Manager", "quote-solution/local/token-key", "", $sprite="key", $tags="emulado")
+            Container(cw, "CloudWatch, Logs e SNS", "8 alarmes, AlarmsTopic", "Alarmes criados, mas não disparam; IAM não é aplicado", $sprite="bell", $tags="limite")
+        }
+        Deployment_Node(lambdas, "Contêineres das Lambdas", "um por função Java, criados pelo Floci via /var/run/docker.sock; removidos depois de 300 s ociosos", $sprite="cubes") {
+            Container(api, "api", "java21, 1769 MB", "AWS_ENDPOINT_URL=http:~//floci:4566; JWT_ISSUER=http:~//floci:4566/<poolId>", $sprite="bolt", $tags="quarkus")
+            Container(fns, "workflowSteps, dispatch, resume, issueProjector, outboxRelay, reconciler", "java21, 1769 MB, zip quote-functions-lambda.zip", "QUARKUS_LAMBDA_HANDLER escolhe o handler; insurerTimeoutSeconds = 20", $sprite="bolt", $tags="quarkus")
+        }
+        Deployment_Node(ui, "floci-ui", "imagem floci/floci-ui:0.7.0, porta 4500", $sprite="globe") {
+            Container(console, "Console web", "http:~//localhost:4500", "Tabelas, filas, funções, execuções e logs", $tags="emulado")
+        }
+    }
+}
+
+Rel(dev, build, "Executa")
+Rel(build, floci, "Implanta a stack quote-solution-local", "http:~//localhost:4566")
+Rel(dev, apigw, "curl ou e2e", "http:~//localhost:4566")
+Rel(floci, lambdas, "Invoca", "Docker")
+Rel(api, ddb, "SDK v2 (client CRT)", "http:~//floci:4566")
+Rel(fns, ddb, "SDK v2 (client CRT)", "http:~//floci:4566")
+Rel(console, floci, "Lê os recursos", "http:~//floci:4566")
+
+SHOW_LEGEND()
+@enduml

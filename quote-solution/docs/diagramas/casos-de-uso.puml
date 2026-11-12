@@ -1,0 +1,75 @@
+@startuml casos-de-uso
+!include ../../../docs/diagramas/tema-plataforma.iuml
+left to right direction
+hide stereotype
+
+title $I_CLIENTE Casos de uso da quote-solution
+
+actor "$I_CLIENTE\nUsuário da organização\n(grupo org_<id>)" as usuario
+actor "$I_OPERADOR\nOperador da organização\n(grupo org_<id>)" as operador
+actor "$I_SEGURADORA\nprovider-solution" as provider
+actor "$I_AGENDADOR\nEventBridge Scheduler" as agendador
+
+package "<$globe,scale=0.8,color=#EF6C00> API de produto (/v1)" as API {
+    usecase "Ver o próprio perfil\nGET /v1/me (só token)" as UC_me <<leitura>>
+    usecase "Consultar o catálogo\nGET /v1/catalog/* (quotes:write)" as UC_catalogo <<leitura>>
+    usecase "Criar cotação\nPOST /v1/quotes (quotes:write)" as UC_criar
+    usecase "Listar cotações\nGET /v1/quotes (quotes:read)" as UC_listar <<leitura>>
+    usecase "Acompanhar a versão\nGET .../versions/{v} (quotes:read)" as UC_versao <<leitura>>
+    usecase "Listar ofertas\nGET .../offers (quotes:read)" as UC_ofertas <<leitura>>
+    usecase "Criar nova versão\nPOST .../versions (quotes:write)" as UC_nova
+    usecase "Selecionar oferta\nPOST .../selection (offers:select)" as UC_selecionar
+    usecase "Listar ocorrências\nGET /v1/operations/issues (operations:read)" as UC_ocorrencias <<leitura>>
+    usecase "Pedir reconciliação\nPOST /v1/operations/queries/{id}/reconcile\n(operations:reconcile)" as UC_reconciliar
+    usecase "Consultar a reconciliação\nGET /v1/operations/{id} (operations:read)" as UC_operacao <<leitura>>
+}
+
+package "<$project_diagram,scale=0.8,color=#1565C0> Processamento assíncrono" as SIS {
+    usecase "Cotar a versão\n(quote-flow)" as UC_cotar <<sistema>>
+    usecase "Retomar a espera\n(resume)" as UC_retomar <<sistema>>
+    usecase "Projetar ocorrências\ne reconciliações\n(issueProjector)" as UC_projetar <<sistema>>
+    usecase "Reconciliar a cada minuto\n(reconciler)" as UC_rec <<sistema>>
+}
+
+usuario --> UC_me
+usuario --> UC_catalogo
+usuario --> UC_criar
+usuario --> UC_listar
+usuario --> UC_versao
+usuario --> UC_ofertas
+usuario --> UC_nova
+usuario --> UC_selecionar
+operador --> UC_me
+operador --> UC_ocorrencias
+operador --> UC_reconciliar
+operador --> UC_operacao
+
+UC_criar ..> UC_cotar : <<include>>
+UC_nova ..> UC_cotar : <<include>>
+UC_cotar ..> UC_retomar : <<include>>
+UC_selecionar ..> UC_ofertas : depende de oferta selecionável
+UC_ocorrencias ..> UC_reconciliar : ação RECONCILE
+
+provider --> UC_retomar : EnrichmentResolved,\nInsurerResultRecorded
+provider --> UC_projetar : QueryReconciled,\nOperationIssue*
+agendador --> UC_rec
+
+note right of UC_cotar
+    Pedidos à provider: EnrichmentRequested,
+    InsurerQuoteRequested e, na reconciliação,
+    QueryReconcileRequested (pelo outbox).
+end note
+
+note bottom of API
+    A permissão vem dos grupos perm_* do Cognito; sem ela, 403 antes de qualquer leitura.
+    Cotação, operação ou consulta de outra organização responde 404.
+    Mutações exigem Idempotency-Key.
+end note
+
+legend right
+    <b>Leitura</b>
+    <back:$COR_DOMINIO>    </back> Leitura
+    <back:$COR_APLICACAO>    </back> Mutação pela API
+    <back:$COR_INFRA>    </back> Processamento do sistema
+endlegend
+@enduml

@@ -1,0 +1,75 @@
+@startuml atividade-consolidacao
+!include ../../../docs/diagramas/tema-plataforma.iuml
+
+title $I_QUARKUS Consolidation.consolidate: precedência do outcome da versão
+
+start
+:Lê o V#n (elegibilidade gravada, selectedInsurers), a EVIDENCE da versão e os RESULT;
+if (Elegibilidade gravada?) then (não)
+    :TECHNICAL_FAILURE + WORKFLOW_FAILED; <<#FFEBEE>>
+    stop
+endif
+if (eligibilityDecision?) then (NEEDS_INFORMATION)
+    :NEEDS_INFORMATION + MISSING_LICENSE_DATE\nmissingFields da regra (risk.principalDriverRef); <<#FFF3E0>>
+    stop
+elseif () then (INELIGIBLE)
+    :INELIGIBLE + SALVAGE_VEHICLE; <<#ECEFF1>>
+    stop
+else (ELIGIBLE)
+endif
+if (EVIDENCE da versão?) then (não)
+    if (Waiter do enriquecimento existe?) then (sim: espera encerrada sem resultado)
+        :TECHNICAL_FAILURE + ENRICHMENT_FAILED; <<#FFEBEE>>
+    else (não: a etapa nunca rodou)
+        :TECHNICAL_FAILURE + WORKFLOW_FAILED; <<#FFEBEE>>
+    endif
+    stop
+endif
+if (resultType da EVIDENCE?) then (NOT_FOUND)
+    :NEEDS_INFORMATION + ENRICHMENT_NOT_FOUND\nmissingFields = risk.<ref> de cada notFoundRefs; <<#FFF3E0>>
+    stop
+elseif () then (FAILED)
+    :TECHNICAL_FAILURE + ENRICHMENT_FAILED; <<#FFEBEE>>
+    stop
+else (FOUND)
+endif
+if (selectedInsurers gravado?) then (não)
+    :TECHNICAL_FAILURE + WORKFLOW_FAILED; <<#FFEBEE>>
+    stop
+elseif (Lista vazia?) then (sim)
+    :NO_OFFER + NO_APPLICABLE_INSURER; <<#ECEFF1>>
+    stop
+else (não)
+endif
+:Para cada seguradora selecionada, o status do RESULT\n(sem RESULT conta como PENDING);
+note right
+    QUOTED conta oferta; NEEDS_INFORMATION une os missingFields por path;
+    DECLINED não pesa; qualquer outro (UNAVAILABLE, TIMED_OUT, PENDING,
+    PROCESSING) é falha técnica
+end note
+if (Ao menos uma QUOTED?) then (sim)
+    if (Pendência ou falha técnica em outra?) then (sim)
+        :PARTIAL, outcomeReason nulo\nmissingFields da versão vazio; <<#E8F5E9>>
+    else (não)
+        :COMPLETED, outcomeReason nulo; <<#E8F5E9>>
+    endif
+    stop
+endif
+if (Alguma NEEDS_INFORMATION?) then (sim)
+    :NEEDS_INFORMATION + INSURER_NEEDS_INFORMATION\nunião dos missingFields; <<#FFF3E0>>
+elseif (Alguma falha técnica?) then (sim)
+    :TECHNICAL_FAILURE + INSURER_TECHNICAL_FAILURE; <<#FFEBEE>>
+else (todas DECLINED)
+    :NO_OFFER + ALL_INSURERS_DECLINED; <<#ECEFF1>>
+endif
+stop
+
+legend right
+    <b>Leitura</b>
+    <back:$COR_DOMINIO>    </back> Com oferta
+    <back:$COR_ENTRADA>    </back> Pendência de dados
+    <back:$COR_INFRA>    </back> Sem oferta
+    <back:$COR_ERRO>    </back> Falha técnica
+    O passo consolidate e a finalização pelo reconciler usam este mesmo código.
+endlegend
+@enduml

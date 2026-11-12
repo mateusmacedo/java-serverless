@@ -1,0 +1,142 @@
+@startuml classes-dominio-enriquecimento
+!include ../../../docs/diagramas/tema-plataforma.iuml
+
+hide empty members
+hide stereotype
+skinparam nodesep 30
+title $I_VEICULO Pacote com.mmda.serverless.provider.domain.enrichment — reuso e liderança
+
+class EnrichmentRequest <<valor>> {
+    eventId, workRef, organizationId, quoteId
+    version : int
+    provider, operation, contractVersion
+    {field} params : Params(vehicleRef, principalDriverRef)
+    deadlineAt : Instant
+}
+class EnrichmentReply <<valor>> {
+    clientReference, vehicle, driver
+    observedAt, code
+    notFoundRefs : List<String>
+}
+class EnrichmentProfile <<valor>> {
+    {field} vehicle : Vehicle(ref, make, model, year, marketValue)
+    {field} principalDriver : Driver(ref, licenseYears, claimsLast5Years)
+}
+class EnrichmentProtocol <<serviço>> {
+    {static} classify(CallOutcome<EnrichmentReply>) : EnrichmentVerdict
+}
+interface EnrichmentVerdict <<valor>> <<sealed>>
+class Found <<valor>> {
+    profile : EnrichmentProfile
+}
+class NotFound <<valor>> {
+    notFoundRefs : List<String>
+}
+class "Transient" as VTransient <<valor>> {
+    errorClass
+}
+class Failed <<valor>> {
+    errorClass
+}
+class "Unknown" as VUnknown <<valor>> {
+    errorClass
+}
+enum EnrichmentResultType {
+    FOUND
+    NOT_FOUND
+    FAILED
+    isReusable() : boolean
+}
+enum ReuseDecision {
+    HIT
+    JOIN
+    MISS
+}
+class ReuseIndexEntry <<agregado>> {
+    queryId, evidenceId
+    resultType : EnrichmentResultType
+    reusableUntil : Instant
+    revision : long
+    policyVersion
+    servesAt(agora, policyVersion) : boolean
+}
+class Leadership <<agregado>> {
+    {field} state : State (IN_FLIGHT, COMPLETED)
+    fencingVersion, firstFencingVersion : long
+    leaderWorkRef, queryId
+    leaseUntil : Instant
+    evidenceId, resultType
+    isTransferableAt(agora) : boolean
+    firstFencingVersionOfSuccessor() : long
+    chainIncludes(versão) : boolean
+    answers(versãoDoSeguidor) : boolean
+    isLedBy(workRef) : boolean
+}
+interface ReusePlan <<serviço>> <<sealed>> {
+    {static} of(reuse, leadership, workRef, agora, policyVersion) : ReusePlan
+}
+class Hit <<valor>> {
+    entry : ReuseIndexEntry
+}
+class Join <<valor>> {
+    fencingVersion : long
+}
+class Lead <<valor>> {
+    fencingVersion, firstFencingVersion : long
+    expectedFencingVersion : Long
+    expectedReuseRevision : Long
+}
+class OwnLeadership <<valor>>
+class EnrichmentResolved <<evento>> {
+    {field} eventId = UUIDv5(queryId|workRef)
+    occurredAt, schemaVersion = "1"
+    workRef, quoteId, version, queryId, evidenceId
+    reuseDecision : ReuseDecision
+    policyVersion
+    resultType : EnrichmentResultType
+    result : EnrichmentProfile
+    notFoundRefs, reusableUntil, errorClass
+}
+
+EnrichmentRequest ..> EnrichmentProtocol : pedido ao provedor
+EnrichmentProtocol ..> EnrichmentReply : lê
+EnrichmentProtocol ..> EnrichmentVerdict : devolve
+EnrichmentVerdict <|.. Found
+EnrichmentVerdict <|.. NotFound
+EnrichmentVerdict <|.. VTransient
+EnrichmentVerdict <|.. Failed
+EnrichmentVerdict <|.. VUnknown
+Found --> EnrichmentProfile
+ReusePlan <|.. Hit
+ReusePlan <|.. Join
+ReusePlan <|.. Lead
+ReusePlan <|.. OwnLeadership
+ReusePlan ..> ReuseIndexEntry : lê
+ReusePlan ..> Leadership : lê
+Hit --> ReuseIndexEntry
+ReuseIndexEntry --> EnrichmentResultType
+Leadership --> EnrichmentResultType
+EnrichmentResolved --> ReuseDecision
+EnrichmentResolved --> EnrichmentResultType
+EnrichmentResolved --> EnrichmentProfile
+
+note right of ReusePlan
+    Ordem: REUSE# válido e da política em vigor = Hit;
+    sem INFLIGHT# = Lead(1, 1); INFLIGHT# do próprio workRef =
+    OwnLeadership; COMPLETED ou lease vencida = Lead(v + 1);
+    senão, Join(v).
+end note
+note bottom of EnrichmentVerdict
+    Transient: 429, 5xx ou falha antes do envio (retry no worker).
+    Failed: outros 4xx, 404 sem notFoundRefs (UNDECLARED_NOT_FOUND)
+    ou 2xx ilegível. Unknown: sem resposta depois do envio.
+end note
+
+legend right
+    <b>Leitura</b>
+    <back:$COR_DOMINIO>    </back> Estado persistido (REUSE#, INFLIGHT#)
+    <back:#F1F8E9>    </back> Valor imutável (record)
+    <back:$COR_APLICACAO>    </back> Decisão pura, sem SDK
+    <back:$COR_SAIDA>    </back> Evento publicado
+endlegend
+@enduml

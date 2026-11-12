@@ -1,0 +1,89 @@
+@startuml c4-conteiner
+!include ../../../docs/diagramas/tema-plataforma.iuml
+!$LEGEND_TITLE_TEXT = "Legenda"
+!include <C4/C4_Container>
+
+UpdateElementStyle("person", $bgColor="#FFFDE7", $fontColor="#37474F", $borderColor="#F9A825", $legendText="Pessoa")
+UpdateElementStyle("external_system", $bgColor="#FCE4EC", $fontColor="#37474F", $borderColor="#AD1457", $legendText="Sistema externo")
+UpdateElementStyle("container", $legendText="Contêiner")
+UpdateBoundaryStyle($elementName="system", $bgColor="#FAFCFF", $fontColor="#1A237E", $borderColor="#1565C0", $type="stack CloudFormation", $legendText="Fronteira da stack")
+AddElementTag("quarkus", $bgColor="#1565C0", $fontColor="#FFFFFF", $borderColor="#0D47A1", $legendText="Lambda Quarkus (Java 21, 1769 MB)")
+AddElementTag("entrada", $bgColor="#FFF3E0", $fontColor="#37474F", $borderColor="#EF6C00", $legendText="Entrada HTTP")
+AddElementTag("orquestracao", $bgColor="#E3F2FD", $fontColor="#0D47A1", $borderColor="#1565C0", $legendText="Máquina de estado")
+AddElementTag("dados", $bgColor="#ECEFF1", $fontColor="#37474F", $borderColor="#455A64", $legendText="Recurso gerenciado da stack")
+AddElementTag("dlq", $bgColor="#FFEBEE", $fontColor="#37474F", $borderColor="#C62828", $legendText="Falha, DLQ ou alarme")
+AddRelTag("assincrono", $textColor="#6A1B9A", $lineColor="#6A1B9A", $lineStyle=DashedLine(), $legendText="Assíncrono (stream, EventBridge ou SQS)")
+AddRelTag("retomada", $textColor="#2E7D32", $lineColor="#2E7D32", $legendText="Retomada da execução (SendTaskSuccess)")
+
+LAYOUT_TOP_DOWN()
+
+title $I_QUARKUS quote-solution — contêineres (C4 nível 2)
+
+Person(usuario, "Usuário da organização", "Cria e acompanha cotações e seleciona ofertas (quotes:*, offers:select)", $sprite="user")
+Person(operador, "Operador da organização", "Consulta ocorrências e pede reconciliação (operations:*)", $sprite="user_cog")
+System_Ext(frontend, "Frontend da cotação", "Fora deste repositório; segue o contracts/openapi.yaml", $sprite="globe")
+
+System_Boundary(quote, "quote-solution (stack quote-solution-<stage>)") {
+    Container(apigw, "API Gateway REST", "AWS_PROXY, sem autorizador", "Rota /v1/{proxy+}, método ANY", $sprite="globe", $tags="entrada")
+    Container(api, "api", "quarkus-amazon-lambda-rest, smallrye-jwt", "API de produto: cotações, versões, ofertas, seleção, catálogo, operações e /v1/me", $sprite="bolt", $tags="quarkus")
+    Container(sfn, "quote-flow", "Step Functions, quote-solution-<stage>-quote-flow", "Uma execução por versão, q-<quoteId>-v<version>; o estado leva só referências", $sprite="project_diagram", $tags="orquestracao")
+    Container(steps, "workflowSteps", "QUARKUS_LAMBDA_HANDLER=workflow-steps", "Passos simples, escolhidos pelo campo step", $sprite="bolt", $tags="quarkus")
+    Container(dispatch, "dispatch", "QUARKUS_LAMBDA_HANDLER=dispatch", "Waiter com o task token cifrado e outbox do pedido", $sprite="bolt", $tags="quarkus")
+    Container(resume, "resume", "QUARKUS_LAMBDA_HANDLER=resume", "Grava o resultado e retoma a execução", $sprite="bolt", $tags="quarkus")
+    Container(projector, "issueProjector", "QUARKUS_LAMBDA_HANDLER=issue-projector", "Projeta ocorrências e reconciliações da provider", $sprite="bolt", $tags="quarkus")
+    Container(relay, "outboxRelay", "QUARKUS_LAMBDA_HANDLER=outbox-relay", "Publica o outbox e inicia as execuções", $sprite="paper_plane", $tags="quarkus")
+    Container(reconciler, "reconciler", "QUARKUS_LAMBDA_HANDLER=reconciler; Scheduler rate(1 minute)", "Outbox, waiters, versões, ocorrências, DLQs e métricas EMF", $sprite="clock", $tags="quarkus")
+    ContainerDb(table, "quote-solution-<stage>-quotes", "DynamoDB, stream NEW_IMAGE, gsi1 e gsi2", "Cotações, versões, resultados, ofertas, waiters, outbox, ocorrências e operações", $sprite="database", $tags="dados")
+    ContainerQueue(results, "results + results-dlq", "SQS", "EnrichmentResolved e InsurerResultRecorded", $sprite="inbox", $tags="dados")
+    ContainerQueue(issues, "issues + issues-dlq", "SQS", "QueryReconciled, OperationIssueRaised e OperationIssueUpdated", $sprite="inbox", $tags="dados")
+    ContainerQueue(failures, "stream-failures", "SQS", "Destino onFailure do stream; sem consumidor", $sprite="exclamation_triangle", $tags="dlq")
+    Container(secret, "quote-solution/<stage>/token-key", "Secrets Manager", "Chave da cifra dos task tokens", $sprite="key", $tags="dados")
+    Container(cognito, "quote-solution-<stage>-users", "Cognito user pool e client web", "Grupos org_<organizationId> e perm_*", $sprite="user_shield", $tags="dados")
+    Container(alarms, "8 alarmes + AlarmsTopic", "CloudWatch e SNS", "DLQs, stream-failures, outbox pendente e tarefas expiradas", $sprite="bell", $tags="dlq")
+}
+
+System_Ext(bus, "platform-<stage>-events", "EventBridge da stack platform", $sprite="exchange_alt")
+System_Ext(provider, "provider-solution", "Enriquecimento, seguradoras, callbacks e reconciliação de consultas", $sprite="building")
+
+Rel(usuario, frontend, "Usa")
+Rel(operador, frontend, "Usa")
+Rel(frontend, cognito, "Obtém o access token")
+Rel(frontend, apigw, "JSON + Bearer", "HTTPS")
+Rel(apigw, api, "Proxy", "AWS_PROXY")
+Rel(api, cognito, "Lê o JWKS do issuer")
+Rel(api, table, "Transações com idempotência e outbox; leituras e listagens pelo gsi1")
+
+Rel(table, relay, "INSERT de OUTBOX, lotes de 100", "DynamoDB Streams", $tags="assincrono")
+Rel(table, failures, "Registro esgotado (onFailure do ESM)", $tags="assincrono")
+Rel(relay, sfn, "StartExecution (StartQuoteRequested)")
+Rel(relay, bus, "PutEvents, source mmda.quote", $tags="assincrono")
+Rel(relay, table, "publishedAt, executionArn e falhas")
+
+Rel(sfn, steps, "lambda:invoke")
+Rel(sfn, dispatch, "lambda:invoke.waitForTaskToken")
+Rel(steps, table, "Fases, regras, RESULT e consolidação")
+Rel(dispatch, table, "Waiter WAITING e outbox do pedido")
+Rel(dispatch, secret, "GetSecretValue")
+Rel(dispatch, sfn, "SendTaskSuccess, se o resultado já chegou", $tags="retomada")
+
+Rel(bus, results, "ProviderResultsRule", $tags="assincrono")
+Rel(bus, issues, "ProviderIssuesRule", $tags="assincrono")
+Rel(results, resume, "batchSize 1", "ESM", $tags="assincrono")
+Rel(issues, projector, "batchSize 1", "ESM", $tags="assincrono")
+Rel(resume, table, "Waiter, RESULT, OFFER, evidência e CONSUMED#")
+Rel(resume, secret, "GetSecretValue")
+Rel(resume, sfn, "SendTaskSuccess", $tags="retomada")
+Rel(projector, table, "ISSUE#, QUERYREF#, OPERATION# e CONSUMED#")
+
+Rel(reconciler, table, "Varre o gsi2 e repara")
+Rel(reconciler, sfn, "StartExecution, SendTaskSuccess, DescribeExecution e GetExecutionHistory", $tags="retomada")
+Rel(reconciler, bus, "Republica o outbox", $tags="assincrono")
+Rel(reconciler, results, "Reprocessa a results-dlq")
+Rel(reconciler, issues, "Reprocessa a issues-dlq")
+Rel(reconciler, alarms, "ExpiredTasks e OutboxPendingAgeSeconds", "EMF")
+
+Rel(bus, provider, "EnrichmentRequested, InsurerQuoteRequested e QueryReconcileRequested", "regras da provider", $tags="assincrono")
+Rel(provider, bus, "EnrichmentResolved, InsurerResultRecorded, QueryReconciled e OperationIssue*", "source mmda.provider", $tags="assincrono")
+
+SHOW_LEGEND()
+@enduml

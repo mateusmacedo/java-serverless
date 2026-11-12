@@ -1,0 +1,70 @@
+@startuml c4-componente-reconciler
+!include ../../../docs/diagramas/tema-plataforma.iuml
+!$LEGEND_TITLE_TEXT = "Legenda"
+!include <C4/C4_Component>
+
+UpdateElementStyle("component", $legendText="Componente")
+UpdateElementStyle("external_component", $bgColor="#ECEFF1", $fontColor="#37474F", $borderColor="#455A64", $legendText="Recurso fora da Lambda")
+UpdateBoundaryStyle($elementName="container", $bgColor="#FAFCFF", $fontColor="#1A237E", $borderColor="#1565C0", $type="zip quote-functions-lambda.zip", $legendText="Fronteira da Lambda")
+AddElementTag("entrada", $bgColor="#FFF3E0", $fontColor="#37474F", $borderColor="#EF6C00", $legendText="Handler agendado")
+AddElementTag("dever", $bgColor="#E3F2FD", $fontColor="#0D47A1", $borderColor="#1565C0", $legendText="Dever do ciclo (falha isolada, vai ao log)")
+AddElementTag("reuso", $bgColor="#F3E5F5", $fontColor="#4A148C", $borderColor="#6A1B9A", $legendText="Código reaproveitado de outra Lambda")
+AddElementTag("dominio", $bgColor="#E8F5E9", $fontColor="#1B5E20", $borderColor="#2E7D32", $legendText="quote-domain (Java puro)")
+AddRelTag("retomada", $textColor="#2E7D32", $lineColor="#2E7D32", $legendText="Retomada da execução (SendTaskSuccess)")
+
+LAYOUT_TOP_DOWN()
+
+title $I_AGENDADOR reconciler — componentes e ordem dos deveres (C4 nível 3)
+
+Component_Ext(scheduler, "EventBridge Scheduler", "method: scheduler, rate(1 minute)", "Entrada {source: schedule}; papel de execução ReconcilerRole", $sprite="clock")
+
+Container_Boundary(reconciler, "reconciler (QUARKUS_LAMBDA_HANDLER=reconciler, timeout 60 s)") {
+    Component(handler, "ReconcilerHandler", "@Named reconciler", "Roda os deveres em ordem e registra reconciler report: …", $sprite="clock", $tags="entrada")
+    Component(outbox, "OutboxReconciler", "1. outbox e 8. outboxAge", "Republica OUTBOX_PENDING mais velho que outboxRepublishAfterSeconds; mede a idade pelo createdAt", $sprite="paper_plane", $tags="dever")
+    Component(waiters, "WaiterReconciler", "2. resuming e 4. expiredTasks", "Retoma WAITER_RESUMING parado; confere WAITER_EXPIRED e abre TASK_EXPIRED", $tags="dever")
+    Component(versions, "VersionReconciler", "3. versions", "ACTIVE_VERSION: finaliza execução encerrada ou abre STUCK_VERSION; SUMMARY_PENDING: repara o META", $tags="dever")
+    Component(issueReviewer, "IssueReviewer", "5. issues", "Resolve a STUCK_VERSION do ISSUE_OPEN cuja versão saiu do ACTIVE_VERSION", $tags="dever")
+    Component(deadLetters, "DeadLetterReprocessor", "6. deadLetters e 7. issueDeadLetters", "Reenvia abaixo de dlqMaxAttempts (atributo dlqAttempt) ou apaga com DEAD_LETTER", $sprite="exclamation_triangle", $tags="dever")
+    Component(metrics, "ReconcilerMetrics", "9. EMF", "Uma linha JSON no stdout: ExpiredTasks e OutboxPendingAgeSeconds, dimensão Stage", $sprite="bell", $tags="dever")
+
+    Component(publisher, "OutboxPublisher", "da outbox-relay", "Mesmo código de publicação; deriva o executionArn pelo nome", $tags="reuso")
+    Component(resumer, "ResultResumer.resumeExecution", "do resume", "SendTaskSuccess com o resumePayload gravado", $tags="reuso")
+    Component(steps, "WorkflowSteps.finalizeEndedExecution", "do workflow-steps", "Consolida pelo mesmo caminho do passo consolidate", $tags="reuso")
+    Component(domain, "Reconciliation + QuoteIssues", "quote-domain", "versionAction, expiredTask, deadLetter e issueId determinístico", $sprite="cubes", $tags="dominio")
+}
+
+Component_Ext(table, "quote-solution-<stage>-quotes", "DynamoDB, índice gsi2", "OUTBOX_PENDING, WAITER_RESUMING, ACTIVE_VERSION, SUMMARY_PENDING, WAITER_EXPIRED e ISSUE_OPEN", $sprite="database")
+Component_Ext(sfn, "quote-flow", "Step Functions", "Execuções das versões", $sprite="project_diagram")
+Component_Ext(dlqs, "results-dlq e issues-dlq", "SQS", "Lidas e apagadas; o reenvio vai à results ou à issues", $sprite="exclamation_triangle")
+Component_Ext(bus, "platform-<stage>-events", "EventBridge", "Destino da republicação", $sprite="exchange_alt")
+Component_Ext(logs, "CloudWatch Logs e métricas", "namespace mmda/quote-solution", "Alarmes expired-tasks e outbox-pending-age", $sprite="bell")
+
+Rel(scheduler, handler, "A cada minuto")
+Rel(handler, outbox, "republish, oldestPendingAgeSeconds")
+Rel(handler, waiters, "resumeStale, reviewExpired")
+Rel(handler, versions, "reconcile")
+Rel(handler, issueReviewer, "review")
+Rel(handler, deadLetters, "reprocess, reprocessIssues")
+Rel(handler, metrics, "emit")
+Rel(outbox, publisher, "publish")
+Rel(versions, publisher, "executionArn(nome)")
+Rel(waiters, resumer, "resumeExecution(workRef)")
+Rel(versions, steps, "finalizeEndedExecution")
+Rel(versions, domain, "versionAction")
+Rel(waiters, domain, "expiredTask")
+Rel(deadLetters, domain, "deadLetter")
+Rel(outbox, table, "Query no gsi2")
+Rel(waiters, table, "Query no gsi2, ocorrência TASK_EXPIRED")
+Rel(versions, table, "Query no gsi2, repairSummary")
+Rel(issueReviewer, table, "Query no gsi2, resolveIssue")
+Rel(deadLetters, table, "Ocorrência DEAD_LETTER")
+Rel(publisher, bus, "PutEvents")
+Rel(publisher, sfn, "StartExecution")
+Rel(resumer, sfn, "SendTaskSuccess", $tags="retomada")
+Rel(versions, sfn, "DescribeExecution")
+Rel(waiters, sfn, "GetExecutionHistory")
+Rel(deadLetters, dlqs, "ReceiveMessage, SendMessage à fila de origem, DeleteMessage")
+Rel(metrics, logs, "Linha EMF")
+
+SHOW_LEGEND()
+@enduml

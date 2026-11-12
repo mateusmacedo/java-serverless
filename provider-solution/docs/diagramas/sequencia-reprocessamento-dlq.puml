@@ -1,0 +1,51 @@
+@startuml sequencia-reprocessamento-dlq
+!include ../../../docs/diagramas/tema-plataforma.iuml
+
+title $I_DLQ Reprocessamento das DLQs pelo reconciler (ADR 0007)
+autonumber
+
+box "Infraestrutura" #F7F9FA
+    participant "$I_SQS\nfila de origem\n(enrichment-, insurer-,\nreconcile-requests, sim-callbacks)" as origem <<infra>>
+end box
+box "Aplicação" #F5FAFF
+    participant "$I_LAMBDA\nconsumidor\n(worker ou simCallbackSender)" as consumidor <<aplicacao>>
+end box
+box "Infraestrutura" #F7F9FA
+    participant "$I_DLQ\nDLQ da fila" as dlq <<infra>>
+    participant "$I_ALARME\n<fila>-dlq-age e\n<fila>-dlq-volume" as alarme <<infra>>
+end box
+box "Aplicação" #F5FAFF
+    participant "$I_LAMBDA\nreconciler\n(DeadLetterReprocessor)" as rec <<aplicacao>>
+end box
+box "Infraestrutura" #F7F9FA
+    participant "$I_DYNAMODB\nqueries" as db <<infra>>
+end box
+
+origem -> consumidor : entrega (tentativa 1, sem o atributo dlqAttempt)
+consumidor --> origem : <color:#C62828>falha da mensagem</color> (batchItemFailures)
+origem -> dlq : redrive do SQS depois de maxReceiveCount\n(3 nos pedidos, 5 na sim-callbacks)
+dlq -> alarme : 1 mensagem visível ou a mais antiga com 300 s disparam o alarme
+rec -> dlq : ReceiveMessage (até 10, com o atributo dlqAttempt)
+rec -> rec : DeadLetterPolicy.decide(dlqAttempt, deadlineAt do pedido, agora)
+alt #E8F5E9 Redrive: dlqAttempt < dlqMaxAttempts (3) e antes do deadlineAt
+    rec -> origem : SendMessage do mesmo corpo com dlqAttempt = tentativa + 1
+    rec -> dlq : DeleteMessage
+else #FFEBEE Discard: MAX_ATTEMPTS, DEADLINE_EXCEEDED ou UNREADABLE (corpo ilegível, na hora)
+    rec -> db : ISSUE# DEAD_LETTER (alvo <fila>|<chave do pedido>) + OUTBOX#\nOperationIssueRaised ou, numa nova mensagem do mesmo pedido, OperationIssueUpdated
+    note right of rec
+        A ocorrência leva o organizationId da mensagem; o queryId e o quoteId
+        só quando a QUERY# é da mesma organização (QueryLedger.ownerOf).
+    end note
+    opt fila reconcile-requests
+        rec -> db : OPERATION# RUNNING para FAILED + OUTBOX# QueryReconciled (revisão 2)
+    end
+    rec -> dlq : DeleteMessage
+end
+note over origem, consumidor
+    O reenvio adiado dos workers (DelaySeconds, sem quota ou com uma entrega viva)
+    preserva o dlqAttempt, para a contagem não recomeçar.
+    O ApproximateReceiveCount não serve de contador: ele continua contando depois do redrive.
+end note
+
+$legenda_erros()
+@enduml

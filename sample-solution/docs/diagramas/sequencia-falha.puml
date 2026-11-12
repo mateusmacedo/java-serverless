@@ -1,0 +1,31 @@
+@startuml sequencia-falha
+!include ../../../docs/diagramas/tema-plataforma.iuml
+hide stereotype
+title $I_DLQ Falha num passo da request-flow: Catch States.ALL para a DLQ
+autonumber
+box "Aplicação" #F5FAFF
+    participant "$I_MAQUINA\nrequest-flow" as sfn <<aplicacao>>
+    participant "$I_LAMBDA\nvalidate, persist\nou notify" as passo <<aplicacao>>
+end box
+box "Infraestrutura" #F7F9FA
+    queue "$I_DLQ\nsample-solution-\n<stage>-dlq" as dlq <<infra>>
+end box
+
+sfn -> passo : RequestContext (attempt = n)
+alt #FFEBEE payload vazio ou acima de max-payload-bytes (validate)
+    passo --> sfn : <color:#C62828>InvalidRequestException</color>
+else #FFEBEE erro do SDK, PutEvents rejeitado ou timeout (qualquer passo)
+    passo --> sfn : <color:#C62828>erro da Lambda</color>
+end
+== Catch: ErrorEquals States.ALL, ResultPath $.error ==
+sfn -> dlq : SendToDeadLetterQueue\nsqs:sendMessage, MessageBody = entrada do estado + error
+note right of dlq
+  O corpo é o RequestContext que o passo recebeu
+  (requestId, s3Key, attempt, signature e payloadBytes
+  quando já preenchidos) e o campo error,
+  com Error e Cause do runtime da Lambda.
+end note
+sfn -> sfn : <color:#C62828>RequestFailed (Fail): execução FAILED, erro RequestFailed</color>
+note over sfn, dlq : O reprocessamento lê esta fila: sequencia-reprocessamento.puml
+$legenda_erros()
+@enduml

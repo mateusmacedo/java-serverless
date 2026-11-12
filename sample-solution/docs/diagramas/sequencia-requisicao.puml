@@ -1,0 +1,55 @@
+@startuml sequencia-requisicao
+!include ../../../docs/diagramas/tema-plataforma.iuml
+hide stereotype
+title $I_API Requisição até o RequestCompleted: POST /requests
+autonumber
+participant "$I_CLIENTE\nCliente HTTP" as cliente <<ator>>
+box "Entrada" #FFFAF3
+    participant "$I_API\nAPI Gateway" as gw <<entrada>>
+    participant "$I_LAMBDA\napi\n(RequestController)" as api <<entrada>>
+end box
+box "Aplicação" #F5FAFF
+    participant "$I_MAQUINA\nrequest-flow" as sfn <<aplicacao>>
+    participant "$I_LAMBDA\nvalidate" as validate <<aplicacao>>
+    participant "$I_LAMBDA\npersist" as persist <<aplicacao>>
+    participant "$I_LAMBDA\nnotify" as notify <<aplicacao>>
+end box
+box "Infraestrutura" #F7F9FA
+    participant "$I_S3\npayloads" as s3 <<infra>>
+    participant "$I_SEGREDO\nSSM e\nSecrets Manager" as cfg <<infra>>
+    database "$I_DYNAMODB\nrequests" as ddb <<infra>>
+end box
+box "Saída" #FBF6FC
+    participant "$I_SNS\nnotifications" as sns <<saida>>
+    participant "$I_EVENTBRIDGE\nevents" as bus <<saida>>
+    queue "$I_SQS\naudit" as audit <<saida>>
+end box
+
+== Entrada síncrona ==
+cliente -> gw : POST /requests\nContent-Type: application/json
+gw -> api : evento proxy
+alt #FFEBEE Content-Type diferente de application/json ou corpo ausente
+    api --> cliente : <color:#C62828>415 ou 400 sem corpo (Spring MVC, sem chamar a AWS)</color>
+else #E8F5E9 ok
+    api -> s3 : PutObject requests/<requestId>.json
+    api -> sfn : StartExecution(name = requestId,\n{requestId, s3Key, attempt: 1})
+    api --> cliente : <color:#2E7D32>202 {requestId, executionArn}</color>
+    note right of api : Falha no S3 ou no StartExecution\nvira 500 (sem teste)
+end
+== Execução assíncrona ==
+sfn -> validate : RequestContext
+validate -> cfg : GetParameter max-payload-bytes\nGetSecretValue signing-key
+validate -> s3 : GetObject
+validate --> sfn : RequestContext + signature (HMAC-SHA256)\n+ payloadBytes
+sfn -> persist : RequestContext
+persist -> ddb : PutItem (requestId, s3Key, signature,\npayloadBytes, attempt, persistedAt)
+persist --> sfn : RequestContext
+sfn -> notify : RequestContext
+notify -> sns : Publish (RequestContext em JSON)
+notify -> bus : PutEvents source mmda.sample,\ndetail-type RequestCompleted
+bus ->> audit : RequestCompletedRule
+note right of bus : A regra da receipt-solution também\nrecebe o evento (ADR 0011)
+notify --> sfn : RequestContext
+sfn -> sfn : SUCCEEDED
+$legenda_camadas()
+@enduml

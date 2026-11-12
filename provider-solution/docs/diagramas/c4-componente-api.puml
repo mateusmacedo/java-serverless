@@ -1,0 +1,51 @@
+@startuml c4-componente-api
+!include ../../../docs/diagramas/tema-plataforma.iuml
+!include <C4/C4_Component>
+
+!$LEGEND_TITLE_TEXT = "Legenda"
+UpdateElementStyle("external_system", $bgColor="#FCE4EC", $fontColor="#37474F", $borderColor="#AD1457", $legendText="Quem envia o callback")
+UpdateElementStyle("container", $bgColor="#ECEFF1", $fontColor="#37474F", $borderColor="#455A64", $legendText="Recurso AWS")
+UpdateElementStyle("component", $bgColor="#E3F2FD", $fontColor="#37474F", $borderColor="#1565C0", $legendText="Componente do provider-api")
+UpdateBoundaryStyle($bgColor="#FFFFFF", $fontColor="#37474F", $borderColor="#90A4AE", $legendText="Limite da Lambda")
+AddElementTag("entrada", $bgColor="#FFF3E0", $fontColor="#37474F", $borderColor="#EF6C00", $legendText="Entrada HTTP")
+AddElementTag("saida", $bgColor="#F3E5F5", $fontColor="#37474F", $borderColor="#6A1B9A", $legendText="Adaptador AWS")
+AddElementTag("dominio", $bgColor="#E8F5E9", $fontColor="#37474F", $borderColor="#2E7D32", $legendText="Regra da provider-domain")
+
+title $I_API Lambda api (provider-api) — componentes (C4 nível 3)
+
+System_Ext(fornecedor, "simCallbackSender ou seguradora assíncrona", "POST assinado com X-Signature", $sprite="robot")
+Container(apigw, "API Gateway", "REST", "POST /v1/providers/{provider}/callbacks", $sprite="globe")
+
+Boundary(api, "api", "Lambda, timeout 29 s, papel CallbacksApiRole") {
+    Component(handler, "StreamLambdaHandler", "serverless-java-container", "Contexto Spring criado uma vez por container", $sprite="bolt", $tags="entrada")
+    Component(controller, "CallbackController", "@RestController", "Ordem: assinatura (401), provedor (404), até 256 KiB (413), envelope (400); 200 PROCESSED, 202 RECEIVED, 503 em SdkException", $sprite="globe", $tags="entrada")
+    Component(inbox, "CallbackInbox", "Serviço", "Grava a inbox, correlaciona pelo clientReference ou pelo CORR# e processa as pendências em ordem de externalEventId", $sprite="inbox")
+    Component(table, "CallbackTable", "DynamoDB", "INBOX#, CORR#, leitura da QUERY# e transação de conclusão", $sprite="database", $tags="saida")
+    Component(tx, "Transactions", "TransactWriteItems", "Cancelamento por condição vira resultado; TransactionConflict repetido até 3 vezes", $sprite="exchange_alt", $tags="saida")
+    Component(raw, "RawCallbacks", "S3", "raw/{queryId}/callback-{externalEventId}.json", $sprite="archive", $tags="saida")
+    Component(secret, "CallbackSecret", "Secrets Manager", "callback-secret lido uma vez por container", $sprite="key", $tags="saida")
+    Component(signature, "CallbackSignature", "provider-domain", "sha256= e o hexadecimal do HMAC-SHA256 dos bytes recebidos, comparado em tempo constante", $sprite="user_shield", $tags="dominio")
+    Component(protocol, "InsurerProtocol.classifyCallback", "provider-domain", "Classifica o result como a resposta síncrona; ilegível vira UNAVAILABLE", $sprite="leaf", $tags="dominio")
+}
+
+ContainerDb(queries, "provider-solution-{stage}-queries", "DynamoDB", "Itens da consulta, inbox, correlação, outbox e consumo", $sprite="database")
+ContainerDb(payloads, "provider-solution-{stage}-payloads", "S3", "Resposta bruta do callback", $sprite="archive")
+Container(sm, "provider-solution/{stage}/callback-secret", "Secrets Manager", "Chave da assinatura", $sprite="key")
+
+Rel(fornecedor, apigw, "Callback", "HTTP")
+Rel(apigw, handler, "Evento proxy")
+Rel(handler, controller, "Requisição HTTP")
+Rel(controller, secret, "value()")
+Rel(controller, signature, "verify(segredo, corpo, cabeçalho)")
+Rel(controller, inbox, "receive(provider, envelope, corpo)")
+Rel(inbox, table, "putInbox, loadQuery, addPending, settle, markProcessed")
+Rel(inbox, protocol, "classifyCallback(result)")
+Rel(inbox, raw, "store")
+Rel(table, tx, "write")
+Rel(table, queries, "PutItem, UpdateItem, GetItem, Query")
+Rel(tx, queries, "TransactWriteItems")
+Rel(raw, payloads, "PutObject")
+Rel(secret, sm, "GetSecretValue")
+
+SHOW_LEGEND()
+@enduml

@@ -1,0 +1,63 @@
+@startuml c4-conteiner
+!include ../../../docs/diagramas/tema-plataforma.iuml
+!$LEGEND_TITLE_TEXT = "Legenda"
+!include <C4/C4_Container>
+
+UpdateElementStyle("person", $bgColor="#FFFDE7", $fontColor="#37474F", $borderColor="#F9A825", $legendText="Ator")
+UpdateElementStyle("external_system", $bgColor="#FCE4EC", $fontColor="#37474F", $borderColor="#AD1457", $legendText="Outra solução")
+UpdateElementStyle("container", $bgColor="#1565C0", $fontColor="#FFFFFF", $borderColor="#0D47A1", $legendText="Lambda Java 21 (Spring)")
+UpdateSystemBoundaryStyle($bgColor="#FFFFFF", $fontColor="#37474F", $borderColor="#90A4AE", $type="Solução", $legendText="Limite da solução")
+AddElementTag("entrada", $bgColor="#FFF3E0", $fontColor="#37474F", $borderColor="#EF6C00", $legendText="Entrada HTTP")
+AddElementTag("orquestracao", $bgColor="#E3F2FD", $fontColor="#0D47A1", $borderColor="#1565C0", $legendText="Orquestração (Step Functions, Scheduler)")
+AddElementTag("dados", $bgColor="#ECEFF1", $fontColor="#37474F", $borderColor="#455A64", $legendText="Dados e configuração")
+AddElementTag("mensageria", $bgColor="#F3E5F5", $fontColor="#37474F", $borderColor="#6A1B9A", $legendText="Mensageria (SNS, EventBridge, SQS)")
+AddRelTag("assincrono", $textColor="#6A1B9A", $lineColor="#6A1B9A", $lineStyle=DashedLine(), $legendText="Assíncrono (evento, fila ou agendamento)")
+AddRelTag("falha", $textColor="#C62828", $lineColor="#C62828", $lineStyle=DashedLine(), $legendText="Caminho de falha")
+
+title $I_SPRING sample-solution — contêineres (C4 nível 2)
+
+Person(cliente, "Cliente HTTP", "Envia o payload JSON", $sprite="user")
+Person(operador, "Desenvolvedor", "Reprocessa a DLQ sem esperar o agendamento", $sprite="user_cog")
+
+System_Boundary(sample, "sample-solution-<stage>") {
+    Container(apigw, "API REST <stage>-sample-solution", "API Gateway", "POST /requests, sem autorizador", $sprite="globe", $tags="entrada")
+    Container(api, "api", "Lambda, Spring MVC", "StreamLambdaHandler e RequestController", $sprite="bolt")
+    ContainerDb(bucket, "payloads", "S3", "requests/<requestId>.json", $sprite="archive", $tags="dados")
+    Container(flow, "request-flow", "Step Functions", "Validate, Persist e Notify; Catch States.ALL para a DLQ", $sprite="project_diagram", $tags="orquestracao")
+    Container(validate, "validate", "Lambda, Spring Cloud Function", "Limite de tamanho e assinatura HMAC", $sprite="bolt")
+    Container(persist, "persist", "Lambda, Spring Cloud Function", "Grava o resultado", $sprite="bolt")
+    Container(notify, "notify", "Lambda, Spring Cloud Function", "SNS e RequestCompleted", $sprite="bolt")
+    Container(reprocess, "reprocess", "Lambda, Spring Cloud Function", "Reinicia ou descarta o que está na DLQ", $sprite="bolt")
+    Container(scheduler, "Agendamento do reprocess", "EventBridge Scheduler", "rate(5 minutes), {maxMessages: 10}", $sprite="clock", $tags="orquestracao")
+    ContainerDb(config, "max-payload-bytes e signing-key", "SSM Parameter e Secrets Manager", "4096 bytes; chave HMAC de 32 caracteres", $sprite="key", $tags="dados")
+    ContainerDb(table, "requests", "DynamoDB", "PK requestId", $sprite="database", $tags="dados")
+    ContainerQueue(topic, "notifications", "SNS", "Sem assinantes no exemplo", $sprite="bullhorn", $tags="mensageria")
+    ContainerQueue(bus, "events", "EventBridge", "Barramento próprio da solução", $sprite="exchange_alt", $tags="mensageria")
+    ContainerQueue(audit, "audit", "SQS", "Alvo da RequestCompletedRule", $sprite="inbox", $tags="mensageria")
+    ContainerQueue(dlq, "dlq", "SQS", "Entrada do passo que falhou + error", $sprite="exclamation_triangle", $tags="mensageria")
+}
+
+System_Ext(receipt, "receipt-solution", "Declara uma regra neste barramento e inicia a receipt-flow (ADR 0011)", $sprite="exchange_alt")
+
+Rel(cliente, apigw, "POST /requests", "HTTPS, JSON")
+Rel(apigw, api, "Evento proxy", "Lambda proxy")
+Rel(api, bucket, "PutObject")
+Rel(api, flow, "StartExecution, nome = requestId")
+Rel(flow, validate, "Invoca")
+Rel(flow, persist, "Invoca")
+Rel(flow, notify, "Invoca")
+Rel(validate, config, "GetParameter e GetSecretValue")
+Rel(validate, bucket, "GetObject")
+Rel(persist, table, "PutItem")
+Rel(notify, topic, "Publish", $tags="assincrono")
+Rel(notify, bus, "PutEvents RequestCompleted", $tags="assincrono")
+Rel(bus, audit, "source mmda.sample, detail-type RequestCompleted", $tags="assincrono")
+Rel(bus, receipt, "Regra da receipt-solution", $tags="assincrono")
+Rel(flow, dlq, "sqs:sendMessage no Catch", $tags="falha")
+Rel(scheduler, reprocess, "A cada 5 minutos", $tags="assincrono")
+Rel(operador, reprocess, "lambda invoke {maxMessages: 10}")
+Rel(reprocess, dlq, "ReceiveMessage e DeleteMessage", $tags="falha")
+Rel(reprocess, flow, "StartExecution, nome = requestId-attempt", $tags="falha")
+
+SHOW_LEGEND()
+@enduml

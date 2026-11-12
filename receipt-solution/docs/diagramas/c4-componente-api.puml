@@ -1,0 +1,39 @@
+@startuml c4-componente-api
+!include ../../../docs/diagramas/tema-plataforma.iuml
+!$LEGEND_TITLE_TEXT = "Legenda"
+!include <C4/C4_Component>
+
+UpdateElementStyle("person", $bgColor="#FFFDE7", $fontColor="#37474F", $borderColor="#F9A825", $legendText="Ator")
+UpdateElementStyle("component", $bgColor="#E3F2FD", $fontColor="#0D47A1", $borderColor="#1565C0", $legendText="Componente da aplicação")
+UpdateElementStyle("container", $bgColor="#ECEFF1", $fontColor="#37474F", $borderColor="#455A64", $legendText="Recurso AWS")
+UpdateContainerBoundaryStyle($bgColor="#FFFFFF", $fontColor="#37474F", $borderColor="#90A4AE", $type="Lambda", $legendText="Lambda e o que roda dentro dela")
+AddElementTag("entrada", $bgColor="#FFF3E0", $fontColor="#37474F", $borderColor="#EF6C00", $legendText="Entrada (handler e resource)")
+AddElementTag("biblioteca", $bgColor="#F3E5F5", $fontColor="#37474F", $borderColor="#6A1B9A", $legendText="Extensão do Quarkus (fora do módulo)")
+
+title $I_LAMBDA Lambda api da receipt-solution — componentes (C4 nível 3)
+
+Person(cliente, "Cliente HTTP", "", $sprite="user")
+Container(apigw, "API REST <stage>-receipt-solution", "API Gateway", "Integração Lambda proxy", $sprite="globe")
+
+Container_Boundary(api, "receipt-solution-<stage>-api (receipt-api-lambda.zip, timeout 29 s, 1769 MB)") {
+    Component(handler, "QuarkusStreamHandler", "quarkus-amazon-lambda-rest", "Converte o evento do API Gateway REST numa requisição do Quarkus REST", $sprite="bolt", $tags="biblioteca")
+    Component(resource, "ReceiptResource", "@Path /receipts", "find (GET) e issue (POST com @Valid)", $sprite="globe", $tags="entrada")
+    Component(validator, "Hibernate Validator", "quarkus-hibernate-validator", "@NotBlank requestId e signature, @NotNull @Positive payloadBytes; 400 com as violações", $tags="biblioteca")
+    Component(config, "ReceiptApiConfig", "@ConfigMapping receipt", "tableName e stateMachineArn")
+    Component(clients, "DynamoDbClient e SfnClient", "Quarkus Amazon Services", "sync-client.type=aws-crt; endpoint, região e credenciais das cadeias padrão", $tags="biblioteca")
+}
+
+ContainerDb(table, "receipts", "DynamoDB", "PK requestId", $sprite="database")
+Container(flow, "receipt-flow", "Step Functions", "Entrada {detail: IssueReceiptRequest}", $sprite="project_diagram")
+
+Rel(cliente, apigw, "GET /receipts/{requestId} e POST /receipts")
+Rel(apigw, handler, "handleRequest")
+Rel(handler, resource, "Requisição JAX-RS")
+Rel(resource, validator, "Valida IssueReceiptRequest")
+Rel(resource, config, "Lê")
+Rel(resource, clients, "Usa")
+Rel(clients, table, "GetItem consistentRead")
+Rel(clients, flow, "StartExecution sem nome (gerado pela AWS)")
+
+SHOW_LEGEND()
+@enduml

@@ -1,0 +1,145 @@
+@startuml classes-dominio-seguradora
+!include ../../../docs/diagramas/tema-plataforma.iuml
+
+hide empty members
+hide stereotype
+skinparam nodesep 30
+title $I_SEGURADORA Pacote com.mmda.serverless.provider.domain.insurer — cotação, callbacks e situação
+
+class InsurerQuoteRequest <<valor>> {
+    eventId, workRef, organizationId, quoteId
+    version : int
+    insurerId
+    risk, enrichment : Map
+    deadlineAt : Instant
+}
+class InsurerReply <<valor>> {
+    clientReference, outcome, offerNumber, insurerName
+    premium, paymentOptions, coverages, deductibles
+    expiresAt, declineCode, pendingFields
+    providerRequestId, code
+}
+class InsurerProtocol <<serviço>> {
+    {static} classify(CallOutcome<InsurerReply>) : InsurerVerdict
+    {static} classifyCallback(InsurerReply) : InsurerVerdict
+}
+interface InsurerVerdict <<valor>> <<sealed>>
+class Quoted <<valor>> {
+    offer : Offer
+}
+class Declined <<valor>> {
+    reasonCode
+}
+class NeedsInformation <<valor>> {
+    reasonCode
+    missingFields : List<MissingField>
+}
+class Accepted <<valor>> {
+    providerRequestId
+}
+class "Transient" as ITransient <<valor>> {
+    errorClass
+}
+class Unavailable <<valor>> {
+    reasonCode
+}
+class "Unknown" as IUnknown <<valor>> {
+    errorClass
+}
+class Offer <<valor>> {
+    externalOfferId, insurerName
+    premiumTotal, currency
+    installments, coverages, deductibles
+    validUntil, rawResponseRef
+}
+class MissingField <<valor>> {
+    path, reasonCode
+}
+enum InsurerResultStatus {
+    QUOTED
+    DECLINED
+    NEEDS_INFORMATION
+    UNAVAILABLE
+}
+class InsurerResultRecorded <<evento>> {
+    {field} eventId = UUIDv5(queryId)
+    occurredAt, schemaVersion = "1"
+    workRef, quoteId, version, insurerId
+    queryId, attemptRef = queryId#nnnn
+    status : InsurerResultStatus
+    reasonCode, missingFields, offer
+}
+class InsurerCallback <<valor>> {
+    externalEventId, providerRequestId
+    clientReference, sentAt
+    result : InsurerReply
+    problems() : List<String>
+}
+class CallbackSignature <<serviço>> {
+    {static} HEADER = "X-Signature"
+    {static} sign(segredo, corpo) : String
+    {static} verify(segredo, corpo, cabeçalho) : boolean
+}
+class Correlation <<valor>> {
+    queryId
+    pendingEvents : Set<String>
+    bothHalves() : boolean
+}
+class InsurerStatus <<valor>> {
+    providerRequestId, clientReference
+    status : PROCESSING ou COMPLETED
+    receivedAt, completedAt
+    result : InsurerReply
+    {static} classify(CallOutcome<InsurerStatus>) : Verdict
+}
+interface "InsurerStatus.Verdict" as StatusVerdict <<sealed>>
+class "Completed(verdict, completedAt)" as SCompleted <<valor>>
+class "Pending()" as SPending <<valor>>
+class "Unrecognized()" as SUnrecognized <<valor>>
+class "Unreachable(errorClass)" as SUnreachable <<valor>>
+
+InsurerProtocol ..> InsurerReply : lê
+InsurerProtocol ..> InsurerVerdict : devolve
+InsurerVerdict <|.. Quoted
+InsurerVerdict <|.. Declined
+InsurerVerdict <|.. NeedsInformation
+InsurerVerdict <|.. Accepted
+InsurerVerdict <|.. ITransient
+InsurerVerdict <|.. Unavailable
+InsurerVerdict <|.. IUnknown
+Quoted --> Offer
+NeedsInformation --> MissingField
+InsurerResultRecorded --> InsurerResultStatus
+InsurerResultRecorded --> Offer
+InsurerResultRecorded --> MissingField
+InsurerCallback --> InsurerReply
+InsurerStatus --> InsurerReply
+InsurerStatus ..> StatusVerdict : classify
+StatusVerdict <|.. SCompleted
+StatusVerdict <|.. SPending
+StatusVerdict <|.. SUnrecognized
+StatusVerdict <|.. SUnreachable
+SCompleted --> InsurerVerdict : classifyCallback(result)
+
+note right of Accepted
+    202 com providerRequestId no formato do callback
+    (^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$); fora dele,
+    Unavailable com INVALID_PROVIDER_RESPONSE, sem retry.
+end note
+note right of Correlation
+    CORR#: as duas metades. A api grava pendingEvents,
+    o worker grava queryId; quem enxerga as duas processa.
+end note
+note bottom of StatusVerdict
+    Só COMPLETED conclui a consulta UNKNOWN.
+    404 = Unrecognized (abre UNKNOWN_QUERY);
+    falha de rede, 5xx ou corpo ilegível = Unreachable.
+end note
+
+legend right
+    <b>Leitura</b>
+    <back:#F1F8E9>    </back> Valor imutável (record)
+    <back:$COR_APLICACAO>    </back> Regra pura, sem SDK
+    <back:$COR_SAIDA>    </back> Evento publicado
+endlegend
+@enduml

@@ -1,0 +1,36 @@
+@startuml estados-ocorrencia
+!include ../../../docs/diagramas/tema-plataforma.iuml
+
+hide stereotype
+title $I_ALARME Ocorrência ISSUE#<issueId> META — estados (IssueStatus e IssueTransition)
+
+state "$I_ALARME OPEN" as OPEN <<erro>> : gsi2pk = ISSUE_OPEN só nos tipos que se resolvem sozinhos\ngsi2sk = lastSeenAt, depois o instante da revisão
+state "RESOLVED" as RESOLVED <<ativo>> : sem gsi2pk
+
+[*] --> OPEN : RAISE: primeira observação, revision 1\n(attribute_not_exists) + OUTBOX# OperationIssueRaised
+OPEN --> RESOLVED : UPDATE: o problema sumiu (IssueReview a cada ciclo,\nou a API de situação concluiu a consulta UNKNOWN)\n+ OUTBOX# OperationIssueUpdated
+RESOLVED --> OPEN : UPDATE: o mesmo problema observado de novo (reabre)\n+ OUTBOX# OperationIssueUpdated
+OPEN --> OPEN : DEAD_LETTER: nova mensagem descartada do mesmo pedido\n(recurrence) + OUTBOX# OperationIssueUpdated;\nnos outros tipos, observar de novo não muda nada (NONE)
+
+note right of OPEN
+    issueId = is_ + 32 hexadecimais do SHA-256 de <issueType>|<alvo>.
+    Toda mudança grava o item inteiro com revision = :lida e o outbox
+    do evento numa transação; o eventId é UUIDv5 de issueId|revision.
+end note
+
+note bottom of RESOLVED
+    | Tipo | Alvo | Resolve sozinha quando |
+    | UNKNOWN_QUERY (reconcilable) | queryId | a consulta deixa de ser UNKNOWN |
+    | UNMATCHED_CALLBACK | <provedor>#<externalEventId> | o callback é processado |
+    | STALE_OUTBOX | eventId do outbox | o evento é publicado |
+    | DEAD_LETTER | <fila>~|<chave do pedido> | nunca: fica OPEN e fora do ISSUE_OPEN |
+end note
+
+legend right
+    <b>Leitura</b>
+    <back:$COR_ERRO>    </back> Aberta, visível na quote e nos alarmes
+    <back:$COR_DOMINIO>    </back> Resolvida
+    Observar de novo uma ocorrência aberta não publica nada,
+    exceto no DEAD_LETTER.
+endlegend
+@enduml

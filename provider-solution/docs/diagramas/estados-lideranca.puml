@@ -1,0 +1,42 @@
+@startuml estados-lideranca
+!include ../../../docs/diagramas/tema-plataforma.iuml
+
+hide stereotype
+title $I_DYNAMODB Liderança do reuso INFLIGHT#<queryKey> META — estados (Leadership.State)
+
+state "Sem liderança" as AUSENTE <<inicial>> : item inexistente ou apagado pelo TTL
+state "$I_LAMBDA IN_FLIGHT, lease válida" as VALIDA <<espera>> : leaseUntil >= agora\nfencingVersion, firstFencingVersion,\nleaderWorkRef, queryId, acquiredAt
+state "IN_FLIGHT, lease vencida" as VENCIDA <<erro>> : leaseUntil < agora\n(líder interrompido ou lento)
+state "COMPLETED (lápide)" as COMPLETED <<ativo>> : evidenceId, resultType, completedAt\nttl = agora + inflightTombstoneSeconds (3600 s)
+
+[*] --> AUSENTE
+AUSENTE --> VALIDA : liderança: fencingVersion = 1, firstFencingVersion = 1\n(attribute_not_exists, ConditionCheck no REUSE#)
+VALIDA --> VALIDA : JOIN: ConditionCheck (state = IN_FLIGHT, fencingVersion = v)\n+ Put FOLLOWER#<v com 10 dígitos>#<workRef>
+VALIDA --> VENCIDA : o tempo passa de leaseUntil (30 s depois da aquisição)
+VENCIDA --> VALIDA : outro pedido assume: fencingVersion + 1,\nmesma cadeia (firstFencingVersion mantida)
+VALIDA --> COMPLETED : conclusão do líder (condição fencingVersion, queryId e IN_FLIGHT);\nREUSE# só em FOUND e NOT_FOUND; FANOUT gravado; fan-out aos FOLLOWER# da cadeia
+VENCIDA --> COMPLETED : líder lento conclui antes de outro assumir;\nou reconciler conclui o líder interrompido com FAILED e faz o fan-out
+COMPLETED --> VALIDA : nova liderança sem evidência válida no REUSE#\n(FAILED, reusableUntil vencido ou outra policyVersion):\nfencingVersion + 1 e nova cadeia (firstFencingVersion = nova versão)
+COMPLETED --> AUSENTE : TTL apaga a lápide; a próxima cadeia recomeça em 1
+
+note right of VALIDA
+    Líder antigo cuja condição falha (lease transferida, T15):
+    conclui só a própria QUERY#, sem REUSE# nem INFLIGHT#,
+    e não faz fan-out; os seguidores esperam o novo líder.
+end note
+note left of COMPLETED
+    Seguidor cujo registro foi cancelado relê o INFLIGHT#:
+    se a cadeia em que tentou entrar concluiu, publica para si
+    o resultado gravado (JOIN), inclusive NOT_FOUND e FAILED.
+    HIT não passa por aqui: vem do REUSE# válido.
+end note
+
+legend right
+    <b>Leitura</b>
+    <back:$COR_ENTRADA>    </back> Liderança em voo, aceita seguidores (JOIN)
+    <back:$COR_ERRO>    </back> Lease vencida, pode ser assumida
+    <back:$COR_DOMINIO>    </back> Lápide: guarda o resultado da cadeia
+    O pedido decide por ReusePlan.of, com até 5 rodadas de releitura.
+    Só o MISS consome quota; HIT e JOIN não chamam o provedor.
+endlegend
+@enduml

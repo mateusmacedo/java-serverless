@@ -1,0 +1,35 @@
+@startuml casos-de-uso
+!include ../../../docs/diagramas/tema-plataforma.iuml
+title $I_QUARKUS Casos de uso da receipt-solution
+left to right direction
+hide stereotype
+
+actor "$I_CLIENTE\nCliente HTTP" as cliente
+actor "$I_EVENTBRIDGE\nsample-solution\n(RequestCompleted)" as sample
+actor "$I_EVENTBRIDGE\nConsumidor futuro\n(nenhuma regra hoje)" as consumidor
+
+package "$I_QUARKUS receipt-solution" as receipt <<aplicacao>> {
+    usecase "Consultar comprovante\n(GET /receipts/{requestId})" as UC_consultar <<leitura>>
+    usecase "Emitir comprovante manualmente\n(POST /receipts)" as UC_manual
+    usecase "Emitir comprovante por evento\n(regra no barramento da sample)" as UC_evento <<sistema>>
+    usecase "Gravar comprovante idempotente\n(issue)" as UC_issue <<sistema>>
+    usecase "Anunciar ReceiptIssued\n(announce)" as UC_announce <<sistema>>
+    usecase "Devolver comprovante já emitido\n(ConditionalCheckFailed + GetItem)" as UC_repetido <<sistema>>
+}
+
+cliente --> UC_consultar
+cliente --> UC_manual
+sample --> UC_evento
+UC_manual ..> UC_issue : <<include>>\nreceipt-flow
+UC_evento ..> UC_issue : <<include>>\nreceipt-flow
+UC_issue ..> UC_announce : <<include>>
+UC_repetido ..> UC_issue : <<extend>>\nrequestId já existe
+UC_announce --> consumidor : ReceiptIssued
+
+legend right
+    <b>Leitura</b>
+    <back:#E3F2FD>    </back> Caso iniciado por um ator
+    <back:#ECEFF1>    </back> Caso executado pelo sistema (máquina de estado)
+    <back:#E8F5E9>    </back> Leitura sem efeito
+endlegend
+@enduml

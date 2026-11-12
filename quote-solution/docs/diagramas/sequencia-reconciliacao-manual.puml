@@ -1,0 +1,68 @@
+@startuml sequencia-reconciliacao-manual
+!include ../../../docs/diagramas/tema-plataforma.iuml
+
+title $I_OPERADOR Reconciliação manual: POST /v1/operations/queries/{queryId}/reconcile
+
+autonumber
+participant "$I_OPERADOR\nOperador" as operador <<ator>>
+box "Entrada" #FFFAF3
+    participant "$I_LAMBDA\napi\nOperationsResource" as api <<entrada>>
+end box
+box "Aplicação" #F5FAFF
+    participant "$I_LAMBDA\nOperationsStore" as store <<aplicacao>>
+    participant "$I_OUTBOX\noutboxRelay" as relay <<aplicacao>>
+    participant "$I_LAMBDA\nissueProjector" as projector <<aplicacao>>
+end box
+box "Infraestrutura" #F7F9FA
+    database "$I_DYNAMODB\nquotes" as table <<infra>>
+    participant "$I_EVENTBRIDGE\nplatform-<stage>-events" as bus <<saida>>
+    queue "$I_SQS\nissues" as issues <<infra>>
+end box
+participant "$I_SEGURADORA\nprovider-solution\nreconcileWorker" as provider <<externo>>
+
+== Pedido ==
+operador -> api : POST {reason}\nBearer, Idempotency-Key
+api -> api : caller.require(OPERATIONS_RECONCILE)
+alt #FFEBEE sem operations:reconcile
+    api --> operador : <color:#C62828>403, antes de qualquer leitura (T30)</color>
+end
+api -> store : knownQuery(queryId, organização): GetItem QUERYREF#<queryId>
+alt #FFEBEE QUERYREF# ausente ou de outra organização
+    api --> operador : <color:#C62828>404, sem revelar se a consulta existe</color>
+else #FFEBEE Idempotency-Key, campo desconhecido, reason ausente, vazio ou acima de 500 code points
+    api --> operador : <color:#C62828>400 VALIDATION_ERROR</color>
+else #E8F5E9 válido
+    store -> table : TransactWriteItems (attribute_not_exists):\nIDEMPOTENCY (RECONCILE, escopo queryId), OPERATION#<op_…> QUEUED (revision 0),\noutbox QueryReconcileRequested (eventId aleatório)
+    alt #FFEBEE mesma chave com outro reason
+        api --> operador : <color:#C62828>409 IDEMPOTENCY_CONFLICT</color>
+    else #FFEBEE cancelada sem registro ou falha da AWS
+        api --> operador : <color:#C62828>503 SERVICE_UNAVAILABLE</color>
+    else #E8F5E9 ok ou reenvio com a mesma chave e o mesmo body
+        api --> operador : <color:#2E7D32>202 {operationId, status: QUEUED, statusUrl} + Location</color>
+    end
+end
+
+== Execução na provider ==
+table -> relay : stream: INSERT de OUTBOX
+relay -> bus : PutEvents QueryReconcileRequested
+bus -> provider : fila reconcile-requests
+provider -> provider : OPERATION# RUNNING (só na provider),\nreconcilia a consulta pelo caminho do reconciler
+provider -> bus : QueryReconciled {status SUCCEEDED ou FAILED, revision 2}
+
+== Projeção na quote ==
+bus -> issues : ProviderIssuesRule
+issues -> projector : ESM, batchSize 1
+projector -> table : GetItem OPERATION#<operationId>
+alt #FFEBEE operação de outra organização
+    projector --> issues : FOREIGN_ORGANIZATION (WARN no log; nada gravado)
+else #E8F5E9 mesma organização ou operação desconhecida
+    projector -> table : TransactWriteItems: OPERATION# status, safeSummary, revision 2, updatedAt\n(condição revision < :r e mesma organização) + CONSUMED#<eventId>
+end
+
+== Consulta ==
+operador -> api : GET /v1/operations/{operationId} (operations:read)
+api -> table : GetItem OPERATION# (404 se de outra organização ou inexistente)
+api --> operador : <color:#2E7D32>200 {operationId, queryId, status, safeSummary, updatedAt}</color>
+
+$legenda_erros()
+@enduml

@@ -1,0 +1,205 @@
+@startuml modelo-dynamodb
+!include ../../../docs/diagramas/tema-plataforma.iuml
+
+hide circle
+hide stereotype
+hide empty members
+skinparam linetype ortho
+skinparam nodesep 35
+skinparam ranksep 45
+title $I_DYNAMODB provider-solution — modelo DynamoDB (tabela única por solução, ADR 0015)
+
+package "provider-solution-{stage}-queries\npk (S, HASH) + sk (S, RANGE); gsi2 = gsi2pk + gsi2sk, projeção ALL; stream NEW_IMAGE; TTL no atributo ttl; PAY_PER_REQUEST" as TQ #F7F9FA {
+
+    package "Reuso e liderança por queryKey (HMAC-SHA256 com o query-key-secret)" as PREUSO #F5FAFF {
+        entity "<b>REUSE</b>" as REUSE <<dominio>> {
+            * pk : REUSE#<queryKey>
+            * sk : META
+            --
+            queryId, evidenceId
+            {field} resultType : FOUND ou NOT_FOUND
+            reusableUntil, revision, policyVersion, updatedAt
+        }
+        entity "<b>INFLIGHT</b>" as INFLIGHT <<dominio>> {
+            * pk : INFLIGHT#<queryKey>
+            * sk : META
+            --
+            state : IN_FLIGHT ou COMPLETED
+            fencingVersion, firstFencingVersion
+            leaderWorkRef, queryId, leaseUntil, acquiredAt
+            {field} evidenceId, resultType, completedAt (em COMPLETED)
+            {field} ttl (lápide: inflightTombstoneSeconds)
+        }
+        entity "<b>FOLLOWER</b>" as FOLLOWER <<dominio>> {
+            * pk : INFLIGHT#<queryKey>
+            * sk : FOLLOWER#<fencingVersion com 10 dígitos>#<workRef>
+            --
+            workRef, quoteId, version, fencingVersion
+            {field} registeredAt, ttl (o mesmo da lápide)
+        }
+    }
+
+    package "Callbacks" as PCALLBACK #FFFAF3 {
+        entity "<b>INBOX</b>" as INBOX <<entrada>> {
+            * pk : INBOX#<provider>#<externalEventId>
+            * sk : META
+            --
+            provider, externalEventId, payload
+            providerRequestId, clientReference, receivedAt
+            processingStatus : RECEIVED, PROCESSED, UNMATCHED
+            queryId, processedAt, unmatchedAt
+            {field} gsi2pk : INBOX_RECEIVED (gsi2sk = receivedAt)
+            {field} gsi2pk : INBOX_UNMATCHED (gsi2sk = receivedAt, depois a revisão)
+        }
+        entity "<b>CORRELATION</b>" as CORR <<entrada>> {
+            * pk : CORR#<provider>#<providerRequestId>
+            * sk : META
+            --
+            provider, providerRequestId, updatedAt
+            {field} queryId (metade do worker)
+            {field} pendingEvents (metade da api, conjunto de externalEventId)
+        }
+    }
+
+    package "Partição da consulta (queryId = q_ + 32 hexadecimais do SHA-256 do workRef)" as PQUERY #F6FBF6 {
+        entity "<b>QUERY</b>" as QUERY <<dominio>> {
+            * pk : QUERY#<queryId>
+            * sk : META
+            --
+            operation : ENRICH ou QUOTE
+            provider, providerOperation, contractVersion
+            organizationId, workRef, quoteId, version
+            {field} insurerId (seguradora), queryKey (enriquecimento)
+            state : IN_FLIGHT, COMPLETED, FAILED, UNKNOWN
+            clientReference = queryId, providerRequestId
+            {field} fencingVersion (só a consulta do líder)
+            {field} deadlineAt, requestEventId (seguradora)
+            createdAt, updatedAt
+            {field} gsi2pk : QUERY_IN_FLIGHT (gsi2sk = deadlineAt)
+            {field} gsi2pk : QUERY_UNKNOWN (gsi2sk = última conferência)
+        }
+        entity "<b>ATTEMPT</b>" as ATTEMPT <<dominio>> {
+            * pk : QUERY#<queryId>
+            * sk : ATTEMPT#<nnnn>
+            --
+            {field} startedAt (antes do HTTP)
+            {field} acceptedAt, httpStatus, providerRequestId (no 202)
+            finishedAt, outcome, errorClass
+        }
+        entity "<b>EVIDENCE</b>" as EVIDENCE <<dominio>> {
+            * pk : QUERY#<queryId>
+            * sk : EVIDENCE#<evidenceId>
+            --
+            {field} evidenceId = ev_ + SHA-256 de queryId|sequência (32 hex)
+            resultType, normalizedResult, rawResponseRef
+            observedAt, receivedAt, reusableUntil
+            checksum, errorClass, fencingVersion, policyVersion
+        }
+        entity "<b>FANOUT</b>" as FANOUT <<dominio>> {
+            * pk : QUERY#<queryId>
+            * sk : FANOUT
+            --
+            queryId, queryKey, leaderWorkRef, evidenceId
+            firstFencingVersion, fencingVersion
+            concludedAt, fannedOutAt
+            {field} gsi2pk : FANOUT_PENDING (gsi2sk = concludedAt)
+        }
+    }
+
+    package "Controle e operação" as PCONTROLE #FBF6FC {
+        entity "<b>QUOTA</b>" as QUOTA <<saida>> {
+            * pk : QUOTA#<provider>#<credentialRef>#<janela yyyyMMdd'T'HHmmss>
+            * sk : META
+            --
+            {field} used (ADD :1 com used < limite)
+            ttl
+        }
+        entity "<b>OUTBOX</b>" as OUTBOX <<saida>> {
+            * pk : OUTBOX#<eventId>
+            * sk : META
+            --
+            eventId, detailType, detail, createdAt
+            publishedAt, attempts, lastError, lastAttemptAt
+            {field} gsi2pk : OUTBOX_PENDING (gsi2sk = createdAt ou última falha)
+        }
+        entity "<b>CONSUMED</b>" as CONSUMED <<saida>> {
+            * pk : CONSUMED#<eventId>
+            * sk : META
+            --
+            consumedAt
+        }
+        entity "<b>ISSUE</b>" as ISSUE <<saida>> {
+            * pk : ISSUE#<issueId>
+            * sk : META
+            --
+            issueId, issueType, status, target
+            organizationId, queryId, quoteId
+            firstSeenAt, lastSeenAt, safeSummary
+            reconcilable, revision, updatedAt
+            {field} gsi2pk : ISSUE_OPEN (gsi2sk = lastSeenAt ou a revisão)
+        }
+        entity "<b>OPERATION</b>" as OPERATION <<saida>> {
+            * pk : OPERATION#<operationId>
+            * sk : META
+            --
+            operationId, organizationId, queryId
+            reason, requestedBy, requestEventId
+            status : RUNNING, SUCCEEDED, FAILED
+            {field} safeSummary, revision (1 e 2), createdAt, updatedAt
+        }
+    }
+}
+
+package "provider-solution-{stage}-simulators\npk (S, HASH); TTL no atributo ttl; acesso só da Lambda simulators" as TS #FCF5F8 {
+    entity "<b>Contador do vehicle-flaky</b>" as FLAKY <<externo>> {
+        * pk : FLAKY#<clientReference>
+        --
+        calls
+        ttl : 1 h
+    }
+    entity "<b>Situação da beta</b>" as BETA <<externo>> {
+        * pk : BETA#<providerRequestId>
+        --
+        providerRequestId, clientReference, scenario
+        receivedAt, readyAt, result
+        ttl : 1 dia
+    }
+    entity "<b>Auxiliar da beta</b>" as BETAREF <<externo>> {
+        * pk : BETAREF#<clientReference>
+        --
+        providerRequestId
+        ttl : 1 dia
+    }
+}
+
+INFLIGHT ||--o{ FOLLOWER : mesma partição
+REUSE }o..|| EVIDENCE : evidenceId
+INFLIGHT }o..|| QUERY : queryId do líder
+CORR ||..o{ INBOX : pendingEvents
+CORR }o..o| QUERY : queryId
+INBOX }o..o| QUERY : clientReference ou CORR#
+QUERY ||--o{ ATTEMPT : mesma partição
+QUERY ||--o{ EVIDENCE : mesma partição
+QUERY ||--o| FANOUT : só o líder
+ISSUE }o..o| QUERY : queryId
+OPERATION }o..|| QUERY : queryId
+BETAREF ||..|| BETA : providerRequestId
+
+OPERATION -[hidden]down- ISSUE
+QUOTA -[hidden]down- OUTBOX
+OUTBOX -[hidden]down- CONSUMED
+CONSUMED -[hidden]down- FLAKY
+
+legend right
+    <b>Leitura</b>
+    <back:$COR_DOMINIO>    </back> Consulta, evidência, reuso e liderança
+    <back:$COR_ENTRADA>    </back> Callbacks e correlação
+    <back:$COR_SAIDA>    </back> Quota, outbox, consumo, ocorrências e operações
+    <back:$COR_EXTERNO>    </back> Estado dos simuladores
+    Linha cheia: mesma partição. Tracejada: referência por atributo.
+    O atributo type de cada item é o nome em negrito da tabela de consultas;
+    o filtro do stream da outboxRelay usa NewImage.type = OUTBOX.
+    credentialRef vem de PROVIDER_CREDENTIAL_REF, que o serverless.yml
+    não define: o valor é sempre default.
+endlegend
+@enduml
