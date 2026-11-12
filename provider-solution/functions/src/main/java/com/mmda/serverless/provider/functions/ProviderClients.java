@@ -4,6 +4,9 @@ import com.mmda.serverless.provider.domain.enrichment.EnrichmentReply;
 import com.mmda.serverless.provider.domain.enrichment.EnrichmentRequest;
 import com.mmda.serverless.provider.domain.insurer.InsurerQuoteRequest;
 import com.mmda.serverless.provider.domain.insurer.InsurerReply;
+import com.mmda.serverless.provider.domain.insurer.InsurerStatus;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -41,6 +44,15 @@ class ProviderClients {
         return properties.supportedInsurers().contains(insurerId)
                 ? Optional.of("/sim/insurers/" + insurerId + "/quotes")
                 : Optional.empty();
+    }
+
+    /**
+     * Situação de um pedido já enviado, pela referência dele no fornecedor ({@code providerRequestId} ou
+     * {@code clientReference}). WHY: é uma leitura; a reconciliação nunca repete o {@code POST} da cotação (§8).
+     */
+    ProviderExchange<InsurerStatus> insurerStatus(String insurerId, String reference) {
+        String path = "/sim/insurers/" + insurerId + "/quotes/" + URLEncoder.encode(reference, StandardCharsets.UTF_8);
+        return ProviderExchange.of(http.getJson(path), json, InsurerStatus.class);
     }
 
     ProviderExchange<InsurerReply> requestQuote(String path, String queryId, InsurerQuoteRequest request) {

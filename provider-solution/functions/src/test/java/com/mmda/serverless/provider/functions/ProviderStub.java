@@ -49,6 +49,8 @@ final class ProviderStub {
     private final Map<String, CountDownLatch> holds = new ConcurrentHashMap<>();
     private final Set<String> expiredHolds = ConcurrentHashMap.newKeySet();
     private final Map<String, Runnable> beforeAnswering = new ConcurrentHashMap<>();
+    private final Map<String, String> betaStatuses = new ConcurrentHashMap<>();
+    private final Map<String, AtomicInteger> statusReads = new ConcurrentHashMap<>();
 
     private ProviderStub(HttpServer server) {
         this.server = server;
@@ -106,6 +108,20 @@ final class ProviderStub {
         beforeAnswering.put(clientReference, action);
     }
 
+    /**
+     * Situação que o {@code GET /sim/insurers/beta/quotes/{ref}} devolve para a referência, como a beta simulada
+     * (§10); sem ela, a referência é desconhecida (404).
+     */
+    void betaStatus(String reference, String body) {
+        betaStatuses.put(reference, body);
+    }
+
+    /** Leituras da API de situação para a referência. */
+    int statusReads(String reference) {
+        AtomicInteger count = statusReads.get(reference);
+        return count == null ? 0 : count.get();
+    }
+
     /** Chaves cuja retenção venceu por {@link #MAX_HOLD} antes de o teste soltar. */
     Set<String> expiredHolds() {
         return Set.copyOf(expiredHolds);
@@ -142,6 +158,14 @@ final class ProviderStub {
     }
 
     private void insurer(HttpExchange exchange) throws IOException {
+        if ("GET".equals(exchange.getRequestMethod())) {
+            String path = exchange.getRequestURI().getPath();
+            String reference = path.substring(path.lastIndexOf('/') + 1);
+            statusReads.computeIfAbsent(reference, key -> new AtomicInteger()).incrementAndGet();
+            String status = betaStatuses.get(reference);
+            respond(exchange, status == null ? 404 : 200, status == null ? "{\"code\":\"NOT_FOUND\"}" : status);
+            return;
+        }
         JsonNode request = JSON.readTree(exchange.getRequestBody());
         String reference = request.path("clientReference").asString();
         calls.computeIfAbsent(reference, key -> new AtomicInteger()).incrementAndGet();

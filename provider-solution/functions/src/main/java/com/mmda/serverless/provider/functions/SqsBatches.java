@@ -17,11 +17,15 @@ final class SqsBatches {
     }
 
     static SQSBatchResponse process(SQSEvent event, Consumer<String> handler, Logger logger) {
+        return processMessages(event, message -> handler.accept(message.body()), logger);
+    }
+
+    static SQSBatchResponse processMessages(SQSEvent event, Consumer<QueuedMessage> handler, Logger logger) {
         List<SQSBatchResponse.BatchItemFailure> failures = new ArrayList<>();
         List<SQSEvent.SQSMessage> records = event.getRecords() == null ? List.of() : event.getRecords();
         for (SQSEvent.SQSMessage message : records) {
             try {
-                handler.accept(message.getBody());
+                handler.accept(QueuedMessage.of(message));
             } catch (RuntimeException exception) {
                 logger.error("Message {} failed and returns to the queue", message.getMessageId(), exception);
                 failures.add(new SQSBatchResponse.BatchItemFailure(message.getMessageId()));

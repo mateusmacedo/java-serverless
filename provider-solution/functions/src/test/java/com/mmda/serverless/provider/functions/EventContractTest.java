@@ -4,6 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.mmda.serverless.provider.domain.EventIds;
 import com.mmda.serverless.provider.domain.Identities;
+import com.mmda.serverless.provider.domain.operations.OperationIssue;
+import com.mmda.serverless.provider.domain.operations.QueryReconcileRequest;
+import com.mmda.serverless.provider.domain.operations.QueryReconciled;
 import com.mmda.serverless.provider.domain.enrichment.EnrichmentProfile;
 import com.mmda.serverless.provider.domain.enrichment.EnrichmentRequest;
 import com.mmda.serverless.provider.domain.enrichment.EnrichmentResolved;
@@ -44,7 +47,10 @@ class EventContractTest {
         Map<String, Object> messages = messages("provider-solution.asyncapi.yaml");
         Map<String, Class<?>> details = Map.of(
                 "EnrichmentResolved", EnrichmentResolved.class,
-                "InsurerResultRecorded", InsurerResultRecorded.class);
+                "InsurerResultRecorded", InsurerResultRecorded.class,
+                "QueryReconciled", QueryReconciled.class,
+                "OperationIssueRaised", OperationIssue.class,
+                "OperationIssueUpdated", OperationIssue.class);
 
         for (Map.Entry<String, Class<?>> detail : details.entrySet()) {
             for (JsonNode example : examples(messages, detail.getKey())) {
@@ -190,6 +196,15 @@ class EventContractTest {
         assertThat(insurer.risk().get("vehicle")).isInstanceOfSatisfying(Map.class,
                 vehicle -> assertThat(vehicle).containsKey("id"));
         assertThat(insurer.enrichment()).isNotEmpty();
+
+        JsonNode reconcileExample = examples(messages, "QueryReconcileRequested").getFirst();
+        QueryReconcileRequest reconcile = json.detail(objectMapper.writeValueAsString(reconcileExample),
+                QueryReconcileRequest.class);
+        assertThat(reconcile.eventId()).isEqualTo(reconcileExample.path("detail").path("eventId").asString());
+        assertThat(reconcile.operationId()).isNotBlank();
+        assertThat(reconcile.organizationId()).isNotBlank();
+        assertThat(reconcile.queryId()).matches("^q_[0-9a-f]{32}$");
+        assertThat(reconcile.requestedBy()).isNotBlank();
     }
 
     @SuppressWarnings("unchecked")

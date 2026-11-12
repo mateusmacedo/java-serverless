@@ -42,6 +42,11 @@
             <groupId>io.quarkiverse.amazonservices</groupId>
             <artifactId>quarkus-amazon-secretsmanager</artifactId>
         </dependency>
+        <!-- WHY: o reconciler reprocessa a results-dlq (ADR 0007) -->
+        <dependency>
+            <groupId>io.quarkiverse.amazonservices</groupId>
+            <artifactId>quarkus-amazon-sqs</artifactId>
+        </dependency>
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>aws-crt-client</artifactId>
@@ -69,11 +74,6 @@
         <dependency>
             <groupId>io.floci</groupId>
             <artifactId>testcontainers-floci-aws</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>software.amazon.awssdk</groupId>
-            <artifactId>sqs</artifactId>
             <scope>test</scope>
         </dependency>
         <!-- WHY: o teste de configuração lê o serverless.yml da solução para conferir as invariantes de tempo -->

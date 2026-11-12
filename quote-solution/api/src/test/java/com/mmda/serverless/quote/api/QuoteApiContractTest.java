@@ -33,6 +33,7 @@ import java.util.logging.Handler;
 import java.util.logging.LogRecord;
 import java.util.logging.Logger;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
@@ -41,6 +42,7 @@ import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
+import software.amazon.awssdk.services.dynamodb.model.TransactWriteItem;
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsRequest;
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsResponse;
 import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledException;
@@ -73,6 +75,12 @@ class QuoteApiContractTest {
     static final String CREATE_BODY = """
             {"product":"AUTO","applicantRef":"customer-acme-ana",
              "risk":{"vehicleRef":"vehicle-hatch-2021","usage":"PERSONAL","principalDriverRef":"driver-acme-ana"},
+             "coverageProfile":"COMPREHENSIVE","desiredStartDate":"2026-12-01"}
+            """;
+
+    static final String VERSION_BODY = """
+            {"expectedVersion":1,"product":"AUTO","applicantRef":"customer-acme-ana",
+             "risk":{"vehicleRef":"vehicle-sedan-2019","usage":"PERSONAL","principalDriverRef":"driver-acme-ana"},
              "coverageProfile":"COMPREHENSIVE","desiredStartDate":"2026-12-01"}
             """;
 
@@ -392,6 +400,157 @@ class QuoteApiContractTest {
         given().filter(CONTRACT).header("Authorization", orphan)
                 .when().get("/v1/me")
                 .then().statusCode(403);
+    }
+
+    @Test
+    void t17_newVersionFollowsTheContractAndSupersedesTheCurrentOneInOneTransaction() {
+        stubVersionTarget(Map.of());
+        when(dynamoDb.transactWriteItems(any(TransactWriteItemsRequest.class)))
+                .thenReturn(TransactWriteItemsResponse.builder().build());
+
+        given().filter(CONTRACT).header("Authorization", writer).header("Idempotency-Key", "version-1")
+                .contentType(ContentType.JSON).body(VERSION_BODY)
+                .when().post("/v1/quotes/q-1/versions")
+                .then().statusCode(202)
+                .header("Location", equalTo("/v1/quotes/q-1/versions/2"))
+                .body("quoteId", equalTo("q-1"))
+                .body("version", equalTo(2))
+                .body("phase", equalTo("RECEIVED"))
+                .body("statusUrl", equalTo("/v1/quotes/q-1/versions/2"));
+
+        ArgumentCaptor<TransactWriteItemsRequest> captor = ArgumentCaptor.forClass(TransactWriteItemsRequest.class);
+        verify(dynamoDb).transactWriteItems(captor.capture());
+        List<TransactWriteItem> writes = captor.getValue().transactItems();
+        assertThat(writes).hasSize(6);
+        assertThat(writes.get(0).put().item().get("pk").s())
+                .isEqualTo("IDEMPOTENCY#org-acme#CREATE_VERSION#q-1#version-1");
+        assertThat(writes.get(1).update().conditionExpression())
+                .isEqualTo("currentVersion = :expected AND attribute_not_exists(selectionId) AND organizationId = :org");
+        assertThat(writes.get(1).update().expressionAttributeValues().get(":expected").n()).isEqualTo("1");
+        assertThat(writes.get(2).update().key().get("sk").s()).isEqualTo("V#0001");
+        assertThat(writes.get(2).update().updateExpression()).contains("supersededAt");
+        assertThat(writes.get(3).put().item().get("sk").s()).isEqualTo("V#0002");
+        assertThat(writes.get(3).put().item().get("gsi2pk").s()).isEqualTo("ACTIVE_VERSION");
+        assertThat(writes.subList(4, 6)).extracting(write -> write.put().item().get("detailType").s())
+                .containsExactly("StartQuoteRequested", "QuoteAccepted");
+        assertThat(writes.subList(4, 6)).allSatisfy(write ->
+                assertThat(write.put().item().get("version").n()).isEqualTo("2"));
+    }
+
+    @Test
+    void t17_staleExpectedVersionIsAVersionConflict() {
+        stubVersionTarget(Map.of("currentVersion", AttributeValue.fromN("2")));
+        when(dynamoDb.transactWriteItems(any(TransactWriteItemsRequest.class))).thenThrow(versionCanceled());
+
+        given().filter(CONTRACT).header("Authorization", writer).header("Idempotency-Key", "version-2")
+                .contentType(ContentType.JSON).body(VERSION_BODY)
+                .when().post("/v1/quotes/q-1/versions")
+                .then().statusCode(409)
+                .body("code", equalTo("VERSION_CONFLICT"))
+                .body("correlationId", notNullValue());
+    }
+
+    @Test
+    void newVersionAfterASelectionIsRejected() {
+        stubVersionTarget(Map.of("selectionId", AttributeValue.fromS("sel-1")));
+        when(dynamoDb.transactWriteItems(any(TransactWriteItemsRequest.class))).thenThrow(versionCanceled());
+
+        given().filter(CONTRACT).header("Authorization", writer).header("Idempotency-Key", "version-3")
+                .contentType(ContentType.JSON).body(VERSION_BODY)
+                .when().post("/v1/quotes/q-1/versions")
+                .then().statusCode(409)
+                .body("code", equalTo("QUOTE_ALREADY_SELECTED"));
+    }
+
+    @Test
+    void newVersionResubmittedWithTheSameKeyAndBodyIsAReplay() {
+        AtomicReference<String> requestHash = new AtomicReference<>();
+        when(dynamoDb.transactWriteItems(any(TransactWriteItemsRequest.class))).thenAnswer(invocation -> {
+            TransactWriteItemsRequest request = invocation.getArgument(0);
+            requestHash.set(request.transactItems().getFirst().put().item().get("requestHash").s());
+            throw versionCanceled();
+        });
+        when(dynamoDb.getItem(any(GetItemRequest.class))).thenAnswer(invocation -> {
+            String pk = ((GetItemRequest) invocation.getArgument(0)).key().get("pk").s();
+            String sk = ((GetItemRequest) invocation.getArgument(0)).key().get("sk").s();
+            Map<String, AttributeValue> item = pk.startsWith("IDEMPOTENCY#")
+                    ? Map.of("requestHash", AttributeValue.fromS(requestHash.get()),
+                            "quoteId", AttributeValue.fromS("q-1"), "version", AttributeValue.fromN("2"))
+                    : "META".equals(sk) ? versionTargetMeta(Map.of("currentVersion", AttributeValue.fromN("2")))
+                    : Map.of("phase", AttributeValue.fromS("VALIDATING"));
+            return GetItemResponse.builder().item(item).build();
+        });
+
+        given().filter(CONTRACT).header("Authorization", writer).header("Idempotency-Key", "version-4")
+                .contentType(ContentType.JSON).body(VERSION_BODY)
+                .when().post("/v1/quotes/q-1/versions")
+                .then().statusCode(202)
+                .body("version", equalTo(2))
+                .body("phase", equalTo("VALIDATING"));
+    }
+
+    @Test
+    void invalidNewVersionIsAValidationError() {
+        stubVersionTarget(Map.of());
+
+        given().filter(RESPONSES_ONLY).header("Authorization", writer).header("Idempotency-Key", "version-5")
+                .contentType(ContentType.JSON).body(VERSION_BODY.replace("\"expectedVersion\":1,", "\"expectedVersion\":0,"))
+                .when().post("/v1/quotes/q-1/versions")
+                .then().statusCode(400)
+                .body("code", equalTo("VALIDATION_ERROR"))
+                .body("fieldErrors.path", contains("expectedVersion"));
+        given().filter(RESPONSES_ONLY).header("Authorization", writer).header("Idempotency-Key", "version-6")
+                .contentType(ContentType.JSON).body(CREATE_BODY)
+                .when().post("/v1/quotes/q-1/versions")
+                .then().statusCode(400)
+                .body("fieldErrors.path", contains("expectedVersion"));
+    }
+
+    @Test
+    void newVersionNeedsWritePermissionAndTheOwnerOrganization() {
+        stubVersionTarget(Map.of());
+        String globex = TestTokens.bearer(TestTokens.access("carla", "org_org-globex", "perm_quotes_read",
+                "perm_quotes_write"));
+
+        given().filter(CONTRACT).header("Authorization", reader).header("Idempotency-Key", "version-7")
+                .contentType(ContentType.JSON).body(VERSION_BODY)
+                .when().post("/v1/quotes/q-1/versions")
+                .then().statusCode(403);
+        given().filter(CONTRACT).header("Authorization", globex).header("Idempotency-Key", "version-8")
+                .contentType(ContentType.JSON).body(VERSION_BODY)
+                .when().post("/v1/quotes/q-1/versions")
+                .then().statusCode(404)
+                .body("code", equalTo("NOT_FOUND"));
+    }
+
+    /** Cotação {@code q-1} da org-acme na versão 1, sem registro de idempotência para a chave. */
+    private void stubVersionTarget(Map<String, AttributeValue> metaChanges) {
+        when(dynamoDb.getItem(any(GetItemRequest.class))).thenAnswer(invocation -> {
+            GetItemRequest request = invocation.getArgument(0);
+            String pk = request.key().get("pk").s();
+            Map<String, AttributeValue> item = "QUOTE#q-1".equals(pk) && "META".equals(request.key().get("sk").s())
+                    ? versionTargetMeta(metaChanges) : null;
+            return GetItemResponse.builder().item(item).build();
+        });
+    }
+
+    private static Map<String, AttributeValue> versionTargetMeta(Map<String, AttributeValue> changes) {
+        Map<String, AttributeValue> meta = new HashMap<>(Map.of(
+                "pk", AttributeValue.fromS("QUOTE#q-1"), "sk", AttributeValue.fromS("META"),
+                "organizationId", AttributeValue.fromS("org-acme"), "currentVersion", AttributeValue.fromN("1")));
+        meta.putAll(changes);
+        return meta;
+    }
+
+    /** Transação da nova versão cancelada pela condição do {@code META}, a segunda das seis ações. */
+    private static TransactionCanceledException versionCanceled() {
+        return TransactionCanceledException.builder().message("canceled").cancellationReasons(
+                CancellationReason.builder().code("None").build(),
+                CancellationReason.builder().code("ConditionalCheckFailed").build(),
+                CancellationReason.builder().code("None").build(),
+                CancellationReason.builder().code("None").build(),
+                CancellationReason.builder().code("None").build(),
+                CancellationReason.builder().code("None").build()).build();
     }
 
     private static TransactionCanceledException canceled(String reason) {

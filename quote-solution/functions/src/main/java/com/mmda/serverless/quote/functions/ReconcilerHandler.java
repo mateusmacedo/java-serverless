@@ -1,27 +1,20 @@
 package com.mmda.serverless.quote.functions;
 
-import static com.mmda.serverless.quote.functions.Attr.s;
-
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
-import com.mmda.serverless.quote.domain.QuoteKeys;
 import jakarta.inject.Named;
 import jakarta.inject.Singleton;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Optional;
+import java.util.function.Supplier;
 import org.jboss.logging.Logger;
-import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
-import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
-import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 
 /**
- * Republicador agendado (M1 do desenho, §9): lê o {@code OUTBOX_PENDING} mais antigo que
- * {@code outboxRepublishAfterSeconds} no índice {@code gsi2} e publica com o mesmo código da relay. É o
- * único caminho de volta de um registro que o stream descartou ou que nunca chegou à relay, como numa
- * queda entre o commit e a publicação (T19). A reconciliação completa entra no M4.
+ * Reconciliação agendada da quote (§9 do desenho): outbox pendente (M1, T19), waiters parados (T13), versões
+ * com a execução encerrada (T20), ocorrências, resumo do {@code META} e {@code results-dlq} (T31). WHY: um
+ * dever que falha não impede os seguintes; a falha fica no log e o próximo ciclo tenta de novo.
  */
 @Singleton
 @Named("reconciler")
@@ -29,51 +22,50 @@ public class ReconcilerHandler implements RequestHandler<Map<String, Object>, Ma
 
     private static final Logger LOG = Logger.getLogger(ReconcilerHandler.class);
 
-    private final DynamoDbClient dynamoDb;
-    private final QuoteTable table;
-    private final OutboxPublisher publisher;
-    private final QuoteFunctionsConfig config;
+    private final OutboxReconciler outbox;
+    private final WaiterReconciler waiters;
+    private final VersionReconciler versions;
+    private final DeadLetterReprocessor deadLetters;
+    private final ReconcilerMetrics metrics;
     private final Clock clock;
 
-    ReconcilerHandler(DynamoDbClient dynamoDb, QuoteTable table, OutboxPublisher publisher, QuoteFunctionsConfig config,
-            Clock clock) {
-        this.dynamoDb = dynamoDb;
-        this.table = table;
-        this.publisher = publisher;
-        this.config = config;
+    ReconcilerHandler(OutboxReconciler outbox, WaiterReconciler waiters, VersionReconciler versions,
+            DeadLetterReprocessor deadLetters, ReconcilerMetrics metrics, Clock clock) {
+        this.outbox = outbox;
+        this.waiters = waiters;
+        this.versions = versions;
+        this.deadLetters = deadLetters;
+        this.metrics = metrics;
         this.clock = clock;
     }
 
     @Override
     public Map<String, Object> handleRequest(Map<String, Object> input, Context context) {
-        Instant cutoff = Instant.now(clock).minusSeconds(config.outboxRepublishAfterSeconds());
-        int scanned = 0;
-        Map<OutboxPublisher.Result, Integer> results = new LinkedHashMap<>();
-        for (Map<String, AttributeValue> pending : dynamoDb.query(QueryRequest.builder()
-                .tableName(table.name())
-                .indexName(QuoteKeys.GSI2)
-                .keyConditionExpression("#pk = :pending AND #sk < :cutoff")
-                .expressionAttributeNames(Map.of("#pk", QuoteKeys.GSI2_PK, "#sk", QuoteKeys.GSI2_SK))
-                .expressionAttributeValues(Map.of(":pending", s(QuoteKeys.OUTBOX_PENDING), ":cutoff", s(cutoff.toString())))
-                .limit(config.reconcilerBatchSize())
-                .build()).items()) {
-            scanned++;
-            // WHY: o índice é eventualmente consistente; a leitura da tabela confirma que o item segue pendente
-            Optional<Map<String, AttributeValue>> item = table.get(Attr.string(pending, QuoteKeys.PK), QuoteKeys.META);
-            if (item.isEmpty() || Attr.string(item.get(), "publishedAt") != null) {
-                continue;
-            }
-            OutboxPublisher.Result result = publisher.publish(OutboxPublisher.OutboxItem.from(item.get()));
-            results.merge(result, 1, Integer::sum);
-        }
+        Instant now = Instant.now(clock);
         Map<String, Object> report = new LinkedHashMap<>();
-        report.put("scanned", scanned);
-        report.put("republished", results.getOrDefault(OutboxPublisher.Result.PUBLISHED, 0));
-        report.put("transientFailures", results.getOrDefault(OutboxPublisher.Result.TRANSIENT_FAILURE, 0));
-        report.put("permanentFailures", results.getOrDefault(OutboxPublisher.Result.PERMANENT_FAILURE, 0));
-        if (scanned > 0) {
-            LOG.infof("reconciler outbox report: %s", report);
+        Map<String, Integer> republished = run(report, "outbox", () -> outbox.republish(now));
+        if (republished != null) {
+            report.putAll(republished);
         }
+        report.put("resumed", run(report, "resuming", () -> waiters.resumeStale(now)));
+        report.put("versions", run(report, "versions", () -> versions.reconcile(now)));
+        Integer expiredTasks = run(report, "expiredTasks", () -> waiters.reviewExpired(now));
+        report.put("expiredTasks", expiredTasks);
+        report.put("deadLetters", run(report, "deadLetters", () -> deadLetters.reprocess(now)));
+        Long outboxAge = run(report, "outboxAge", () -> outbox.oldestPendingAgeSeconds(now));
+        report.put("outboxPendingAgeSeconds", outboxAge);
+        metrics.emit(now, expiredTasks == null ? 0 : expiredTasks, outboxAge == null ? 0 : outboxAge);
+        LOG.infof("reconciler report: %s", report);
         return report;
+    }
+
+    private static <T> T run(Map<String, Object> report, String duty, Supplier<T> action) {
+        try {
+            return action.get();
+        } catch (RuntimeException failure) {
+            LOG.errorf(failure, "reconciler duty %s failed; the next cycle retries it", duty);
+            report.put(duty + "Error", failure.getClass().getSimpleName());
+            return null;
+        }
     }
 }

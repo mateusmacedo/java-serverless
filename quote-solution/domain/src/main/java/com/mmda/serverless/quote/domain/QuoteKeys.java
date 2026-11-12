@@ -20,6 +20,13 @@ public final class QuoteKeys {
     public static final String ACTIVE_VERSION = "ACTIVE_VERSION";
     public static final String OUTBOX_PENDING = "OUTBOX_PENDING";
     public static final String WAITER_RESUMING = "WAITER_RESUMING";
+    /** Waiter {@code EXPIRED} que o {@code reconciler} ainda não conferiu para o {@code TASK_EXPIRED} (M4). */
+    public static final String WAITER_EXPIRED = "WAITER_EXPIRED";
+    /**
+     * Versão {@code TERMINAL} cujo resumo no {@code META} ainda não foi confirmado: gravado na consolidação e
+     * retirado pelo {@code refreshSummary} ou pelo reparo do {@code reconciler} (M4).
+     */
+    public static final String SUMMARY_PENDING = "SUMMARY_PENDING";
 
     /** Valores do atributo {@code type}; o filtro do stream depende de {@code OUTBOX}. */
     public static final String TYPE_QUOTE = "QUOTE";
@@ -33,6 +40,8 @@ public final class QuoteKeys {
     public static final String TYPE_WAITER = "WAITER";
     public static final String TYPE_OUTBOX = "OUTBOX";
     public static final String TYPE_CONSUMED = "CONSUMED";
+    /** Ocorrência ({@code ISSUE#}); o tipo da ocorrência fica em {@code issueType}, como na provider. */
+    public static final String TYPE_ISSUE = "ISSUE";
 
     private QuoteKeys() {
     }
@@ -91,6 +100,15 @@ public final class QuoteKeys {
 
     public static String organizationIndexPk(String organizationId) {
         return "ORG#" + organizationId;
+    }
+
+    public static String issuePk(String issueId) {
+        return "ISSUE#" + issueId;
+    }
+
+    /** {@code gsi1pk} das ocorrências de uma organização, lido pelo {@code GET /v1/operations/issues} (M5). */
+    public static String issuesIndexPk(String organizationId) {
+        return "ISSUES#" + organizationId;
     }
 
     /** Nome determinístico da execução; não leva dado pessoal (RN04). */

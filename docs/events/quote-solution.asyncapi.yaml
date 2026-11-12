@@ -1,7 +1,7 @@
 asyncapi: 3.1.0
 info:
   title: quote-solution eventos
-  version: 0.1.0
+  version: 0.2.0
   description: |
     Eventos que a `quote-solution`, em Quarkus, publica no barramento da plataforma
     `platform-{stage}-events` ([ADR 0013](../decisions/0013-barramento-da-plataforma.md)), com
@@ -270,6 +270,23 @@ components:
       contentType: application/json
       payload:
         $ref: '#/components/schemas/QueryReconcileRequestedEvent'
+      examples:
+        - name: unknown-query
+          summary: |
+            Pedido de reconciliação de uma consulta `UNKNOWN` da alpha; a provider respondeu com o exemplo `failed` do
+            `QueryReconciled`.
+          payload:
+            source: mmda.quote
+            detail-type: QueryReconcileRequested
+            detail:
+              eventId: 0b9f6a52-3c1e-4d7a-9f2b-6e8d4c1a7b35
+              occurredAt: '2026-11-12T04:13:17.902Z'
+              schemaVersion: '1'
+              operationId: op_m4_example_unknown
+              organizationId: org-acme
+              queryId: q_099d4987d3e2f2e6656e9285ac76a83e
+              reason: UNKNOWN_QUERY
+              requestedBy: operator-ana
   schemas:
     Envelope:
       type: object

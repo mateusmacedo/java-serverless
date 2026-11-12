@@ -172,6 +172,30 @@ class CallbackApiFlociIT extends FlociIntegrationTest {
         assertThat(attribute(item("INBOX#beta#" + externalEventId, "META"), "processingStatus")).contains("PROCESSED");
     }
 
+    /** M4: o reconciler marca {@code UNMATCHED} o callback sem correlação, e a repetição dele ainda o processa. */
+    @Test
+    void repeatedUnmatchedCallbackIsAssociatedAgainInsteadOfBeingTakenAsProcessed() throws Exception {
+        String providerRequestId = newProviderRequestId();
+        CallbackFixtures.Query query = givenInFlightQuery(null);
+        String externalEventId = newEventId();
+        String body = callback(externalEventId, providerRequestId, null, OFFER);
+        send(body).andExpect(status().isAccepted());
+        givenUnmatched(externalEventId);
+
+        send(body).andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.processingStatus").value("RECEIVED"))
+                .andExpect(jsonPath("$.duplicate").value(true));
+        givenWorkerHalf(providerRequestId, query.queryId());
+        send(body).andExpect(status().isOk())
+                .andExpect(jsonPath("$.processingStatus").value("PROCESSED"));
+
+        Map<String, AttributeValue> inbox = item("INBOX#beta#" + externalEventId, "META");
+        assertThat(attribute(inbox, "processingStatus")).contains("PROCESSED");
+        assertThat(inbox).doesNotContainKeys("gsi2pk", "gsi2sk");
+        assertThat(attribute(item("QUERY#" + query.queryId(), "META"), "state")).contains("COMPLETED");
+        assertThat(outboxDetail(query.queryId()).path("status").asString()).isEqualTo("QUOTED");
+    }
+
     @Test
     void callbackFasterThanThe202FindsTheQueryByTheClientReference() throws Exception {
         CallbackFixtures.Query query = givenInFlightQuery(null);
@@ -256,6 +280,17 @@ class CallbackApiFlociIT extends FlociIntegrationTest {
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("UNKNOWN_PROVIDER"));
         assertThat(item("INBOX#beta#bev-1", "META")).isEmpty();
+    }
+
+    /** O que o reconciler grava no callback sem correlação depois de {@code unmatchedCallbackAfterSeconds}. */
+    private static void givenUnmatched(String externalEventId) {
+        DYNAMO_DB.updateItem(builder -> builder.tableName(TABLE)
+                .key(Map.of("pk", AttributeValue.fromS("INBOX#beta#" + externalEventId),
+                        "sk", AttributeValue.fromS("META")))
+                .updateExpression("SET processingStatus = :unmatched, gsi2pk = :index")
+                .expressionAttributeValues(Map.of(
+                        ":unmatched", AttributeValue.fromS("UNMATCHED"),
+                        ":index", AttributeValue.fromS("INBOX_UNMATCHED"))));
     }
 
     private ResultActions send(String body) throws Exception {

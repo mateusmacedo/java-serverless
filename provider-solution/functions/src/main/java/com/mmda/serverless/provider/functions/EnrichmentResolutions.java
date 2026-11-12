@@ -1,6 +1,8 @@
 package com.mmda.serverless.provider.functions;
 
+import com.mmda.serverless.provider.domain.ErrorClasses;
 import com.mmda.serverless.provider.domain.EventIds;
+import com.mmda.serverless.provider.domain.Identities;
 import com.mmda.serverless.provider.domain.QueryState;
 import com.mmda.serverless.provider.domain.Timestamps;
 import com.mmda.serverless.provider.domain.enrichment.EnrichmentProfile;
@@ -51,6 +53,17 @@ class EnrichmentResolutions {
     void settle(EnrichmentRequest request, String queryId, QueryDraft newQuery, QueryState state,
                 Settlement.AttemptResult attempt, EvidenceDraft evidence, EnrichmentResolved.Outcome outcome,
                 LeaderTerm term, Instant now) {
+        settle(EnrichmentResolved.Recipient.of(request), queryId, newQuery, state, attempt, evidence, outcome, term,
+                now);
+    }
+
+    /**
+     * A mesma conclusão para o pedido de origem da consulta, sem a mensagem do pedido em mãos, como a do reconciler
+     * (§9). O pedido é deduplicado pelo {@code workRef}, então o {@code CONSUMED} é o mesmo.
+     */
+    void settle(EnrichmentResolved.Recipient request, String queryId, QueryDraft newQuery, QueryState state,
+                Settlement.AttemptResult attempt, EvidenceDraft evidence, EnrichmentResolved.Outcome outcome,
+                LeaderTerm term, Instant now) {
         String policyVersion = evidence.policyVersion() == null ? reuse.policyVersion() : evidence.policyVersion();
         EnrichmentResolved event = EnrichmentResolved.of(request, queryId, evidence.evidenceId(), ReuseDecision.MISS,
                 policyVersion, outcome, Timestamps.format(now));
@@ -89,6 +102,38 @@ class EnrichmentResolutions {
                 }
             }
         }
+    }
+
+    /**
+     * Consulta interrompida (§8), pela reentrega do pedido ou pelo reconciler, sem nunca repetir a chamada: fica
+     * {@code UNKNOWN} com tentativa aberta, {@code FAILED} sem ela, e a liderança conclui com {@code FAILED} e
+     * responde aos seguidores só se ainda for dela.
+     */
+    void settleInterrupted(EnrichmentResolved.Recipient recipient, QueryRecord query, Instant now) {
+        boolean openAttempt = query.hasOpenAttempt();
+        String errorClass = openAttempt ? ErrorClasses.INTERRUPTED_ATTEMPT : ErrorClasses.INTERRUPTED_BEFORE_CALL;
+        EvidenceDraft evidence = new EvidenceDraft(Identities.evidenceId(query.queryId(), query.attemptCount()),
+                EnrichmentResultType.FAILED.name(), null, null, null, Timestamps.format(now), null, null, errorClass,
+                query.fencingVersion(), reuse.policyVersion());
+        settle(recipient, query.queryId(), null, openAttempt ? QueryState.UNKNOWN : QueryState.FAILED, null, evidence,
+                EnrichmentResolved.Outcome.failed(errorClass), interruptedTerm(query), now);
+    }
+
+    /**
+     * A liderança da consulta interrompida, se a {@code fencingVersion} e o {@code queryId} do {@code INFLIGHT#}
+     * ainda forem os dela.
+     */
+    private LeaderTerm interruptedTerm(QueryRecord query) {
+        if (!query.isLeader()) {
+            return null;
+        }
+        return reuseLedger.leadership(query.queryKey())
+                .filter(leadership -> leadership.state() == Leadership.State.IN_FLIGHT
+                        && leadership.fencingVersion() == query.fencingVersion()
+                        && leadership.queryId().equals(query.queryId()))
+                .map(leadership -> new LeaderTerm(query.queryKey(), leadership.fencingVersion(),
+                        leadership.firstFencingVersion()))
+                .orElse(null);
     }
 
     /** {@code HIT}: o resultado da evidência válida do índice, sem chamada externa. */
@@ -143,10 +188,22 @@ class EnrichmentResolutions {
             LOGGER.info("Enrichment fan-out: queryId={} followers={} published={}", queryId, followers.size(),
                     published);
         }
+        ledger.markFannedOut(queryId, clock.instant());
     }
 
-    private void settleAlone(Settlement settlement, EnrichmentRequest request, EnrichmentResolved.Outcome outcome,
-                             Instant now) {
+    /**
+     * Fan-out que o líder não terminou (pendência do M2, §9): refeito pela cadeia gravada na conclusão, mesmo que
+     * outra cadeia já tenha começado no {@code INFLIGHT#}. O {@code CONSUMED} de cada seguidor impede uma segunda
+     * resposta.
+     */
+    void resumeFanOut(QueryLedger.PendingFanOut pending) {
+        StoredEvidence evidence = evidence(pending.queryId(), pending.evidenceId());
+        fanOut(pending.term(), pending.leaderWorkRef(), pending.queryId(), pending.evidenceId(),
+                policyVersion(evidence), outcomeOf(evidence));
+    }
+
+    private void settleAlone(Settlement settlement, EnrichmentResolved.Recipient request,
+                             EnrichmentResolved.Outcome outcome, Instant now) {
         if (ledger.settle(settlement, now)) {
             LOGGER.info("Enrichment resolved: queryId={} quoteId={} version={} resultType={} state={}",
                     settlement.queryId(), request.quoteId(), request.version(), outcome.resultType(),

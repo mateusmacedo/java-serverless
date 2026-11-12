@@ -1,6 +1,7 @@
 package com.mmda.serverless.provider.functions;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 
 import com.amazonaws.services.lambda.runtime.events.SQSBatchResponse;
 import com.amazonaws.services.lambda.runtime.events.SQSEvent;
@@ -18,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.sqs.model.Message;
 import software.amazon.awssdk.services.sqs.model.QueueAttributeName;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -35,6 +37,9 @@ class EnrichmentWorkerIT extends FlociIntegrationTest {
 
     @Autowired
     private S3Client s3;
+
+    @Autowired
+    private ProviderProperties properties;
 
     @Test
     void t01_enrichmentIsResolvedAsMissWithEvidence() {
@@ -198,6 +203,24 @@ class EnrichmentWorkerIT extends FlociIntegrationTest {
     }
 
     @Test
+    void delayedRedeliveryKeepsTheDeadLetterAttemptOfTheMessage() {
+        TestRequests.Request request = TestRequests.enrichment("vehicle-hatch-2019", Instant.now().plus(DEADLINE));
+        givenInFlightQuery(request, startedSoThatTheDeliveryEndsInASecond(properties), false);
+        SQS.purgeQueue(builder -> builder.queueUrl(ENRICHMENT_QUEUE_URL));
+
+        assertThat(worker.apply(sqsEvent(request.body(), "2")).getBatchItemFailures()).isEmpty();
+
+        Message delayed = receiveDelayed(ENRICHMENT_QUEUE_URL);
+        assertThat(delayed.body()).isEqualTo(request.body());
+        assertThat(delayed.messageAttributes()).as("the count of the dead-letter attempts does not restart")
+                .containsKey(DeadLetterReprocessor.ATTEMPT_ATTRIBUTE);
+        assertThat(delayed.messageAttributes().get(DeadLetterReprocessor.ATTEMPT_ATTRIBUTE).stringValue())
+                .isEqualTo("2");
+        assertThat(PROVIDERS.calls(request.queryId())).isZero();
+        SQS.purgeQueue(builder -> builder.queueUrl(ENRICHMENT_QUEUE_URL));
+    }
+
+    @Test
     void duplicateDeliveryDuringTheBackoffOfAnotherIsDelayedWithoutFailingTheQuote() {
         TestRequests.Request request = TestRequests.enrichment("vehicle-hatch-2019", Instant.now().plus(DEADLINE));
         givenInFlightQuery(request, Instant.now().minusSeconds(1), true);
@@ -337,6 +360,28 @@ class EnrichmentWorkerIT extends FlociIntegrationTest {
                     "type", AttributeValue.fromS("QUOTA"),
                     "used", AttributeValue.fromN("1"))));
         }
+    }
+
+    /** Pedido reenviado da DLQ pelo reconciler (ADR 0007), com a tentativa no atributo {@code dlqAttempt}. */
+    static SQSEvent sqsEvent(String body, String dlqAttempt) {
+        SQSEvent.MessageAttribute attempt = new SQSEvent.MessageAttribute();
+        attempt.setDataType("Number");
+        attempt.setStringValue(dlqAttempt);
+        SQSEvent event = sqsEvent(body);
+        event.getRecords().getFirst().setMessageAttributes(Map.of(DeadLetterReprocessor.ATTEMPT_ATTRIBUTE, attempt));
+        return event;
+    }
+
+    /** Início de tentativa que deixa a outra entrega viva por mais um segundo, para o adiamento ser curto. */
+    static Instant startedSoThatTheDeliveryEndsInASecond(ProviderProperties properties) {
+        return Instant.now().minus(properties.workerTimeout()).minus(QueryRecord.CLOCK_SKEW).plusSeconds(1);
+    }
+
+    /** Espera o reenvio adiado ficar visível e o recebe com os atributos. */
+    static Message receiveDelayed(String queueUrl) {
+        return await().atMost(Duration.ofSeconds(20)).until(() -> SQS.receiveMessage(builder -> builder
+                        .queueUrl(queueUrl).maxNumberOfMessages(1).waitTimeSeconds(1).messageAttributeNames("All"))
+                .messages(), messages -> !messages.isEmpty()).getFirst();
     }
 
     static SQSEvent sqsEvent(String body) {

@@ -23,6 +23,8 @@ import com.mmda.serverless.quote.domain.Phase;
 import com.mmda.serverless.quote.domain.QuoteEvents;
 import com.mmda.serverless.quote.domain.QuoteKeys;
 import com.mmda.serverless.quote.domain.QuoteSnapshot;
+import com.mmda.serverless.quote.domain.Reconciliation;
+import com.mmda.serverless.quote.domain.Reconciliation.ExecutionState;
 import com.mmda.serverless.quote.domain.WorkRef;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.io.UncheckedIOException;
@@ -241,16 +243,61 @@ public class WorkflowSteps {
      * {@code TERMINAL} com o outbox {@code QuoteCompleted}, condicionado à {@code revision} lida.
      */
     public Map<String, Object> consolidate(String quoteId, int version) {
+        ConsolidationResult result = consolidateVersion(quoteId, version, null);
+        if (result == null) {
+            Map<String, AttributeValue> terminal = versionItem(quoteId, version);
+            return consolidationOutput(Attr.string(terminal, "outcome"), Attr.string(terminal, "outcomeReason"));
+        }
+        return consolidationOutput(result.outcome().name(),
+                result.outcomeReason() == null ? null : result.outcomeReason().name());
+    }
+
+    /**
+     * Finaliza a versão cuja execução terminou sem consolidar (T20, §9 do desenho), pelo mesmo caminho do passo
+     * {@code consolidate}: os {@code RESULT} abertos viram {@code TIMED_OUT} e a ocorrência entra na mesma
+     * transação, sem apagar ofertas. Vazio quando a versão já era {@code TERMINAL}.
+     */
+    Optional<ConsolidationResult> finalizeEndedExecution(String quoteId, int version, ExecutionState state,
+            QuoteIssue issue) {
+        Map<String, AttributeValue> versionItem = versionItem(quoteId, version);
+        if (Phase.TERMINAL.name().equals(Attr.string(versionItem, "phase"))) {
+            return Optional.empty();
+        }
+        closeOpenWaiters(quoteId, version, Attr.strings(versionItem, "selectedInsurers"), Instant.now(clock));
+        return Optional.ofNullable(consolidateVersion(quoteId, version, new Ending(state, issue)));
+    }
+
+    /** Fim de execução sem consolidação, para a finalização pelo {@code reconciler}. */
+    private record Ending(ExecutionState state, QuoteIssue issue) {
+    }
+
+    /** Consolida e grava {@code TERMINAL}; nulo quando outra escrita já deixou a versão {@code TERMINAL}. */
+    private ConsolidationResult consolidateVersion(String quoteId, int version, Ending ending) {
         for (int attempt = 1; ; attempt++) {
             Map<String, AttributeValue> versionItem = versionItem(quoteId, version);
             if (Phase.TERMINAL.name().equals(Attr.string(versionItem, "phase"))) {
-                return consolidationOutput(Attr.string(versionItem, "outcome"), Attr.string(versionItem, "outcomeReason"));
+                return null;
+            }
+            Instant now = Instant.now(clock);
+            List<Map<String, AttributeValue>> resultItems =
+                    table.query(QuoteKeys.quotePk(quoteId), QuoteKeys.resultPrefix(version));
+            List<TransactWriteItem> endingWrites = new ArrayList<>();
+            List<InsurerResultView> results = new ArrayList<>();
+            for (Map<String, AttributeValue> item : resultItems) {
+                InsurerResultView view = insurerResult(item);
+                if (ending != null && !view.status().isTerminal()) {
+                    endingWrites.add(timedOutResult(item, Reconciliation.endedResultReason(ending.state()), now));
+                    view = new InsurerResultView(view.insurerId(), InsurerStatus.TIMED_OUT, List.of());
+                }
+                results.add(view);
+            }
+            if (ending != null) {
+                endingWrites.add(table.issueWrite(ending.issue(), now));
             }
             ConsolidationResult result = Consolidation.consolidate(storedEligibility(versionItem),
                     enrichmentOutcome(quoteId, version, versionItem), Attr.strings(versionItem, "selectedInsurers"),
-                    insurerResults(quoteId, version));
+                    results);
             int offerCount = table.count(QuoteKeys.quotePk(quoteId), QuoteKeys.offerPrefix(version));
-            Instant now = Instant.now(clock);
             Map<String, AttributeValue> values = new HashMap<>(Map.of(
                     ":terminal", s(Phase.TERMINAL.name()),
                     ":outcome", s(result.outcome().name()),
@@ -264,15 +311,19 @@ public class WorkflowSteps {
                 values.put(":reason", s(result.outcomeReason().name()));
                 expression += ", outcomeReason = :reason";
             }
-            expression += " REMOVE " + QuoteKeys.GSI2_PK + ", " + QuoteKeys.GSI2_SK;
+            // WHY: o marcador sai do ACTIVE_VERSION e leva ao reconciler a versão cujo resumo no META falhar
+            values.put(":summaryPending", s(QuoteKeys.SUMMARY_PENDING));
+            expression += ", " + QuoteKeys.GSI2_PK + " = :summaryPending, " + QuoteKeys.GSI2_SK + " = :now";
             Map<String, Object> completed = QuoteEvents.quoteCompleted(now, quoteId, version, result.outcome(),
                     result.outcomeReason(), offerCount);
+            List<TransactWriteItem> writes = new ArrayList<>(List.of(
+                    table.update(QuoteKeys.quotePk(quoteId), QuoteKeys.versionSk(version), expression,
+                            "revision = :revision", Map.of(), values),
+                    table.put(table.outboxItem(QuoteEvents.completedEventId(quoteId, version),
+                            QuoteEvents.QUOTE_COMPLETED, completed, quoteId, version, now), QuoteTable.NOT_EXISTS)));
+            writes.addAll(endingWrites);
             try {
-                table.transact(List.of(
-                        table.update(QuoteKeys.quotePk(quoteId), QuoteKeys.versionSk(version), expression,
-                                "revision = :revision", Map.of(), values),
-                        table.put(table.outboxItem(QuoteEvents.completedEventId(quoteId, version),
-                                QuoteEvents.QUOTE_COMPLETED, completed, quoteId, version, now), QuoteTable.NOT_EXISTS)));
+                table.transact(writes);
             } catch (TransactionCanceledException concurrentChange) {
                 if (attempt >= CONSOLIDATION_ATTEMPTS) {
                     throw concurrentChange;
@@ -280,8 +331,40 @@ public class WorkflowSteps {
                 continue;
             }
             table.refreshSummary(quoteId, version, now);
-            return consolidationOutput(result.outcome().name(),
-                    result.outcomeReason() == null ? null : result.outcomeReason().name());
+            return result;
+        }
+    }
+
+    /** {@code RESULT} ainda aberto de uma execução encerrada: {@code TIMED_OUT}, só se continuar aberto. */
+    private TransactWriteItem timedOutResult(Map<String, AttributeValue> item, String reasonCode, Instant now) {
+        return table.update(Attr.string(item, QuoteKeys.PK), Attr.string(item, QuoteKeys.SK),
+                "SET #status = :timedOut, reasonCode = :reason, revision = revision + :one, updatedAt = :now",
+                "#status IN (:pending, :processing)", Map.of("#status", "status"),
+                Map.of(":timedOut", s(InsurerStatus.TIMED_OUT.name()), ":reason", s(reasonCode), ":one", n(1),
+                        ":now", s(now.toString()), ":pending", s(InsurerStatus.PENDING.name()),
+                        ":processing", s(InsurerStatus.PROCESSING.name())));
+    }
+
+    /**
+     * Fecha os waiters da versão que ainda esperam. WHY: depois disso, a transação do {@code resume} falha na
+     * condição {@code status = WAITING} e um resultado que chegue vira evidência tardia, sem gravar evidência
+     * usada nem oferta numa versão finalizada (RN10). Não entram no índice {@code WAITER_EXPIRED}: a
+     * ocorrência da versão é o {@code WORKFLOW_FAILED}.
+     */
+    private void closeOpenWaiters(String quoteId, int version, List<String> selectedInsurers, Instant now) {
+        List<WorkRef> workRefs = new ArrayList<>();
+        workRefs.add(WorkRef.of(quoteId, version, WorkRef.Kind.ENRICHMENT, null));
+        if (selectedInsurers != null) {
+            selectedInsurers.forEach(insurerId -> workRefs.add(WorkRef.of(quoteId, version, WorkRef.Kind.INSURER, insurerId)));
+        }
+        for (WorkRef workRef : workRefs) {
+            table.updateIf(table.update(QuoteKeys.waiterPk(workRef), QuoteKeys.META)
+                    .updateExpression("SET #status = :expired, updatedAt = :now")
+                    .conditionExpression("attribute_exists(" + QuoteKeys.PK + ") AND #status = :waiting")
+                    .expressionAttributeNames(Map.of("#status", "status"))
+                    .expressionAttributeValues(Map.of(":expired", s("EXPIRED"), ":waiting", s("WAITING"),
+                            ":now", s(now.toString())))
+                    .build());
         }
     }
 
@@ -295,14 +378,17 @@ public class WorkflowSteps {
                 ":expired", s("EXPIRED"), ":waiting", s("WAITING"), ":now", s(now.toString()),
                 ":type", s(QuoteKeys.TYPE_WAITER), ":quoteId", s(quoteId), ":version", n(version),
                 ":kind", s(kind.name())));
+        values.put(":expiredIndex", s(QuoteKeys.WAITER_EXPIRED));
+        // WHY: o índice WAITER_EXPIRED leva o waiter ao reconciler, que confere a entrega antes do TASK_EXPIRED
         String expression = "SET #status = :expired, updatedAt = :now, #type = :type, quoteId = :quoteId, "
-                + "version = :version, kind = :kind";
+                + "version = :version, kind = :kind, " + QuoteKeys.GSI2_PK + " = :expiredIndex, "
+                + QuoteKeys.GSI2_SK + " = :now";
         if (insurerId != null) {
             values.put(":insurerId", s(insurerId));
             expression += ", insurerId = :insurerId";
         }
         boolean expired = table.updateIf(table.update(QuoteKeys.waiterPk(workRef), QuoteKeys.META)
-                .updateExpression(expression + " REMOVE " + QuoteKeys.GSI2_PK + ", " + QuoteKeys.GSI2_SK)
+                .updateExpression(expression)
                 .conditionExpression("attribute_not_exists(" + QuoteKeys.PK + ") OR #status = :waiting")
                 .expressionAttributeNames(Map.of("#status", "status", "#type", QuoteKeys.TYPE))
                 .expressionAttributeValues(values)
@@ -332,12 +418,9 @@ public class WorkflowSteps {
         return table.get(QuoteKeys.waiterPk(workRef), QuoteKeys.META).isPresent() ? EnrichmentOutcome.failed() : null;
     }
 
-    private List<InsurerResultView> insurerResults(String quoteId, int version) {
-        return table.query(QuoteKeys.quotePk(quoteId), QuoteKeys.resultPrefix(version)).stream()
-                .map(item -> new InsurerResultView(Attr.string(item, "insurerId"),
-                        InsurerStatus.valueOf(Attr.string(item, "status")),
-                        missingFields(Attr.string(item, "missingFields"))))
-                .toList();
+    private InsurerResultView insurerResult(Map<String, AttributeValue> item) {
+        return new InsurerResultView(Attr.string(item, "insurerId"), InsurerStatus.valueOf(Attr.string(item, "status")),
+                missingFields(Attr.string(item, "missingFields")));
     }
 
     /** Evidência usada pela versão ({@code V#n#EVIDENCE#<workRef>}), gravada pelo {@code resume}. */

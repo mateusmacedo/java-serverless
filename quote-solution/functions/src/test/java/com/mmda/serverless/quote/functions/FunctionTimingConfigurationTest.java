@@ -2,11 +2,15 @@ package com.mmda.serverless.quote.functions;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.mmda.serverless.quote.domain.Deadlines;
 import com.mmda.serverless.quote.domain.Insurers;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -23,9 +27,10 @@ import org.yaml.snakeyaml.nodes.ScalarNode;
 import org.yaml.snakeyaml.nodes.SequenceNode;
 
 /**
- * Teste de configuração (§6, §9 e §13 do desenho) sobre o {@code serverless.yml} da solução: a invariante
+ * Teste de configuração (§6, §9, §12 e §13 do desenho) sobre o {@code serverless.yml} da solução: a invariante
  * de orçamento que substitui o {@code TimeoutSecondsPath}, que o Floci ignora, com as rodadas do Map de
- * seguradoras, e a relação visibilidade × timeout, que a AWS valida no ESM e o Floci não.
+ * seguradoras, a relação visibilidade × timeout, que a AWS valida no ESM e o Floci não, e, no M4, os alarmes,
+ * cujo disparo o Floci não exercita, e o papel do {@code reconciler}.
  */
 class FunctionTimingConfigurationTest {
 
@@ -180,6 +185,151 @@ class FunctionTimingConfigurationTest {
         Map<String, Object> filter = map(list(stream.get("filterPatterns")).getFirst());
         assertThat(filter.get("eventName")).isEqualTo(List.of("INSERT"));
         assertThat(filter.toString()).contains("OUTBOX");
+    }
+
+    @Test
+    void insurerRequestDeadlineIsCappedByTheRemainingQuoteDeadline() {
+        Instant acceptedAt = Instant.parse("2026-11-12T10:00:00Z");
+        Instant versionDeadline = Deadlines.versionDeadline(acceptedAt, Duration.ofSeconds(param("quoteDeadlineSeconds")));
+        Duration insurerWait = Duration.ofSeconds(param("insurerTimeoutSeconds"));
+        Instant firstDispatch = acceptedAt.plusSeconds(param("enrichmentTimeoutSeconds"));
+        int rounds = (int) Math.ceil((double) param("maxInsurers") / param("mapConcurrency"));
+        Instant lastDispatch = firstDispatch.plus(insurerWait.multipliedBy(rounds - 1L));
+
+        assertThat(Deadlines.requestDeadline(firstDispatch, insurerWait, versionDeadline))
+                .isEqualTo(firstDispatch.plus(insurerWait));
+        assertThat(Deadlines.requestDeadline(lastDispatch, insurerWait, versionDeadline))
+                .as("the last Map round still ends before the steps margin")
+                .isBeforeOrEqualTo(versionDeadline.minusSeconds(param("stepsMarginSeconds")));
+        Instant lateDispatch = versionDeadline.minusSeconds(5);
+        assertThat(Deadlines.requestDeadline(lateDispatch, insurerWait, versionDeadline))
+                .as("a late dispatch only gets what is left of the quote deadline").isEqualTo(versionDeadline);
+    }
+
+    @Test
+    void everyDeadLetterQueueAndTheStreamFailuresHaveVolumeAndAgeAlarms() {
+        Map<String, Object> resources = resources();
+        List<String> monitored = new ArrayList<>();
+        for (Object resource : resources.values()) {
+            Map<String, Object> properties = map(map(resource).get("Properties"));
+            if (properties != null && properties.get("RedrivePolicy") != null) {
+                monitored.add(logicalId(map(properties.get("RedrivePolicy")).get("deadLetterTargetArn")));
+            }
+        }
+        monitored.add("StreamFailuresQueue");
+
+        assertThat(monitored).containsExactlyInAnyOrder("ResultsDeadLetterQueue", "StreamFailuresQueue");
+        for (String queue : monitored) {
+            Object queueName = map(map(resources.get(queue)).get("Properties")).get("QueueName");
+            Map<Object, Map<String, Object>> alarms = new HashMap<>();
+            for (Map<String, Object> alarm : alarms()) {
+                if ("AWS/SQS".equals(alarm.get("Namespace"))
+                        && queueName.equals(map(list(alarm.get("Dimensions")).getFirst()).get("Value"))) {
+                    alarms.put(alarm.get("MetricName"), alarm);
+                }
+            }
+            assertThat(alarms.keySet()).as("alarms on %s", queue)
+                    .containsExactlyInAnyOrder("ApproximateNumberOfMessagesVisible", "ApproximateAgeOfOldestMessage");
+            assertThat(resolve(alarms.get("ApproximateNumberOfMessagesVisible").get("Threshold")))
+                    .isEqualTo(param("dlqAlarmMessages"));
+            assertThat(resolve(alarms.get("ApproximateAgeOfOldestMessage").get("Threshold")))
+                    .isEqualTo(param("dlqAlarmAgeSeconds"));
+            assertThat(alarms.values()).allSatisfy(alarm -> assertThat(alarm.get("Statistic")).isEqualTo("Maximum"));
+        }
+    }
+
+    @Test
+    void outboxAgeAndExpiredTaskAlarmsWatchTheMetricsTheReconcilerEmits() {
+        assertThat(environment()).containsEntry("METRICS_NAMESPACE", "${self:custom.metricsNamespace}")
+                .containsEntry("STAGE", "${sls:stage}");
+        Map<String, Object> outbox = alarm("${self:custom.metricsNamespace}", ReconcilerMetrics.OUTBOX_PENDING_AGE_SECONDS);
+        Map<String, Object> expired = alarm("${self:custom.metricsNamespace}", ReconcilerMetrics.EXPIRED_TASKS);
+
+        assertThat(resolve(outbox.get("Threshold"))).isEqualTo(param("outboxAlarmAgeSeconds"));
+        assertThat(outbox.get("Statistic")).isEqualTo("Maximum");
+        assertThat(resolve(expired.get("Threshold"))).isEqualTo(param("expiredTasksAlarmThreshold"));
+        assertThat(expired.get("Statistic")).isEqualTo("Sum");
+        for (Map<String, Object> alarm : List.of(outbox, expired)) {
+            assertThat(map(list(alarm.get("Dimensions")).getFirst()))
+                    .containsEntry("Name", ReconcilerMetrics.STAGE_DIMENSION).containsEntry("Value", "${sls:stage}");
+        }
+    }
+
+    @Test
+    void alarmThresholdsAndReconcilerParametersFollowTheDesign() {
+        assertThat(param("dlqAlarmMessages")).isEqualTo(1);
+        assertThat(param("dlqAlarmAgeSeconds")).isEqualTo(300);
+        assertThat(param("outboxAlarmAgeSeconds")).isEqualTo(120);
+        assertThat(param("expiredTasksAlarmThreshold")).isEqualTo(1);
+        assertThat(param("dlqMaxAttempts")).isEqualTo(3);
+        assertThat(param("stuckVersionMarginSeconds")).isEqualTo(120);
+        assertThat(param("resumingRetryAfterSeconds")).as("the resume had its whole timeout to finish")
+                .isGreaterThan(functionTimeout("resume"));
+        assertThat(functionTimeout("reconciler")).as("one run fits the 1 minute schedule").isLessThanOrEqualTo(60);
+        for (Map<String, Object> alarm : alarms()) {
+            assertThat(alarm.get("AlarmName").toString()).startsWith("${self:service}-${sls:stage}-");
+            assertThat(alarm).containsEntry("ComparisonOperator", "GreaterThanOrEqualToThreshold")
+                    .containsEntry("TreatMissingData", "notBreaching");
+        }
+    }
+
+    @Test
+    void reconcilerRoleCoversTheM4DutiesAndTheApiCanWriteANewVersion() {
+        List<Map<String, Object>> statements = statements("ReconcilerRole");
+
+        assertThat(actionsOn(statements, "ResultsDeadLetterQueue.Arn"))
+                .containsExactlyInAnyOrder("sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes");
+        assertThat(actionsOn(statements, "ResultsQueue.Arn")).containsExactly("sqs:SendMessage");
+        assertThat(statements.stream().flatMap(statement -> actions(statement).stream()))
+                .contains("states:DescribeExecution", "states:GetExecutionHistory", "states:SendTaskSuccess",
+                        "secretsmanager:GetSecretValue",
+                        "dynamodb:PutItem", "dynamodb:UpdateItem");
+        assertThat(statements("ApiRole").stream().flatMap(statement -> actions(statement).stream()))
+                .contains("dynamodb:UpdateItem");
+        assertThat(environment()).containsKeys("RESULTS_QUEUE_URL", "RESULTS_DLQ_URL", "DLQ_MAX_ATTEMPTS",
+                "STUCK_VERSION_MARGIN_SECONDS", "RESUMING_RETRY_AFTER_SECONDS");
+    }
+
+    private static Map<String, Object> resources() {
+        return map(map(serverless.get("resources")).get("Resources"));
+    }
+
+    private static List<Map<String, Object>> alarms() {
+        List<Map<String, Object>> alarms = new ArrayList<>();
+        for (Object resource : resources().values()) {
+            if ("AWS::CloudWatch::Alarm".equals(map(resource).get("Type"))) {
+                alarms.add(map(map(resource).get("Properties")));
+            }
+        }
+        return alarms;
+    }
+
+    private static Map<String, Object> alarm(String namespace, String metric) {
+        return alarms().stream()
+                .filter(alarm -> namespace.equals(alarm.get("Namespace")) && metric.equals(alarm.get("MetricName")))
+                .findFirst().orElseThrow(() -> new AssertionError("no alarm on " + metric));
+    }
+
+    private static List<Map<String, Object>> statements(String role) {
+        Map<String, Object> policy = map(list(map(map(resources().get(role)).get("Properties")).get("Policies")).getFirst());
+        List<Map<String, Object>> statements = new ArrayList<>();
+        list(map(policy.get("PolicyDocument")).get("Statement")).forEach(statement -> statements.add(map(statement)));
+        return statements;
+    }
+
+    private static List<String> actionsOn(List<Map<String, Object>> statements, String resource) {
+        return statements.stream().filter(statement -> resource.equals(statement.get("Resource")))
+                .flatMap(statement -> actions(statement).stream()).toList();
+    }
+
+    private static List<String> actions(Map<String, Object> statement) {
+        Object action = statement.get("Action");
+        return action instanceof String single ? List.of(single) : list(action).stream().map(String::valueOf).toList();
+    }
+
+    /** {@code !GetAtt Fila.Arn} lido como texto vira {@code Fila}. */
+    private static String logicalId(Object getAtt) {
+        return getAtt.toString().replace(".Arn", "");
     }
 
     /** {@code outcome} que o passo {@code record-insurer-outcome} do {@code Catch} grava. */

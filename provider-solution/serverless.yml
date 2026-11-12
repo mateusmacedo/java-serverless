@@ -32,6 +32,21 @@ params:
     betaLateCallbackDelaySeconds: 120
     outboxRepublishAfterSeconds: 30
     dlqMaxAttempts: 3
+    # Callback sem correlação vira UNMATCHED depois deste prazo; antes dele, o reconciler só refaz o encontro do
+    # callback RECEIVED parado há mais que inboxStuckAfterSeconds, que passa do timeout da api (§9)
+    unmatchedCallbackAfterSeconds: 60
+    inboxStuckAfterSeconds: 30
+    # Idade do createdAt que abre STALE_OUTBOX; é também o limiar do alarme da outbox (§12)
+    staleOutboxAfterSeconds: 120
+    # Teto das leituras da API de situação por ciclo, para inbox, DLQs e métricas caberem no timeout do reconciler
+    statusReadBudgetSeconds: 30
+    # Limiares dos alarmes (§12)
+    dlqAlarmVisibleMessages: 1
+    dlqAlarmAgeSeconds: 300
+    unmatchedCallbacksAlarmThreshold: 1
+    unknownQueriesAlarmThreshold: 1
+    providerFailureAlarmPercent: 50
+    providerFailureAlarmPeriodSeconds: 300
     requestQueueVisibilityTimeoutSeconds: 150
     requestQueueMaxReceiveCount: 3
     simCallbackSenderTimeoutSeconds: 15
@@ -54,6 +69,8 @@ custom:
     enrichmentRequestsDeadLetterQueue: ${self:service}-${sls:stage}-enrichment-requests-dlq
     insurerRequestsQueue: ${self:service}-${sls:stage}-insurer-requests
     insurerRequestsDeadLetterQueue: ${self:service}-${sls:stage}-insurer-requests-dlq
+    reconcileRequestsQueue: ${self:service}-${sls:stage}-reconcile-requests
+    reconcileRequestsDeadLetterQueue: ${self:service}-${sls:stage}-reconcile-requests-dlq
     streamFailuresQueue: ${self:service}-${sls:stage}-stream-failures
     simCallbacksQueue: ${self:service}-${sls:stage}-sim-callbacks
     simCallbacksDeadLetterQueue: ${self:service}-${sls:stage}-sim-callbacks-dlq
@@ -62,6 +79,8 @@ custom:
   # Barramento da plataforma pela convenção de nomes, sem referência entre stacks (ADR 0013)
   platformEventBus: platform-${sls:stage}-events
   platformEventBusArn: arn:aws:events:${aws:region}:${aws:accountId}:event-bus/${self:custom.platformEventBus}
+  # Namespace das métricas EMF dos workers e do reconciler, lido pelos alarmes (§9)
+  metricsNamespace: mmda/provider-solution
   functionsPackage: functions/target/provider-functions-lambda.zip
   functionsHandler: org.springframework.cloud.function.adapter.aws.FunctionInvoker::handleRequest
   functionsMainClass: com.mmda.serverless.provider.functions.FunctionsApplication
@@ -103,6 +122,8 @@ provider:
     ENRICHMENT_SIM_QUOTA_PER_MINUTE: "${param:enrichmentSimQuotaPerMinute}"
     ALPHA_QUOTA_PER_MINUTE: "${param:alphaQuotaPerMinute}"
     BETA_QUOTA_PER_MINUTE: "${param:betaQuotaPerMinute}"
+    STAGE: ${sls:stage}
+    METRICS_NAMESPACE: ${self:custom.metricsNamespace}
   # Papel das funções da provider; têm papel próprio a Lambda dos simuladores (SimulatorsRole), a API de callbacks
   # (CallbacksApiRole) e o simCallbackSender (SimCallbackSenderRole). O reuso do enriquecimento (REUSE#, INFLIGHT#
   # e FOLLOWER#) usa as mesmas ações na tabela de consultas
@@ -128,13 +149,26 @@ provider:
         - Effect: Allow
           Action: secretsmanager:GetSecretValue
           Resource: !Ref QueryKeySecret
-        # Reenvio adiado sem quota (§9) e destino de falha do stream da relay
+        # Reenvio adiado sem quota (§9), destino de falha do stream da relay e devolução das DLQs à fila de origem
         - Effect: Allow
           Action: sqs:SendMessage
           Resource:
             - !GetAtt EnrichmentRequestsQueue.Arn
             - !GetAtt InsurerRequestsQueue.Arn
+            - !GetAtt ReconcileRequestsQueue.Arn
+            - !GetAtt SimCallbacksQueue.Arn
             - !GetAtt StreamFailuresQueue.Arn
+        # O reconciler lê e apaga as DLQs no reprocessamento (ADR 0007)
+        - Effect: Allow
+          Action:
+            - sqs:ReceiveMessage
+            - sqs:DeleteMessage
+            - sqs:GetQueueAttributes
+          Resource:
+            - !GetAtt EnrichmentRequestsDeadLetterQueue.Arn
+            - !GetAtt InsurerRequestsDeadLetterQueue.Arn
+            - !GetAtt ReconcileRequestsDeadLetterQueue.Arn
+            - !GetAtt SimCallbacksDeadLetterQueue.Arn
 
 package:
   individually: true
@@ -221,6 +255,23 @@ functions:
           batchSize: 1
           functionResponseType: ReportBatchItemFailures
 
+  # Reconciliação manual pedida pela quote (QueryReconcileRequested); consulta a API de situação, sem nova cotação
+  reconcileWorker:
+    handler: ${self:custom.functionsHandler}
+    timeout: ${param:workerTimeoutSeconds}
+    package:
+      artifact: ${self:custom.functionsPackage}
+    environment:
+      MAIN_CLASS: ${self:custom.functionsMainClass}
+      SPRING_CLOUD_FUNCTION_DEFINITION: reconcileWorker
+      PROVIDERS_BASE_URL:
+        Fn::Sub: ${param:providersBaseUrl}
+    events:
+      - sqs:
+          arn: !GetAtt ReconcileRequestsQueue.Arn
+          batchSize: 1
+          functionResponseType: ReportBatchItemFailures
+
   outboxRelay:
     handler: ${self:custom.functionsHandler}
     timeout: 60
@@ -260,6 +311,19 @@ functions:
     environment:
       MAIN_CLASS: ${self:custom.functionsMainClass}
       SPRING_CLOUD_FUNCTION_DEFINITION: reconciler
+      PROVIDERS_BASE_URL:
+        Fn::Sub: ${param:providersBaseUrl}
+      UNMATCHED_CALLBACK_AFTER_SECONDS: "${param:unmatchedCallbackAfterSeconds}"
+      INBOX_STUCK_AFTER_SECONDS: "${param:inboxStuckAfterSeconds}"
+      STALE_OUTBOX_AFTER_SECONDS: "${param:staleOutboxAfterSeconds}"
+      DLQ_MAX_ATTEMPTS: "${param:dlqMaxAttempts}"
+      STATUS_READ_BUDGET_SECONDS: "${param:statusReadBudgetSeconds}"
+      RECONCILE_REQUESTS_QUEUE_URL: !Ref ReconcileRequestsQueue
+      SIM_CALLBACKS_QUEUE_URL: !Ref SimCallbacksQueue
+      ENRICHMENT_REQUESTS_DLQ_URL: !Ref EnrichmentRequestsDeadLetterQueue
+      INSURER_REQUESTS_DLQ_URL: !Ref InsurerRequestsDeadLetterQueue
+      RECONCILE_REQUESTS_DLQ_URL: !Ref ReconcileRequestsDeadLetterQueue
+      SIM_CALLBACKS_DLQ_URL: !Ref SimCallbacksDeadLetterQueue
     events:
       - schedule:
           method: scheduler
@@ -288,7 +352,8 @@ resources:
             KeyType: HASH
           - AttributeName: sk
             KeyType: RANGE
-        # Índice esparso do trabalho pendente: OUTBOX_PENDING, QUERY_IN_FLIGHT, QUERY_UNKNOWN e INBOX_RECEIVED (ADR 0015)
+        # Índice esparso do trabalho pendente (ADR 0015): OUTBOX_PENDING, QUERY_IN_FLIGHT, QUERY_UNKNOWN, INBOX_RECEIVED,
+        # INBOX_UNMATCHED e, no M4, FANOUT_PENDING (fan-out do líder a terminar) e ISSUE_OPEN (ocorrência a conferir)
         GlobalSecondaryIndexes:
           - IndexName: gsi2
             KeySchema:
@@ -355,6 +420,21 @@ resources:
         QueueName: ${self:custom.names.insurerRequestsDeadLetterQueue}
         MessageRetentionPeriod: 1209600
 
+    ReconcileRequestsQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.names.reconcileRequestsQueue}
+        VisibilityTimeout: ${param:requestQueueVisibilityTimeoutSeconds}
+        RedrivePolicy:
+          deadLetterTargetArn: !GetAtt ReconcileRequestsDeadLetterQueue.Arn
+          maxReceiveCount: ${param:requestQueueMaxReceiveCount}
+
+    ReconcileRequestsDeadLetterQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.names.reconcileRequestsDeadLetterQueue}
+        MessageRetentionPeriod: 1209600
+
     SimCallbacksQueue:
       Type: AWS::SQS::Queue
       Properties:
@@ -404,6 +484,19 @@ resources:
           - Id: insurer-requests
             Arn: !GetAtt InsurerRequestsQueue.Arn
 
+    QueryReconcileRequestedRule:
+      Type: AWS::Events::Rule
+      Properties:
+        EventBusName: ${self:custom.platformEventBus}
+        EventPattern:
+          source:
+            - mmda.quote
+          detail-type:
+            - QueryReconcileRequested
+        Targets:
+          - Id: reconcile-requests
+            Arn: !GetAtt ReconcileRequestsQueue.Arn
+
     EnrichmentRequestsQueuePolicy:
       Type: AWS::SQS::QueuePolicy
       Properties:
@@ -437,6 +530,23 @@ resources:
               Condition:
                 ArnEquals:
                   aws:SourceArn: !GetAtt InsurerQuoteRequestedRule.Arn
+
+    ReconcileRequestsQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref ReconcileRequestsQueue
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: events.amazonaws.com
+              Action: sqs:SendMessage
+              Resource: !GetAtt ReconcileRequestsQueue.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !GetAtt QueryReconcileRequestedRule.Arn
 
     QueryKeySecret:
       Type: AWS::SecretsManager::Secret
@@ -552,6 +662,352 @@ resources:
                 - Effect: Allow
                   Action: secretsmanager:GetSecretValue
                   Resource: !Ref CallbackSecret
+
+    # Alarmes do M4 (§9, §12), com os limiares por stage. O Floci só reconhece o tipo do recurso; o disparo é do M6
+
+    EnrichmentRequestsDeadLetterQueueAgeAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${sls:stage}-enrichment-requests-dlq-age
+        AlarmDescription: Mensagem parada em enrichment-requests-dlq além do limiar de idade
+        Namespace: AWS/SQS
+        MetricName: ApproximateAgeOfOldestMessage
+        Dimensions:
+          - Name: QueueName
+            Value: ${self:custom.names.enrichmentRequestsDeadLetterQueue}
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: ${param:dlqAlarmAgeSeconds}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
+    EnrichmentRequestsDeadLetterQueueVolumeAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${sls:stage}-enrichment-requests-dlq-volume
+        AlarmDescription: Mensagens visíveis em enrichment-requests-dlq
+        Namespace: AWS/SQS
+        MetricName: ApproximateNumberOfMessagesVisible
+        Dimensions:
+          - Name: QueueName
+            Value: ${self:custom.names.enrichmentRequestsDeadLetterQueue}
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: ${param:dlqAlarmVisibleMessages}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
+    InsurerRequestsDeadLetterQueueAgeAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${sls:stage}-insurer-requests-dlq-age
+        AlarmDescription: Mensagem parada em insurer-requests-dlq além do limiar de idade
+        Namespace: AWS/SQS
+        MetricName: ApproximateAgeOfOldestMessage
+        Dimensions:
+          - Name: QueueName
+            Value: ${self:custom.names.insurerRequestsDeadLetterQueue}
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: ${param:dlqAlarmAgeSeconds}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
+    InsurerRequestsDeadLetterQueueVolumeAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${sls:stage}-insurer-requests-dlq-volume
+        AlarmDescription: Mensagens visíveis em insurer-requests-dlq
+        Namespace: AWS/SQS
+        MetricName: ApproximateNumberOfMessagesVisible
+        Dimensions:
+          - Name: QueueName
+            Value: ${self:custom.names.insurerRequestsDeadLetterQueue}
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: ${param:dlqAlarmVisibleMessages}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
+    ReconcileRequestsDeadLetterQueueAgeAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${sls:stage}-reconcile-requests-dlq-age
+        AlarmDescription: Mensagem parada em reconcile-requests-dlq além do limiar de idade
+        Namespace: AWS/SQS
+        MetricName: ApproximateAgeOfOldestMessage
+        Dimensions:
+          - Name: QueueName
+            Value: ${self:custom.names.reconcileRequestsDeadLetterQueue}
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: ${param:dlqAlarmAgeSeconds}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
+    ReconcileRequestsDeadLetterQueueVolumeAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${sls:stage}-reconcile-requests-dlq-volume
+        AlarmDescription: Mensagens visíveis em reconcile-requests-dlq
+        Namespace: AWS/SQS
+        MetricName: ApproximateNumberOfMessagesVisible
+        Dimensions:
+          - Name: QueueName
+            Value: ${self:custom.names.reconcileRequestsDeadLetterQueue}
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: ${param:dlqAlarmVisibleMessages}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
+    SimCallbacksDeadLetterQueueAgeAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${sls:stage}-sim-callbacks-dlq-age
+        AlarmDescription: Mensagem parada em sim-callbacks-dlq além do limiar de idade
+        Namespace: AWS/SQS
+        MetricName: ApproximateAgeOfOldestMessage
+        Dimensions:
+          - Name: QueueName
+            Value: ${self:custom.names.simCallbacksDeadLetterQueue}
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: ${param:dlqAlarmAgeSeconds}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
+    SimCallbacksDeadLetterQueueVolumeAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${sls:stage}-sim-callbacks-dlq-volume
+        AlarmDescription: Mensagens visíveis em sim-callbacks-dlq
+        Namespace: AWS/SQS
+        MetricName: ApproximateNumberOfMessagesVisible
+        Dimensions:
+          - Name: QueueName
+            Value: ${self:custom.names.simCallbacksDeadLetterQueue}
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: ${param:dlqAlarmVisibleMessages}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
+    StreamFailuresQueueAgeAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${sls:stage}-stream-failures-age
+        AlarmDescription: Mensagem parada em stream-failures além do limiar de idade
+        Namespace: AWS/SQS
+        MetricName: ApproximateAgeOfOldestMessage
+        Dimensions:
+          - Name: QueueName
+            Value: ${self:custom.names.streamFailuresQueue}
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: ${param:dlqAlarmAgeSeconds}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
+    StreamFailuresQueueVolumeAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${sls:stage}-stream-failures-volume
+        AlarmDescription: Mensagens visíveis em stream-failures
+        Namespace: AWS/SQS
+        MetricName: ApproximateNumberOfMessagesVisible
+        Dimensions:
+          - Name: QueueName
+            Value: ${self:custom.names.streamFailuresQueue}
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: ${param:dlqAlarmVisibleMessages}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
+    OutboxPendingAgeAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${sls:stage}-outbox-pending-age
+        AlarmDescription: Outbox pendente há mais que o limiar, pelo createdAt
+        Namespace: ${self:custom.metricsNamespace}
+        MetricName: OutboxPendingAgeSeconds
+        Dimensions:
+          - Name: Stage
+            Value: ${sls:stage}
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: ${param:staleOutboxAfterSeconds}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
+    UnmatchedCallbacksAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${sls:stage}-unmatched-callbacks
+        AlarmDescription: Callbacks UNMATCHED na inbox
+        Namespace: ${self:custom.metricsNamespace}
+        MetricName: UnmatchedCallbacks
+        Dimensions:
+          - Name: Stage
+            Value: ${sls:stage}
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: ${param:unmatchedCallbacksAlarmThreshold}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
+    UnknownQueriesAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${sls:stage}-unknown-queries
+        AlarmDescription: Consultas UNKNOWN sem conclusão
+        Namespace: ${self:custom.metricsNamespace}
+        MetricName: UnknownQueries
+        Dimensions:
+          - Name: Stage
+            Value: ${sls:stage}
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: ${param:unknownQueriesAlarmThreshold}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
+    EnrichmentSimProviderFailuresAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${sls:stage}-enrichment-sim-provider-failures
+        AlarmDescription: Falhas técnicas de enrichment-sim acima do percentual das chamadas na janela
+        Metrics:
+          - Id: failures
+            ReturnData: false
+            MetricStat:
+              Metric:
+                Namespace: ${self:custom.metricsNamespace}
+                MetricName: ProviderFailures
+                Dimensions:
+                  - Name: Stage
+                    Value: ${sls:stage}
+                  - Name: Provider
+                    Value: enrichment-sim
+              Period: ${param:providerFailureAlarmPeriodSeconds}
+              Stat: Sum
+          - Id: calls
+            ReturnData: false
+            MetricStat:
+              Metric:
+                Namespace: ${self:custom.metricsNamespace}
+                MetricName: ProviderCalls
+                Dimensions:
+                  - Name: Stage
+                    Value: ${sls:stage}
+                  - Name: Provider
+                    Value: enrichment-sim
+              Period: ${param:providerFailureAlarmPeriodSeconds}
+              Stat: Sum
+          - Id: failureRate
+            Label: Percentual de falhas
+            Expression: IF(calls > 0, 100 * failures / calls, 0)
+            ReturnData: true
+        EvaluationPeriods: 1
+        Threshold: ${param:providerFailureAlarmPercent}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
+    AlphaProviderFailuresAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${sls:stage}-alpha-provider-failures
+        AlarmDescription: Falhas técnicas de alpha acima do percentual das chamadas na janela
+        Metrics:
+          - Id: failures
+            ReturnData: false
+            MetricStat:
+              Metric:
+                Namespace: ${self:custom.metricsNamespace}
+                MetricName: ProviderFailures
+                Dimensions:
+                  - Name: Stage
+                    Value: ${sls:stage}
+                  - Name: Provider
+                    Value: alpha
+              Period: ${param:providerFailureAlarmPeriodSeconds}
+              Stat: Sum
+          - Id: calls
+            ReturnData: false
+            MetricStat:
+              Metric:
+                Namespace: ${self:custom.metricsNamespace}
+                MetricName: ProviderCalls
+                Dimensions:
+                  - Name: Stage
+                    Value: ${sls:stage}
+                  - Name: Provider
+                    Value: alpha
+              Period: ${param:providerFailureAlarmPeriodSeconds}
+              Stat: Sum
+          - Id: failureRate
+            Label: Percentual de falhas
+            Expression: IF(calls > 0, 100 * failures / calls, 0)
+            ReturnData: true
+        EvaluationPeriods: 1
+        Threshold: ${param:providerFailureAlarmPercent}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
+    BetaProviderFailuresAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${sls:stage}-beta-provider-failures
+        AlarmDescription: Falhas técnicas de beta acima do percentual das chamadas na janela
+        Metrics:
+          - Id: failures
+            ReturnData: false
+            MetricStat:
+              Metric:
+                Namespace: ${self:custom.metricsNamespace}
+                MetricName: ProviderFailures
+                Dimensions:
+                  - Name: Stage
+                    Value: ${sls:stage}
+                  - Name: Provider
+                    Value: beta
+              Period: ${param:providerFailureAlarmPeriodSeconds}
+              Stat: Sum
+          - Id: calls
+            ReturnData: false
+            MetricStat:
+              Metric:
+                Namespace: ${self:custom.metricsNamespace}
+                MetricName: ProviderCalls
+                Dimensions:
+                  - Name: Stage
+                    Value: ${sls:stage}
+                  - Name: Provider
+                    Value: beta
+              Period: ${param:providerFailureAlarmPeriodSeconds}
+              Stat: Sum
+          - Id: failureRate
+            Label: Percentual de falhas
+            Expression: IF(calls > 0, 100 * failures / calls, 0)
+            ReturnData: true
+        EvaluationPeriods: 1
+        Threshold: ${param:providerFailureAlarmPercent}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
 
   Outputs:
     SimulatorsRestApiId:

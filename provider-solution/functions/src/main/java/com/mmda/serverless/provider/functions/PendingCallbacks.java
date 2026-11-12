@@ -63,21 +63,27 @@ class PendingCallbacks {
         }
     }
 
-    private void process(QueryRecord query, String provider, String externalEventId) {
+    /**
+     * Grava o resultado do callback guardado na inbox para a consulta, pelo worker no encontro ou pelo reconciler
+     * (§9). Com a consulta já concluída, só a inbox passa a {@code PROCESSED}, sem outro resultado (T16). Devolve
+     * {@code false} quando o callback já tinha sido processado.
+     */
+    boolean process(QueryRecord query, String provider, String externalEventId) {
         Optional<CallbackLedger.InboxEntry> inbox = callbacks.loadInbox(provider, externalEventId);
         if (inbox.isEmpty() || !inbox.get().received()) {
-            return;
+            return false;
         }
         Instant now = clock.instant();
         if (!query.state().equals(QueryState.IN_FLIGHT) && !query.state().equals(QueryState.UNKNOWN)) {
-            callbacks.markProcessed(provider, externalEventId, query.queryId(), now);
+            boolean marked = callbacks.markProcessed(provider, externalEventId, query.queryId(), now);
             LOGGER.info("Callback for a settled query marked processed: queryId={} externalEventId={}",
                     query.queryId(), externalEventId);
-            return;
+            return marked;
         }
         CallbackLedger.Processing processing = callbacks.settle(settlement(query, provider, inbox.get(), now), now);
-        LOGGER.info("Pending callback processed by the worker: queryId={} externalEventId={} processing={}",
+        LOGGER.info("Pending callback processed: queryId={} externalEventId={} processing={}",
                 query.queryId(), externalEventId, processing);
+        return processing != CallbackLedger.Processing.ALREADY_PROCESSED;
     }
 
     private CallbackLedger.CallbackSettlement settlement(QueryRecord query, String provider,

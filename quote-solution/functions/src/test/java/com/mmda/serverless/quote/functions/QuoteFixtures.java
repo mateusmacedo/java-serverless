@@ -74,6 +74,35 @@ final class QuoteFixtures {
     record Created(String startEventId, String acceptedEventId) {
     }
 
+    /**
+     * Nova versão como a API a grava (§8 do desenho): {@code META} com {@code currentVersion = 2} e o resumo
+     * inicial, {@code supersededAt} na versão 1 e {@code V#0002} recebida.
+     */
+    static void supersedeFirstVersion(DynamoDbClient dynamoDb, String quoteId, QuoteSnapshot snapshot, Instant acceptedAt)
+            throws Exception {
+        String now = acceptedAt.toString();
+        String deadline = acceptedAt.plusSeconds(300).toString();
+        String pk = QuoteKeys.quotePk(quoteId);
+        dynamoDb.updateItem(builder -> builder.tableName(FlociResource.TABLE)
+                .key(Map.of("pk", s(pk), "sk", s("META")))
+                .updateExpression("SET currentVersion = :two, phase = :received, offerCount = :zero, updatedAt = :now "
+                        + "REMOVE outcome")
+                .expressionAttributeValues(Map.of(":two", n(2), ":received", s("RECEIVED"), ":zero", n(0),
+                        ":now", s(now))));
+        dynamoDb.updateItem(builder -> builder.tableName(FlociResource.TABLE)
+                .key(Map.of("pk", s(pk), "sk", s("V#0001")))
+                .updateExpression("SET supersededAt = :now, revision = revision + :one, updatedAt = :now")
+                .expressionAttributeValues(Map.of(":now", s(now), ":one", n(1))));
+        put(dynamoDb, Map.ofEntries(
+                Map.entry("pk", s(pk)), Map.entry("sk", s("V#0002")), Map.entry("type", s("VERSION")),
+                Map.entry("quoteId", s(quoteId)), Map.entry("version", n(2)),
+                Map.entry("snapshot", s(MAPPER.writeValueAsString(snapshot))), Map.entry("inputHash", s("hash-2")),
+                Map.entry("phase", s("RECEIVED")), Map.entry("revision", n(1)),
+                Map.entry("workflowVersion", s("it")), Map.entry("executionName", s(QuoteKeys.executionName(quoteId, 2))),
+                Map.entry("deadlineAt", s(deadline)), Map.entry("createdAt", s(now)), Map.entry("updatedAt", s(now)),
+                Map.entry("gsi2pk", s("ACTIVE_VERSION")), Map.entry("gsi2sk", s(deadline))));
+    }
+
     static Map<String, AttributeValue> outbox(String eventId, String detailType, Map<String, Object> detail,
             String quoteId, Instant createdAt) throws Exception {
         Map<String, AttributeValue> item = new HashMap<>();

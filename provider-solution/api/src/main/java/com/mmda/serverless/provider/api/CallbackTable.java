@@ -28,6 +28,7 @@ class CallbackTable {
 
     static final String RECEIVED = "RECEIVED";
     static final String PROCESSED = "PROCESSED";
+    static final String UNMATCHED = "UNMATCHED";
     private static final String META = "META";
     private static final String OUTBOX_PENDING = "OUTBOX_PENDING";
     private static final String INBOX_RECEIVED = "INBOX_RECEIVED";
@@ -53,8 +54,12 @@ class CallbackTable {
     record InboxEntry(String externalEventId, String payload, String providerRequestId, String receivedAt,
                       String processingStatus) {
 
+        /**
+         * Ainda sem resultado gravado. WHY: o reconciler marca {@code UNMATCHED} o callback sem correlação, e a
+         * repetição dele refaz o encontro em vez de responder como já processado (M4).
+         */
         boolean received() {
-            return RECEIVED.equals(processingStatus);
+            return RECEIVED.equals(processingStatus) || UNMATCHED.equals(processingStatus);
         }
     }
 
@@ -246,10 +251,11 @@ class CallbackTable {
                         .key(key(inboxPk(provider, externalEventId), META))
                         .updateExpression("SET processingStatus = :processed, processedAt = :now, queryId = :queryId "
                                 + "REMOVE gsi2pk, gsi2sk")
-                        .conditionExpression("processingStatus = :received")
+                        .conditionExpression("processingStatus IN (:received, :unmatched)")
                         .expressionAttributeValues(Map.of(
                                 ":processed", s(PROCESSED),
                                 ":received", s(RECEIVED),
+                                ":unmatched", s(UNMATCHED),
                                 ":now", s(Timestamps.format(now)),
                                 ":queryId", s(queryId))))
                 .build();

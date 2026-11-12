@@ -99,8 +99,8 @@ public class ResultResumer {
             return recordLate(waiter, detail, eventId, "LATE", now);
         }
         Result result = waiter.kind() == WorkRef.Kind.INSURER
-                ? insurerResult(waiter, workRef, detail, now)
-                : enrichmentResult(waiter, workRef, enrichment, detail, now);
+                ? insurerResult(waiter, workRef, detail, eventId, now)
+                : enrichmentResult(waiter, workRef, enrichment, detail, eventId, now);
         List<TransactWriteItem> writes = new ArrayList<>();
         writes.add(table.update(QuoteKeys.waiterPk(workRef), QuoteKeys.META,
                 "SET #status = :resuming, resultEventId = :eventId, resumePayload = :payload, "
@@ -132,31 +132,43 @@ public class ResultResumer {
     }
 
     /**
-     * {@code SendTaskSuccess} com o token mais recente do waiter. {@code TaskTimedOut} e {@code InvalidToken}
-     * marcam {@code EXPIRED} só a partir de {@code RESUMING}, para nunca rebaixar um {@code DONE}.
+     * {@code SendTaskSuccess} com o token mais recente do waiter; também retoma, pelo {@code reconciler}, o waiter
+     * parado em {@code RESUMING} (T13). {@code TaskTimedOut} e {@code InvalidToken} marcam {@code EXPIRED} só a
+     * partir de {@code RESUMING}, para nunca rebaixar um {@code DONE}. Devolve o estado final.
      */
-    private void resumeExecution(WorkRef workRef) {
+    String resumeExecution(WorkRef workRef) {
         Map<String, AttributeValue> waiter = table.get(QuoteKeys.waiterPk(workRef), QuoteKeys.META).orElseThrow();
         String token = cipher.decrypt(Attr.string(waiter, "tokenCiphertext"), workRef);
-        String finalStatus;
+        boolean delivered;
         try {
             sfn.sendTaskSuccess(builder -> builder.taskToken(token).output(Attr.string(waiter, "resumePayload")));
-            finalStatus = "DONE";
+            delivered = true;
         } catch (TaskTimedOutException | InvalidTokenException expired) {
             LOG.warnf("task of workRef=%s already closed: %s", workRef, expired.getMessage());
-            finalStatus = "EXPIRED";
+            delivered = false;
+        }
+        String now = Instant.now(clock).toString();
+        Map<String, AttributeValue> values = new HashMap<>(Map.of(":final", s(delivered ? "DONE" : "EXPIRED"),
+                ":resuming", s("RESUMING"), ":now", s(now)));
+        String expression;
+        if (delivered) {
+            expression = "SET #status = :final, updatedAt = :now REMOVE " + QuoteKeys.GSI2_PK + ", " + QuoteKeys.GSI2_SK;
+        } else {
+            // WHY: EXPIRED aqui pode ter o resultado entregue (§8); o reconciler confere antes do TASK_EXPIRED
+            values.put(":expiredIndex", s(QuoteKeys.WAITER_EXPIRED));
+            expression = "SET #status = :final, updatedAt = :now, " + QuoteKeys.GSI2_PK + " = :expiredIndex, "
+                    + QuoteKeys.GSI2_SK + " = :now";
         }
         table.updateIf(table.update(QuoteKeys.waiterPk(workRef), QuoteKeys.META)
-                .updateExpression("SET #status = :final, updatedAt = :now REMOVE "
-                        + QuoteKeys.GSI2_PK + ", " + QuoteKeys.GSI2_SK)
+                .updateExpression(expression)
                 .conditionExpression("#status = :resuming")
                 .expressionAttributeNames(Map.of("#status", "status"))
-                .expressionAttributeValues(Map.of(":final", s(finalStatus), ":resuming", s("RESUMING"),
-                        ":now", s(Instant.now(clock).toString())))
+                .expressionAttributeValues(values)
                 .build());
+        return delivered ? "DONE" : "EXPIRED";
     }
 
-    private Result insurerResult(Waiter waiter, WorkRef workRef, JsonNode detail, Instant now) {
+    private Result insurerResult(Waiter waiter, WorkRef workRef, JsonNode detail, String eventId, Instant now) {
         InsurerStatus status = InsurerStatus.valueOf(required(detail, "status"));
         if (!REPORTED_STATUSES.contains(status)) {
             throw new IllegalArgumentException("insurer result with status " + status);
@@ -174,6 +186,8 @@ public class ResultResumer {
         putIfPresent(values, expression, "reasonCode", reasonCode);
         putIfPresent(values, expression, "queryRef", optional(detail, "queryId"));
         putIfPresent(values, expression, "attemptRef", optional(detail, "attemptRef"));
+        // WHY: com o mesmo resultEventId do waiter, o reconciler reconhece o resultado entregue (TASK_EXPIRED, §8)
+        putIfPresent(values, expression, "resultEventId", eventId);
         List<TransactWriteItem> writes = new ArrayList<>();
         writes.add(table.update(QuoteKeys.quotePk(waiter.quoteId()), QuoteKeys.resultSk(waiter.version(), waiter.insurerId()),
                 expression.toString(), "#status IN (:pending, :processing)", Map.of("#status", "status"), values));
@@ -223,7 +237,7 @@ public class ResultResumer {
      * que a produziu, ambos obrigatórios no AsyncAPI da provider.
      */
     private Result enrichmentResult(Waiter waiter, WorkRef workRef, EnrichmentDetail enrichment, JsonNode detail,
-            Instant now) {
+            String eventId, Instant now) {
         EnrichmentOutcome.ResultType resultType = enrichment.resultType();
         ReuseDecision reuseDecision = enrichment.reuseDecision();
         String evidenceId = enrichment.evidenceId();
@@ -245,6 +259,7 @@ public class ResultResumer {
         evidence.put("queryId", s(queryId));
         evidence.put("reuseDecision", s(reuseDecision.name()));
         evidence.put("policyVersion", s(policyVersion));
+        evidence.put("resultEventId", s(eventId));
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("resultType", resultType.name());
         payload.put("evidenceId", evidenceId);

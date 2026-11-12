@@ -32,11 +32,18 @@ final class Items {
     static final String TYPE_FOLLOWER = "FOLLOWER";
     static final String TYPE_INBOX = "INBOX";
     static final String TYPE_CORRELATION = "CORRELATION";
+    static final String TYPE_FANOUT = "FANOUT";
+    static final String TYPE_ISSUE = "ISSUE";
+    static final String TYPE_OPERATION = "OPERATION";
 
     static final String QUERY_IN_FLIGHT = "QUERY_IN_FLIGHT";
     static final String QUERY_UNKNOWN = "QUERY_UNKNOWN";
     static final String OUTBOX_PENDING = "OUTBOX_PENDING";
     static final String INBOX_RECEIVED = "INBOX_RECEIVED";
+    static final String INBOX_UNMATCHED = "INBOX_UNMATCHED";
+    static final String FANOUT_PENDING = "FANOUT_PENDING";
+    static final String ISSUE_OPEN = "ISSUE_OPEN";
+    static final String FANOUT = "FANOUT";
 
     private Items() {
     }
@@ -87,6 +94,14 @@ final class Items {
 
     static String correlationPk(String provider, String providerRequestId) {
         return "CORR#" + provider + "#" + providerRequestId;
+    }
+
+    static String issuePk(String issueId) {
+        return "ISSUE#" + issueId;
+    }
+
+    static String operationPk(String operationId) {
+        return "OPERATION#" + operationId;
     }
 
     static Map<String, AttributeValue> key(String pk, String sk) {

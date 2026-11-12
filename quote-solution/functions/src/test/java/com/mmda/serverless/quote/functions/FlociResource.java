@@ -26,7 +26,8 @@ import software.amazon.awssdk.services.sqs.model.QueueAttributeName;
  * <p>
  * WHY: a {@code token-machine} entrega um task token real por {@code sqs:sendMessage.waitForTaskToken}, sem
  * implantar Lambdas, para a {@code dispatch} e o {@code resume} trabalharem com tokens de verdade; a
- * {@code flow-machine} só espera, para a relay e o reconciler iniciarem execuções reais.
+ * {@code flow-machine} só espera, para a relay e o reconciler iniciarem execuções reais. As filas {@code results}
+ * e {@code results-dlq} servem ao reprocessamento da DLQ (ADR 0007).
  */
 public class FlociResource implements QuarkusTestResourceLifecycleManager {
 
@@ -82,15 +83,37 @@ public class FlociResource implements QuarkusTestResourceLifecycleManager {
                     .roleArn("arn:aws:iam::000000000000:role/it-quote-flow")
                     .definition("{\"StartAt\":\"Hold\",\"States\":{\"Hold\":{\"Type\":\"Wait\",\"Seconds\":60,\"End\":true}}}"))
                     .stateMachineArn();
+            // WHY: execuções que terminam em FAILED e TIMED_OUT sem consolidar, para a finalização do reconciler (T20)
+            String failMachineArn = sfn.createStateMachine(builder -> builder
+                    .name("it-fail-flow")
+                    .roleArn("arn:aws:iam::000000000000:role/it-quote-flow")
+                    .definition("{\"StartAt\":\"Boom\",\"States\":{\"Boom\":{\"Type\":\"Fail\",\"Error\":\"Boom\"}}}"))
+                    .stateMachineArn();
+            String timeoutMachineArn = sfn.createStateMachine(builder -> builder
+                    .name("it-timeout-flow")
+                    .roleArn("arn:aws:iam::000000000000:role/it-quote-flow")
+                    .definition("{\"TimeoutSeconds\":1,\"StartAt\":\"Hold\","
+                            + "\"States\":{\"Hold\":{\"Type\":\"Wait\",\"Seconds\":30,\"End\":true}}}"))
+                    .stateMachineArn();
+            // WHY: visibilidade de 1 s e um recebimento levam a mensagem à DLQ em segundos, pela RedrivePolicy (T31)
+            String deadLetterQueueUrl = queue(sqs, "it-quote-results-dlq");
+            String resultsQueueUrl = sqs.createQueue(builder -> builder.queueName("it-quote-results").attributes(Map.of(
+                    QueueAttributeName.VISIBILITY_TIMEOUT, "1",
+                    QueueAttributeName.REDRIVE_POLICY, "{\"deadLetterTargetArn\":\"" + queueArn(sqs, deadLetterQueueUrl)
+                            + "\",\"maxReceiveCount\":\"1\"}"))).queueUrl();
 
-            return Map.of(
-                    "quote.table-name", TABLE,
-                    "quote.event-bus-name", EVENT_BUS,
-                    "quote.state-machine-arn", flowMachineArn,
-                    "quote.token-key-secret-id", SECRET,
-                    "it.capture-queue-url", captureQueueUrl,
-                    "it.token-queue-url", tokenQueueUrl,
-                    "it.token-machine-arn", tokenMachineArn);
+            return Map.ofEntries(
+                    Map.entry("quote.table-name", TABLE),
+                    Map.entry("quote.event-bus-name", EVENT_BUS),
+                    Map.entry("quote.state-machine-arn", flowMachineArn),
+                    Map.entry("quote.token-key-secret-id", SECRET),
+                    Map.entry("reconciler.results-queue-url", resultsQueueUrl),
+                    Map.entry("reconciler.results-dead-letter-queue-url", deadLetterQueueUrl),
+                    Map.entry("it.capture-queue-url", captureQueueUrl),
+                    Map.entry("it.token-queue-url", tokenQueueUrl),
+                    Map.entry("it.token-machine-arn", tokenMachineArn),
+                    Map.entry("it.fail-machine-arn", failMachineArn),
+                    Map.entry("it.timeout-machine-arn", timeoutMachineArn));
         }
     }
 

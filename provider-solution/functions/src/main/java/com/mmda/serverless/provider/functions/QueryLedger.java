@@ -1,5 +1,6 @@
 package com.mmda.serverless.provider.functions;
 
+import static com.mmda.serverless.provider.functions.Items.GSI2;
 import static com.mmda.serverless.provider.functions.Items.GSI2PK;
 import static com.mmda.serverless.provider.functions.Items.GSI2SK;
 import static com.mmda.serverless.provider.functions.Items.META;
@@ -18,11 +19,13 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.ConditionalCheckFailedException;
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItem;
 
 /**
@@ -35,6 +38,7 @@ class QueryLedger {
     private static final Logger LOGGER = LoggerFactory.getLogger(QueryLedger.class);
     private static final String STATE = "#state";
     private static final Map<String, String> STATE_NAME = Map.of(STATE, "state");
+    private static final Set<QueryState> IN_FLIGHT_ONLY = Set.of(QueryState.IN_FLIGHT);
 
     private final DynamoDbClient dynamoDb;
     private final Transactions transactions;
@@ -121,7 +125,63 @@ class QueryLedger {
                 Items.string(meta, "quoteId").orElse(null),
                 Items.number(meta, "version").map(Long::intValue).orElse(null),
                 Items.string(meta, "insurerId").orElse(null),
-                Items.string(meta, "requestEventId").orElse(null)));
+                Items.string(meta, "requestEventId").orElse(null),
+                Items.string(meta, "operation").orElse(null),
+                Items.string(meta, "organizationId").orElse(null),
+                Items.string(meta, "deadlineAt").map(Timestamps::parse).orElse(null)));
+    }
+
+    Optional<String> organizationOf(String queryId) {
+        return Items.string(dynamoDb.getItem(builder -> builder
+                        .tableName(properties.tableName())
+                        .consistentRead(true)
+                        .key(Items.key(Items.queryPk(queryId), META)))
+                .item(), "organizationId");
+    }
+
+    /** Consultas do índice ({@code QUERY_IN_FLIGHT} ou {@code QUERY_UNKNOWN}) com {@code gsi2sk} antes do instante. */
+    List<String> indexedQueries(String gsi2pk, Instant before, int limit) {
+        return dynamoDb.query(builder -> builder
+                        .tableName(properties.tableName())
+                        .indexName(GSI2)
+                        .keyConditionExpression("gsi2pk = :state AND gsi2sk < :before")
+                        .expressionAttributeValues(Map.of(
+                                ":state", s(gsi2pk),
+                                ":before", s(Timestamps.format(before))))
+                        .limit(limit))
+                .items().stream()
+                .map(item -> Items.string(item, Items.PK).orElseThrow().substring("QUERY#".length()))
+                .toList();
+    }
+
+    /**
+     * Tira a consulta {@code UNKNOWN} do índice: sem API de situação, nada a conclui sozinho, e a ocorrência
+     * {@code UNKNOWN_QUERY} já aberta a acompanha. WHY: no índice, ela ocuparia o lote do reconciler para sempre.
+     */
+    void leaveUnknownIndex(String queryId) {
+        unknownIndex(queryId, "REMOVE gsi2pk, gsi2sk", Map.of());
+    }
+
+    /** Leva a consulta {@code UNKNOWN} que continua sem conclusão para o fim do índice, atrás das não conferidas. */
+    void deferUnknown(String queryId, Instant now) {
+        unknownIndex(queryId, "SET gsi2sk = :now", Map.of(":now", s(Timestamps.format(now))));
+    }
+
+    private void unknownIndex(String queryId, String updateExpression, Map<String, AttributeValue> extraValues) {
+        Map<String, AttributeValue> values = new HashMap<>(extraValues);
+        values.put(":unknown", s(QueryState.UNKNOWN.name()));
+        values.put(":index", s(Items.QUERY_UNKNOWN));
+        try {
+            dynamoDb.updateItem(builder -> builder
+                    .tableName(properties.tableName())
+                    .key(Items.key(Items.queryPk(queryId), META))
+                    .updateExpression(updateExpression)
+                    .conditionExpression(STATE + " = :unknown AND gsi2pk = :index")
+                    .expressionAttributeNames(STATE_NAME)
+                    .expressionAttributeValues(values));
+        } catch (ConditionalCheckFailedException changed) {
+            LOGGER.debug("Query left the UNKNOWN index meanwhile: queryId={}", queryId);
+        }
     }
 
     boolean isConsumed(String eventId) {
@@ -224,11 +284,40 @@ class QueryLedger {
      * sem eles, e a conclusão sem chamada não cria consulta.
      */
     boolean settle(Settlement settlement, Instant now) {
+        return settleFrom(settlement, IN_FLIGHT_ONLY, now);
+    }
+
+    /**
+     * {@link #settle} a partir dos estados dados. WHY: a reconciliação conclui também a consulta {@code UNKNOWN}
+     * pela API de situação, como o callback que chega depois (§8).
+     */
+    boolean settleFrom(Settlement settlement, Set<QueryState> from, Instant now) {
+        return settleFrom(settlement, from, List.of(), now);
+    }
+
+    /**
+     * {@link #settle} só se nenhuma tentativa passou das {@code attempts} lidas. WHY: o reconciler conclui sem
+     * chamada a consulta sem tentativa aberta; uma reentrega do worker que reservou outra tentativa depois dessa
+     * leitura pode estar chamando o fornecedor, e a conclusão "antes da chamada" seria falsa (§9).
+     */
+    boolean settleWithoutNewAttempt(Settlement settlement, int attempts, Instant now) {
+        TransactWriteItem noNewAttempt = TransactWriteItem.builder()
+                .conditionCheck(check -> check
+                        .tableName(properties.tableName())
+                        .key(Items.key(Items.queryPk(settlement.queryId()), Items.attemptSk(attempts + 1)))
+                        .conditionExpression("attribute_not_exists(pk)"))
+                .build();
+        return settleFrom(settlement, IN_FLIGHT_ONLY, List.of(noNewAttempt), now);
+    }
+
+    private boolean settleFrom(Settlement settlement, Set<QueryState> from, List<TransactWriteItem> guards,
+                               Instant now) {
         List<TransactWriteItem> conclusion = new ArrayList<>();
         conclusion.add(settlement.newQuery() == null
-                ? settleQuery(settlement.queryId(), settlement.finalState(), now)
+                ? settleQuery(settlement.queryId(), settlement.finalState(), from, now)
                 : putQuery(settlement.newQuery(), settlement.finalState(), now));
         conclusion.addAll(records(settlement, now));
+        conclusion.addAll(guards);
         List<TransactWriteItem> items = new ArrayList<>(conclusion);
         items.addAll(ownAnswer(settlement, now));
         Transactions.Result result = transactions.write(items);
@@ -257,13 +346,14 @@ class QueryLedger {
             throw new IllegalArgumentException("A leader settles its existing query with evidence and an event");
         }
         List<TransactWriteItem> conclusion = new ArrayList<>();
-        conclusion.add(settleQuery(settlement.queryId(), settlement.finalState(), now));
+        conclusion.add(settleQuery(settlement.queryId(), settlement.finalState(), IN_FLIGHT_ONLY, now));
         conclusion.add(reuse.complete(term, settlement.queryId(), settlement.evidence().evidenceId(),
                 settlement.evidence().resultType(), now));
         if (reuseEntry != null) {
             conclusion.add(reuse.putReuse(term.queryKey(), reuseEntry, expectedRevision, now));
         }
         conclusion.addAll(records(settlement, now));
+        conclusion.add(putFanOut(term, settlement, now));
         List<TransactWriteItem> items = new ArrayList<>(conclusion);
         items.addAll(ownAnswer(settlement, now));
         Transactions.Result result = transactions.write(items);
@@ -407,11 +497,18 @@ class QueryLedger {
                 .build();
     }
 
-    private TransactWriteItem settleQuery(String queryId, QueryState state, Instant now) {
+    private TransactWriteItem settleQuery(String queryId, QueryState state, Set<QueryState> from, Instant now) {
         Map<String, AttributeValue> values = new HashMap<>();
         values.put(":state", s(state.name()));
         values.put(":now", s(Timestamps.format(now)));
-        values.put(":inFlight", s(QueryState.IN_FLIGHT.name()));
+        List<String> allowed = new ArrayList<>();
+        from.stream().sorted().forEach(source -> {
+            values.put(":from" + source.name(), s(source.name()));
+            allowed.add(":from" + source.name());
+        });
+        String condition = allowed.size() == 1
+                ? STATE + " = " + allowed.getFirst()
+                : STATE + " IN (" + String.join(", ", allowed) + ")";
         String expression;
         if (state == QueryState.UNKNOWN) {
             values.put(":unknown", s(Items.QUERY_UNKNOWN));
@@ -425,10 +522,74 @@ class QueryLedger {
                         .tableName(properties.tableName())
                         .key(Items.key(Items.queryPk(queryId), META))
                         .updateExpression(updateExpression)
-                        .conditionExpression(STATE + " = :inFlight")
+                        .conditionExpression(condition)
                         .expressionAttributeNames(STATE_NAME)
                         .expressionAttributeValues(values))
                 .build();
+    }
+
+    /**
+     * Fan-out a fazer, gravado na conclusão do líder e encerrado depois dele (§8). WHY: se o líder cai entre a
+     * conclusão e o fan-out e outra cadeia começa antes da reentrega dele, só este item ainda diz quais seguidores
+     * esperam a evidência; o reconciler refaz o fan-out por ele (pendência do M2, §9).
+     */
+    private TransactWriteItem putFanOut(LeaderTerm term, Settlement settlement, Instant now) {
+        String concludedAt = Timestamps.format(now);
+        Map<String, AttributeValue> item = Items.item(Items.queryPk(settlement.queryId()), Items.FANOUT,
+                Items.TYPE_FANOUT);
+        item.put("queryId", s(settlement.queryId()));
+        item.put("queryKey", s(term.queryKey()));
+        item.put("leaderWorkRef", s(settlement.workRef()));
+        item.put("firstFencingVersion", n(term.firstFencingVersion()));
+        item.put("fencingVersion", n(term.fencingVersion()));
+        item.put("evidenceId", s(settlement.evidence().evidenceId()));
+        item.put("concludedAt", s(concludedAt));
+        item.put(GSI2PK, s(Items.FANOUT_PENDING));
+        item.put(GSI2SK, s(concludedAt));
+        return TransactWriteItem.builder()
+                .put(put -> put.tableName(properties.tableName()).item(item))
+                .build();
+    }
+
+    /** O fan-out da conclusão terminou: o item sai do índice do reconciler e fica como registro. */
+    void markFannedOut(String queryId, Instant now) {
+        try {
+            dynamoDb.updateItem(builder -> builder
+                    .tableName(properties.tableName())
+                    .key(Items.key(Items.queryPk(queryId), Items.FANOUT))
+                    .updateExpression("SET fannedOutAt = :now REMOVE gsi2pk, gsi2sk")
+                    .conditionExpression("attribute_exists(pk)")
+                    .expressionAttributeValues(Map.of(":now", s(Timestamps.format(now)))));
+        } catch (ConditionalCheckFailedException exception) {
+            LOGGER.debug("No pending fan-out recorded for query {}", queryId);
+        }
+    }
+
+    /** Fan-outs gravados antes de {@code concludedBefore} e ainda não encerrados, mais antigos primeiro. */
+    List<PendingFanOut> pendingFanOuts(Instant concludedBefore, int limit) {
+        return dynamoDb.query(builder -> builder
+                        .tableName(properties.tableName())
+                        .indexName(GSI2)
+                        .keyConditionExpression("gsi2pk = :pending AND gsi2sk < :before")
+                        .expressionAttributeValues(Map.of(
+                                ":pending", s(Items.FANOUT_PENDING),
+                                ":before", s(Timestamps.format(concludedBefore))))
+                        .limit(limit))
+                .items().stream()
+                .map(item -> new PendingFanOut(
+                        Items.string(item, "queryId").orElseThrow(),
+                        new LeaderTerm(Items.string(item, "queryKey").orElseThrow(),
+                                Items.number(item, "fencingVersion").orElseThrow(),
+                                Items.number(item, "firstFencingVersion").orElseThrow()),
+                        Items.string(item, "leaderWorkRef").orElseThrow(),
+                        Items.string(item, "evidenceId").orElseThrow(),
+                        Timestamps.parse(Items.string(item, "concludedAt").orElseThrow())))
+                .toList();
+    }
+
+    /** Fan-out gravado na conclusão de um líder e ainda não encerrado. */
+    record PendingFanOut(String queryId, LeaderTerm term, String leaderWorkRef, String evidenceId,
+                         Instant concludedAt) {
     }
 
     private TransactWriteItem putAttempt(String queryId, int sequence, Instant now) {

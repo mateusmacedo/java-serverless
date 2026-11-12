@@ -108,6 +108,50 @@ public class QuoteResource {
                 .build();
     }
 
+    /**
+     * Nova versão (T17): substitui a atual com o novo pedido, resolvido no catálogo como na criação. A versão
+     * substituída continua consultável, com os resultados dela isolados, e deixa de aceitar seleção.
+     */
+    @POST
+    @Path("/{quoteId}/versions")
+    @Consumes(MediaType.APPLICATION_JSON)
+    public Response createVersion(@PathParam("quoteId") String quoteId,
+            @HeaderParam(IDEMPOTENCY_KEY) String idempotencyKey, String body) {
+        String organizationId = caller.require(Permission.QUOTES_WRITE);
+        ownedMeta(quoteId, organizationId);
+        if (!Idempotency.isValidKey(idempotencyKey)) {
+            throw ApiException.validation(List.of(new ErrorResponse.FieldError(IDEMPOTENCY_KEY,
+                    "Header obrigatório: até 200 caracteres ASCII visíveis, sem espaços.")));
+        }
+        JsonNode json;
+        try {
+            json = CanonicalJson.parse(body == null ? "" : body);
+        } catch (CanonicalJson.InvalidJsonException invalid) {
+            throw ApiException.validation(List.of(new ErrorResponse.FieldError("$", "JSON inválido.")));
+        }
+        CreateVersionRequest request = CreateVersionRequest.parse(json);
+        QuoteSnapshot snapshot = request.quote().resolve(catalog.organization(organizationId).orElse(null), catalog);
+        Instant acceptedAt = Instant.now(clock);
+        String snapshotJson = toJson(snapshot);
+        QuoteStore.CreatedQuote created = store.createVersion(new QuoteStore.NewVersion(
+                new Idempotency.Key(organizationId, Idempotency.Operation.CREATE_VERSION, quoteId, idempotencyKey),
+                Hashes.sha256Hex(CanonicalJson.canonicalize(json)),
+                quoteId,
+                request.expectedVersion(),
+                organizationId,
+                snapshotJson,
+                Hashes.sha256Hex(CanonicalJson.canonicalize(snapshotJson)),
+                acceptedAt,
+                Deadlines.versionDeadline(acceptedAt, Duration.ofSeconds(config.deadlineSeconds()))));
+        LOG.infof("version accepted quoteId=%s version=%d organizationId=%s correlationId=%s", created.quoteId(),
+                created.version(), organizationId, correlation.id());
+        String statusUrl = QuoteKeys.statusUrl(created.quoteId(), created.version());
+        return Response.accepted(new QuoteViews.QuoteAccepted(created.quoteId(), created.version(), created.phase(),
+                        statusUrl))
+                .header(HttpHeaders.LOCATION, statusUrl)
+                .build();
+    }
+
     @GET
     @Path("/{quoteId}/versions/{version}")
     public QuoteViews.QuoteVersion version(@PathParam("quoteId") String quoteId, @PathParam("version") String version) {

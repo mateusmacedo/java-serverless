@@ -1,5 +1,7 @@
 package com.mmda.serverless.quote.functions;
 
+import java.time.Instant;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Map;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
@@ -25,6 +27,19 @@ final class Attr {
     static String string(Map<String, AttributeValue> item, String name) {
         AttributeValue value = item == null ? null : item.get(name);
         return value == null || value.s() == null ? null : value.s();
+    }
+
+    /** Instante ISO-8601; nulo quando falta ou está fora do formato, para um item malformado não parar a varredura. */
+    static Instant instant(Map<String, AttributeValue> item, String name) {
+        String value = string(item, name);
+        if (value == null) {
+            return null;
+        }
+        try {
+            return Instant.parse(value);
+        } catch (DateTimeParseException malformed) {
+            return null;
+        }
     }
 
     static long number(Map<String, AttributeValue> item, String name, long fallback) {

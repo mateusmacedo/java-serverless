@@ -28,4 +28,8 @@ public record ReuseProperties(
     Duration lease() {
         return Duration.ofSeconds(leaseSeconds);
     }
+
+    Duration tombstone() {
+        return Duration.ofSeconds(tombstoneSeconds);
+    }
 }

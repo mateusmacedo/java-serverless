@@ -24,6 +24,16 @@ public final class EventIds {
         return Digests.uuidV5(NAMESPACE, queryId).toString();
     }
 
+    /** {@code OperationIssueRaised} e {@code OperationIssueUpdated}: UUIDv5 de {@code issueId|revision}. */
+    public static String operationIssue(String issueId, long revision) {
+        return Digests.uuidV5(NAMESPACE, issueId + "|" + revision).toString();
+    }
+
+    /** {@code QueryReconciled}: UUIDv5 de {@code operationId|revision}. */
+    public static String queryReconciled(String operationId, long revision) {
+        return Digests.uuidV5(NAMESPACE, operationId + "|" + revision).toString();
+    }
+
     /** {@code EnrichmentRequested} e {@code InsurerQuoteRequested}: UUIDv5 do {@code workRef}. */
     public static String request(String workRef) {
         return Digests.uuidV5(NAMESPACE, workRef).toString();

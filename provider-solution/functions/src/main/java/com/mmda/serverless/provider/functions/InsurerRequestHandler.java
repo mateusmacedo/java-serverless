@@ -43,11 +43,12 @@ class InsurerRequestHandler {
     private final Clock clock;
     private final Sleeper sleeper;
     private final RandomGenerator jitter;
+    private final Metrics metrics;
 
     InsurerRequestHandler(QueryLedger ledger, ProviderClients clients, PendingCallbacks callbacks,
                           RawResponses rawResponses, DelayedRedelivery redelivery, EventJson json,
                           ProviderProperties properties, RetryPolicy retryPolicy, Clock clock, Sleeper sleeper,
-                          RandomGenerator jitter) {
+                          RandomGenerator jitter, Metrics metrics) {
         this.ledger = ledger;
         this.clients = clients;
         this.callbacks = callbacks;
@@ -59,14 +60,15 @@ class InsurerRequestHandler {
         this.clock = clock;
         this.sleeper = sleeper;
         this.jitter = jitter;
+        this.metrics = metrics;
     }
 
-    void handle(String messageBody) {
-        InsurerQuoteRequest request = json.detail(messageBody, InsurerQuoteRequest.class);
+    void handle(QueuedMessage message) {
+        InsurerQuoteRequest request = json.detail(message.body(), InsurerQuoteRequest.class);
         String queryId = Identities.queryId(request.workRef());
         Optional<QueryRecord> existing = ledger.load(queryId);
         if (existing.isPresent()) {
-            redelivered(request, existing.get(), messageBody);
+            redelivered(request, existing.get(), message);
             return;
         }
         Instant now = clock.instant();
@@ -81,18 +83,20 @@ class InsurerRequestHandler {
         }
         QuotaReservation quota = QuotaReservation.of(properties, request.insurerId(), now);
         switch (ledger.reserveFirst(draft(request, queryId), quota, now)) {
-            case RESERVED -> call(request, queryId, path.get(), 1, messageBody);
-            case QUOTA_EXHAUSTED -> quotaExhausted(request, queryId, messageBody, quota, now);
+            case RESERVED -> call(request, queryId, path.get(), 1, message);
+            case QUOTA_EXHAUSTED -> quotaExhausted(request, queryId, message, quota, now);
             default -> LOGGER.info("Insurer query created by another delivery: queryId={}", queryId);
         }
     }
 
     private void call(InsurerQuoteRequest request, String queryId, String path, int firstSequence,
-                      String messageBody) {
+                      QueuedMessage message) {
         int sequence = firstSequence;
         while (true) {
             ProviderExchange<InsurerReply> exchange = clients.requestQuote(path, queryId, request);
             InsurerVerdict verdict = InsurerProtocol.classify(exchange.outcome());
+            metrics.providerCall(request.insurerId(), verdict instanceof InsurerVerdict.Transient
+                    || verdict instanceof InsurerVerdict.Unknown || verdict instanceof InsurerVerdict.Unavailable);
             if (!(verdict instanceof InsurerVerdict.Transient transientFailure)) {
                 conclude(request, queryId, sequence, verdict, exchange);
                 return;
@@ -115,7 +119,7 @@ class InsurerRequestHandler {
             QuotaReservation quota = QuotaReservation.of(properties, request.insurerId(), now);
             QueryLedger.Reservation reservation = ledger.reserveNext(queryId, sequence + 1, quota, now);
             if (reservation == QueryLedger.Reservation.QUOTA_EXHAUSTED) {
-                quotaExhaustedOnRetry(request, queryId, sequence, messageBody, quota, now);
+                quotaExhaustedOnRetry(request, queryId, sequence, message, quota, now);
                 return;
             }
             if (reservation != QueryLedger.Reservation.RESERVED) {
@@ -198,7 +202,7 @@ class InsurerRequestHandler {
      * viva, o pedido é adiado sem tocar a consulta; depois disso, com tentativa aberta, a consulta fica
      * {@code UNKNOWN}; só com falhas antes do envio, segue com nova tentativa se couber no orçamento.
      */
-    private void redelivered(InsurerQuoteRequest request, QueryRecord query, String messageBody) {
+    private void redelivered(InsurerQuoteRequest request, QueryRecord query, QueuedMessage message) {
         String queryId = query.queryId();
         if (query.state().isSettled()) {
             LOGGER.info("Insurer query already settled: queryId={} state={}", queryId, query.state());
@@ -209,7 +213,7 @@ class InsurerRequestHandler {
             return;
         }
         Instant now = clock.instant();
-        if (deferredWhileBusy(query, messageBody, now)) {
+        if (deferredWhileBusy(query, message, now)) {
             return;
         }
         if (query.hasOpenAttempt()) {
@@ -230,8 +234,8 @@ class InsurerRequestHandler {
         }
         QuotaReservation quota = QuotaReservation.of(properties, request.insurerId(), now);
         switch (ledger.reserveNext(queryId, next, quota, now)) {
-            case RESERVED -> call(request, queryId, path.get(), next, messageBody);
-            case QUOTA_EXHAUSTED -> quotaExhaustedOnRetry(request, queryId, query.attemptCount(), messageBody, quota, now);
+            case RESERVED -> call(request, queryId, path.get(), next, message);
+            case QUOTA_EXHAUSTED -> quotaExhaustedOnRetry(request, queryId, query.attemptCount(), message, quota, now);
             default -> LOGGER.info("Insurer query changed by another delivery: queryId={}", queryId);
         }
     }
@@ -241,21 +245,21 @@ class InsurerRequestHandler {
      * backoff. A consulta não é tocada, e o pedido volta depois que essa entrega terminou ou morreu, com
      * {@code DelaySeconds}, sem gastar {@code maxReceiveCount}.
      */
-    private boolean deferredWhileBusy(QueryRecord query, String messageBody, Instant now) {
+    private boolean deferredWhileBusy(QueryRecord query, QueuedMessage message, Instant now) {
         Optional<Instant> busyUntil = query.busyUntil(properties.workerTimeout());
         if (busyUntil.isEmpty() || !now.isBefore(busyUntil.get())) {
             return false;
         }
         int delay = (int) Duration.between(now, busyUntil.get()).toSeconds() + 1;
-        redelivery.send(properties.insurerRequestsQueueUrl(), messageBody, delay);
+        redelivery.send(properties.insurerRequestsQueueUrl(), message, delay);
         LOGGER.info("Insurer query may be in progress in another delivery, request delayed {} s: queryId={}", delay,
                 query.queryId());
         return true;
     }
 
-    private void quotaExhausted(InsurerQuoteRequest request, String queryId, String messageBody, QuotaReservation quota,
-                                Instant now) {
-        if (delayUntilWindowTurns(request, messageBody, quota, now)) {
+    private void quotaExhausted(InsurerQuoteRequest request, String queryId, QueuedMessage message,
+                                QuotaReservation quota, Instant now) {
+        if (delayUntilWindowTurns(request, message, quota, now)) {
             LOGGER.info("Insurer quota exhausted, request delayed: queryId={} insurerId={}", queryId, request.insurerId());
             return;
         }
@@ -263,22 +267,22 @@ class InsurerRequestHandler {
     }
 
     /** Com a consulta já em voo e sem tentativa aberta, a reentrega adiada continua de onde parou. */
-    private void quotaExhaustedOnRetry(InsurerQuoteRequest request, String queryId, int lastSequence, String messageBody,
-                                       QuotaReservation quota, Instant now) {
-        if (delayUntilWindowTurns(request, messageBody, quota, now)) {
+    private void quotaExhaustedOnRetry(InsurerQuoteRequest request, String queryId, int lastSequence,
+                                       QueuedMessage message, QuotaReservation quota, Instant now) {
+        if (delayUntilWindowTurns(request, message, quota, now)) {
             LOGGER.info("Insurer quota exhausted on retry, request delayed: queryId={}", queryId);
             return;
         }
         unavailable(request, queryId, lastSequence, ErrorClasses.QUOTA_EXHAUSTED);
     }
 
-    private boolean delayUntilWindowTurns(InsurerQuoteRequest request, String messageBody, QuotaReservation quota,
+    private boolean delayUntilWindowTurns(InsurerQuoteRequest request, QueuedMessage message, QuotaReservation quota,
                                           Instant now) {
         long delay = quota.window().secondsUntilEnd(now) + 1;
         if (delay > DelayedRedelivery.MAX_DELAY_SECONDS || !now.plusSeconds(delay).isBefore(request.deadlineAt())) {
             return false;
         }
-        redelivery.send(properties.insurerRequestsQueueUrl(), messageBody, (int) delay);
+        redelivery.send(properties.insurerRequestsQueueUrl(), message, (int) delay);
         return true;
     }
 

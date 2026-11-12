@@ -1,11 +1,13 @@
 package com.mmda.serverless.quote.functions;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mmda.serverless.quote.domain.QuoteEvents;
+import com.mmda.serverless.quote.domain.QuoteIssues;
 import com.mmda.serverless.quote.domain.QuoteKeys;
 import com.mmda.serverless.quote.domain.Usage;
 import com.mmda.serverless.quote.domain.WorkRef;
@@ -14,18 +16,27 @@ import com.mmda.serverless.quote.functions.QuoteFixtures.EvidenceRef;
 import io.quarkus.test.common.WithTestResource;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
+import java.lang.reflect.Proxy;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Supplier;
+import java.util.logging.Handler;
+import java.util.logging.LogRecord;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
+import org.jboss.logmanager.ExtLogRecord;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.http.crt.AwsCrtHttpClient;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
@@ -34,6 +45,8 @@ import software.amazon.awssdk.services.sfn.model.DescribeExecutionResponse;
 import software.amazon.awssdk.services.sfn.model.ExecutionStatus;
 import software.amazon.awssdk.services.sqs.SqsClient;
 import software.amazon.awssdk.services.sqs.model.Message;
+import software.amazon.awssdk.services.sqs.model.MessageAttributeValue;
+import software.amazon.awssdk.services.sqs.model.QueueAttributeName;
 
 /**
  * Passos, {@code dispatch}, {@code resume}, relay e reconciler contra DynamoDB, EventBridge, SQS, Secrets
@@ -84,6 +97,36 @@ class QuoteFunctionsFlociIT {
 
     @ConfigProperty(name = "quote.state-machine-arn")
     String flowMachineArn;
+
+    @ConfigProperty(name = "it.fail-machine-arn", defaultValue = "unset")
+    String failMachineArn;
+
+    @ConfigProperty(name = "it.timeout-machine-arn", defaultValue = "unset")
+    String timeoutMachineArn;
+
+    @ConfigProperty(name = "reconciler.results-queue-url")
+    String resultsQueueUrl;
+
+    @ConfigProperty(name = "reconciler.results-dead-letter-queue-url")
+    String deadLetterQueueUrl;
+
+    @Inject
+    WaiterReconciler waiterReconciler;
+
+    @Inject
+    VersionReconciler versionReconciler;
+
+    @Inject
+    DeadLetterReprocessor deadLetters;
+
+    @Inject
+    QuoteTable table;
+
+    @Inject
+    TokenCipher cipher;
+
+    @Inject
+    QuoteFunctionsConfig config;
 
     private SqsClient sqs;
     private final Map<String, String> tokensByExecution = new HashMap<>();
@@ -361,9 +404,16 @@ class QuoteFunctionsFlociIT {
                 QuoteFixtures.snapshot(Usage.PERSONAL, 2021, false, "2012-03-15"), Instant.now().minusSeconds(120));
         String executionArn = flowMachineArn.replace(":stateMachine:", ":execution:") + ":q-" + quoteId + "-v1";
 
-        Map<String, Object> report = reconciler.handleRequest(Map.of("source", "test"), null);
+        List<String> logged = new CopyOnWriteArrayList<>();
+        Map<String, Object> report = logging(OutboxReconciler.class, logged,
+                () -> reconciler.handleRequest(Map.of("source", "test"), null));
 
         assertThat((Integer) report.get("republished")).isGreaterThanOrEqualTo(2);
+        assertThat(logged).as("each republished outbox is identified in the log")
+                .anySatisfy(line -> assertThat(line).contains("eventId=" + created.startEventId(),
+                        "detailType=" + QuoteEvents.START_QUOTE_REQUESTED))
+                .anySatisfy(line -> assertThat(line).contains("eventId=" + created.acceptedEventId(),
+                        "detailType=" + QuoteEvents.QUOTE_ACCEPTED));
         assertThat(version(quoteId).get("executionArn").s()).isEqualTo(executionArn);
         assertThat(sfn.describeExecution(builder -> builder.executionArn(executionArn)).input())
                 .isEqualTo("{\"quoteId\":\"" + quoteId + "\",\"version\":1}");
@@ -615,6 +665,581 @@ class QuoteFunctionsFlociIT {
         assertThat(step("select-insurers", quoteId).get("insurers")).as("a retry reads what was recorded")
                 .isEqualTo(List.of("alpha", "beta"));
         assertThat(query(quoteId, QuoteKeys.resultPrefix(1))).hasSize(2);
+    }
+
+    @Test
+    void t09_allInsurersDeclineEndsAsNoOfferWithoutCommercialRetry() throws Exception {
+        String quoteId = quoteReadyToQuote(Usage.PERSONAL);
+        Map<String, Task> tasks = dispatchInsurers(quoteId, "alpha", "beta");
+
+        resumeInsurer(quoteId, "alpha", "DECLINED");
+        resumeInsurer(quoteId, "beta", "DECLINED");
+        for (Task task : tasks.values()) {
+            assertThat(succeededOutput(task).get("status").asText()).isEqualTo("DECLINED");
+        }
+        Task retry = newTask();
+        assertThat(dispatch.handleRequest(insurerRequest(quoteId, "alpha", retry), null).get("status"))
+                .as("a task retry receives the recorded decline").isEqualTo("RESUMED");
+
+        Map<String, Object> consolidation = step("consolidate", quoteId);
+        assertThat(consolidation.get("outcome")).isEqualTo("NO_OFFER");
+        assertThat(consolidation.get("outcomeReason")).isEqualTo("ALL_INSURERS_DECLINED");
+        assertThat(outboxOf(quoteId, QuoteEvents.INSURER_QUOTE_REQUESTED)).as("one request per insurer").hasSize(2);
+        assertThat(offers(quoteId)).isEmpty();
+        assertThat(result(quoteId, "beta").get("reasonCode").s()).isEqualTo("RISK_NOT_ACCEPTED");
+    }
+
+    @Test
+    void t10_allInsurersUnavailableEndAsTechnicalFailureNotNoOffer() throws Exception {
+        String reported = quoteReadyToQuote(Usage.PERSONAL);
+        dispatchInsurers(reported, "alpha", "beta");
+        resumeInsurer(reported, "alpha", "UNAVAILABLE");
+        resumeInsurer(reported, "beta", "UNAVAILABLE");
+
+        String timedOut = quoteReadyToQuote(Usage.PERSONAL);
+        Map<String, Task> tasks = dispatchInsurers(timedOut, "alpha", "beta");
+        resumeInsurer(timedOut, "alpha", "UNAVAILABLE");
+        steps.handleRequest(new StepRequest("record-insurer-outcome", timedOut, 1, "beta", "TIMED_OUT",
+                objectMapper.readTree("{\"Error\":\"States.Timeout\",\"Cause\":\"\"}")), null);
+
+        for (String quoteId : List.of(reported, timedOut)) {
+            Map<String, Object> consolidation = step("consolidate", quoteId);
+            assertThat(consolidation.get("outcome")).isEqualTo("TECHNICAL_FAILURE");
+            assertThat(consolidation.get("outcomeReason")).isEqualTo("INSURER_TECHNICAL_FAILURE");
+            assertThat(offers(quoteId)).isEmpty();
+        }
+        assertThat(result(timedOut, "beta").get("status").s()).isEqualTo("TIMED_OUT");
+        sfn.stopExecution(builder -> builder.executionArn(tasks.get("beta").executionArn()));
+    }
+
+    @Test
+    void t16_resultAfterTheFinalDeadlineIsKeptAsEvidenceAndTheTerminalQuoteDoesNotReopen() throws Exception {
+        String quoteId = quoteReadyToQuote(Usage.COMMERCIAL);
+        WorkRef workRef = insurerRef(quoteId, "alpha");
+        Task task = newTask();
+        dispatch.handleRequest(insurerRequest(quoteId, task), null);
+        steps.handleRequest(new StepRequest("record-insurer-outcome", quoteId, 1, "alpha", "TIMED_OUT",
+                objectMapper.readTree("{\"Error\":\"States.Timeout\",\"Cause\":\"\"}")), null);
+        assertThat(step("consolidate", quoteId).get("outcome")).isEqualTo("TECHNICAL_FAILURE");
+        Map<String, AttributeValue> terminal = version(quoteId);
+        Map<String, AttributeValue> meta = item(QuoteKeys.quotePk(quoteId), "META");
+
+        assertThat(resumer.handle(QuoteFixtures.insurerResult(workRef.value(), quoteId, "alpha", "QUOTED",
+                QuoteFixtures.insurerResultEventId(workRef.value())))).isEqualTo(ResultResumer.Disposition.LATE);
+
+        assertThat(version(quoteId)).isEqualTo(terminal);
+        assertThat(item(QuoteKeys.quotePk(quoteId), "META")).isEqualTo(meta);
+        assertThat(result(quoteId, "alpha").get("status").s()).isEqualTo("TIMED_OUT");
+        assertThat(offers(quoteId)).isEmpty();
+        assertThat(lateItems(quoteId)).singleElement().satisfies(late -> {
+            assertThat(late.get("reason").s()).isEqualTo("LATE");
+            assertThat(late.get("offerSummary").s()).contains("2450.90");
+        });
+        sfn.stopExecution(builder -> builder.executionArn(task.executionArn()));
+    }
+
+    @Test
+    void t17_resultOfASupersededVersionStaysInItAndDoesNotTouchTheCurrentSummary() throws Exception {
+        String quoteId = quoteReadyToQuote(Usage.COMMERCIAL);
+        Task task = newTask();
+        dispatch.handleRequest(insurerRequest(quoteId, task), null);
+        QuoteFixtures.supersedeFirstVersion(dynamoDb, quoteId, QuoteFixtures.snapshot(Usage.PERSONAL, 2019, false,
+                "2012-03-15"), Instant.now());
+
+        resumeInsurer(quoteId, "alpha", "QUOTED");
+        assertThat(succeededOutput(task).get("status").asText()).isEqualTo("QUOTED");
+        assertThat(step("consolidate", quoteId).get("outcome")).isEqualTo("COMPLETED");
+
+        assertThat(version(quoteId)).containsKey("supersededAt");
+        assertThat(version(quoteId).get("phase").s()).isEqualTo("TERMINAL");
+        assertThat(offers(quoteId)).hasSize(1);
+        assertThat(query(quoteId, QuoteKeys.versionSk(2))).as("the new version has no result of the old one")
+                .extracting(item -> item.get("sk").s()).containsExactly("V#0002");
+        Map<String, AttributeValue> meta = item(QuoteKeys.quotePk(quoteId), "META");
+        assertThat(meta.get("currentVersion").n()).isEqualTo("2");
+        assertThat(meta.get("phase").s()).isEqualTo("RECEIVED");
+        assertThat(meta.get("offerCount").n()).isEqualTo("0");
+        assertThat(meta).doesNotContainKey("outcome");
+    }
+
+    @Test
+    void t13_storedResultWhoseResumeFailedIsResumedByTheReconcilerWithoutANewRequest() throws Exception {
+        String quoteId = quoteReadyToQuote(Usage.COMMERCIAL);
+        WorkRef workRef = insurerRef(quoteId, "alpha");
+        Task task = newTask();
+        dispatch.handleRequest(insurerRequest(quoteId, task), null);
+        String body = QuoteFixtures.insurerResult(workRef.value(), quoteId, "alpha", "QUOTED",
+                QuoteFixtures.insurerResultEventId(workRef.value()));
+        ResultResumer crashing = new ResultResumer(table, cipher, unreachableSfn(), objectMapper, Clock.systemUTC());
+
+        assertThatThrownBy(() -> crashing.handle(body)).isInstanceOf(SdkClientException.class);
+        assertThat(waiter(workRef).get("status").s()).isEqualTo("RESUMING");
+        assertThat(waiter(workRef).get("gsi2pk").s()).isEqualTo("WAITER_RESUMING");
+        assertThat(result(quoteId, "alpha").get("status").s()).isEqualTo("QUOTED");
+        assertThat(execution(task).status()).isEqualTo(ExecutionStatus.RUNNING);
+
+        waiterReconciler.resumeStale(Instant.now());
+        assertThat(waiter(workRef).get("status").s()).as("younger than resumingRetryAfterSeconds").isEqualTo("RESUMING");
+        waiterReconciler.resumeStale(Instant.now().plusSeconds(60));
+
+        assertThat(succeededOutput(task).get("status").asText()).isEqualTo("QUOTED");
+        assertThat(waiter(workRef).get("status").s()).isEqualTo("DONE");
+        assertThat(waiter(workRef)).doesNotContainKey("gsi2pk");
+        assertThat(outboxOf(quoteId, QuoteEvents.INSURER_QUOTE_REQUESTED)).as("no new request to the insurer").hasSize(1);
+        assertThat(offers(quoteId)).hasSize(1);
+        assertThat(resumer.handle(body)).as("the redelivered message").isEqualTo(ResultResumer.Disposition.DISCARDED);
+        assertThat(offers(quoteId)).hasSize(1);
+    }
+
+    @Test
+    void t20_failedExecutionIsFinalizedWithTheRecordedOfferAndAWorkflowFailedIssue() throws Exception {
+        String quoteId = quoteReadyToQuote(Usage.PERSONAL);
+        Map<String, Task> tasks = dispatchInsurers(quoteId, "alpha", "beta");
+        resumeInsurer(quoteId, "alpha", "QUOTED");
+        attachExecution(quoteId, failMachineArn, ExecutionStatus.FAILED);
+
+        versionReconciler.reconcile(Instant.now());
+
+        Map<String, AttributeValue> version = version(quoteId);
+        assertThat(version.get("phase").s()).isEqualTo("TERMINAL");
+        assertThat(version.get("outcome").s()).isEqualTo("PARTIAL");
+        assertThat(version).doesNotContainKeys("outcomeReason", "gsi2pk");
+        assertThat(result(quoteId, "alpha").get("status").s()).isEqualTo("QUOTED");
+        assertThat(result(quoteId, "beta").get("status").s()).isEqualTo("TIMED_OUT");
+        assertThat(result(quoteId, "beta").get("reasonCode").s()).isEqualTo("WORKFLOW_FAILED");
+        assertThat(offers(quoteId)).as("the recorded offer stays").hasSize(1);
+        JsonNode completed = outboxDetail(QuoteEvents.completedEventId(quoteId, 1));
+        assertThat(completed.get("outcome").asText()).isEqualTo("PARTIAL");
+        assertThat(completed.get("offerCount").asInt()).isEqualTo(1);
+        Map<String, AttributeValue> issue = issue(QuoteIssues.Type.WORKFLOW_FAILED, QuoteIssues.versionTarget(quoteId, 1));
+        assertThat(issue.get("type").s()).as("the item type (ADR 0015)").isEqualTo("ISSUE");
+        assertThat(issue.get("issueType").s()).isEqualTo("WORKFLOW_FAILED");
+        assertThat(issue.get("status").s()).isEqualTo("OPEN");
+        assertThat(issue.get("source").s()).isEqualTo("quote");
+        assertThat(issue.get("quoteId").s()).isEqualTo(quoteId);
+        assertThat(issue.get("gsi1pk").s()).isEqualTo("ISSUES#org-acme");
+        assertThat(issue.get("safeSummary").s()).contains("FAILED");
+        assertThat(issue.get("revision").n()).isEqualTo("1");
+        Map<String, AttributeValue> meta = item(QuoteKeys.quotePk(quoteId), "META");
+        assertThat(meta.get("phase").s()).isEqualTo("TERMINAL");
+        assertThat(meta.get("outcome").s()).isEqualTo("PARTIAL");
+        assertThat(meta.get("offerCount").n()).isEqualTo("1");
+        WorkRef beta = insurerRef(quoteId, "beta");
+        assertThat(waiter(beta).get("status").s()).isEqualTo("EXPIRED");
+        assertThat(waiter(beta)).as("covered by WORKFLOW_FAILED, not by TASK_EXPIRED").doesNotContainKey("gsi2pk");
+
+        versionReconciler.reconcile(Instant.now());
+        assertThat(version(quoteId).get("revision").n()).isEqualTo(version.get("revision").n());
+        assertThat(issue(QuoteIssues.Type.WORKFLOW_FAILED, QuoteIssues.versionTarget(quoteId, 1)).get("revision").n())
+                .isEqualTo("1");
+        assertThat(resumer.handle(QuoteFixtures.insurerResult(beta.value(), quoteId, "beta", "QUOTED",
+                QuoteFixtures.insurerResultEventId(beta.value())))).isEqualTo(ResultResumer.Disposition.LATE);
+        assertThat(offers(quoteId)).hasSize(1);
+        assertThat(version(quoteId).get("outcome").s()).isEqualTo("PARTIAL");
+        sfn.stopExecution(builder -> builder.executionArn(tasks.get("beta").executionArn()));
+    }
+
+    @Test
+    void t20_timedOutOrAbortedExecutionIsFinalizedFromWhatTheVersionRecorded() throws Exception {
+        String waiting = eligibleQuote(Usage.COMMERCIAL);
+        Task enrichment = newTask();
+        dispatch.handleRequest(enrichmentRequest(waiting, enrichment), null);
+        attachExecution(waiting, timeoutMachineArn, ExecutionStatus.TIMED_OUT);
+        String early = newQuote(Usage.COMMERCIAL, 2021, false, "2012-03-15");
+        step("load-snapshot", early);
+        attachExecution(early, flowMachineArn, ExecutionStatus.ABORTED);
+
+        versionReconciler.reconcile(Instant.now());
+
+        assertThat(version(waiting).get("outcome").s()).isEqualTo("TECHNICAL_FAILURE");
+        assertThat(version(waiting).get("outcomeReason").s()).isEqualTo("ENRICHMENT_FAILED");
+        assertThat(issue(QuoteIssues.Type.WORKFLOW_FAILED, QuoteIssues.versionTarget(waiting, 1)).get("safeSummary").s())
+                .contains("TIMED_OUT");
+        assertThat(version(early).get("outcome").s()).isEqualTo("TECHNICAL_FAILURE");
+        assertThat(version(early).get("outcomeReason").s()).isEqualTo("WORKFLOW_FAILED");
+        assertThat(issue(QuoteIssues.Type.WORKFLOW_FAILED, QuoteIssues.versionTarget(early, 1)).get("safeSummary").s())
+                .contains("ABORTED");
+        WorkRef workRef = WorkRef.of(waiting, 1, WorkRef.Kind.ENRICHMENT, null);
+        assertThat(waiter(workRef).get("status").s()).isEqualTo("EXPIRED");
+
+        assertThat(resumer.handle(QuoteFixtures.enrichmentResult(workRef.value(), waiting, "FOUND", 2021,
+                UUID.randomUUID().toString()))).isEqualTo(ResultResumer.Disposition.LATE);
+        assertThat(evidence(waiting, workRef)).as("a finalized version never gets a used evidence").isNull();
+        sfn.stopExecution(builder -> builder.executionArn(enrichment.executionArn()));
+    }
+
+    @Test
+    void versionPastTheDeadlineOpensStuckVersionOnceAndTheLostSummaryIsRepaired() throws Exception {
+        String quoteId = UUID.randomUUID().toString();
+        QuoteFixtures.createQuote(dynamoDb, quoteId, QuoteFixtures.snapshot(Usage.PERSONAL, 2021, false, "2012-03-15"),
+                Instant.now().minusSeconds(600));
+        dynamoDb.updateItem(builder -> builder.tableName(FlociResource.TABLE)
+                .key(Map.of("pk", AttributeValue.fromS(QuoteKeys.quotePk(quoteId)), "sk", AttributeValue.fromS("V#0001")))
+                .updateExpression("SET phase = :quoting")
+                .expressionAttributeValues(Map.of(":quoting", AttributeValue.fromS("QUOTING"))));
+
+        versionReconciler.reconcile(Instant.now());
+
+        Map<String, AttributeValue> stuck = issue(QuoteIssues.Type.STUCK_VERSION, QuoteIssues.versionTarget(quoteId, 1));
+        assertThat(stuck.get("status").s()).isEqualTo("OPEN");
+        assertThat(stuck.get("safeSummary").s()).contains("MISSING");
+        assertThat(stuck.get("revision").n()).isEqualTo("1");
+        assertThat(version(quoteId).get("phase").s()).as("an alert, not a finalization").isEqualTo("QUOTING");
+        assertThat(version(quoteId).get("gsi2pk").s()).isEqualTo("ACTIVE_VERSION");
+        assertThat(item(QuoteKeys.quotePk(quoteId), "META").get("phase").s()).isEqualTo("QUOTING");
+
+        versionReconciler.reconcile(Instant.now());
+        Map<String, AttributeValue> seenAgain = issue(QuoteIssues.Type.STUCK_VERSION,
+                QuoteIssues.versionTarget(quoteId, 1));
+        assertThat(seenAgain.get("revision").n()).isEqualTo("2");
+        assertThat(seenAgain.get("firstSeenAt").s()).isEqualTo(stuck.get("firstSeenAt").s());
+    }
+
+    @Test
+    void consolidatedVersionWhoseSummaryRefreshFailedIsRepairedByTheReconciler() throws Exception {
+        String quoteId = newQuote(Usage.PERSONAL, 2017, true, "2010-01-01");
+        step("load-snapshot", quoteId);
+        step("evaluate-eligibility", quoteId);
+        QuoteTable refreshFails = new QuoteTable(dynamoDb, config, objectMapper) {
+            @Override
+            void refreshSummary(String quoteId, int version, Instant now) {
+                // NOTE: o UpdateItem do resumo falha depois do commit da consolidação e só fica no log
+            }
+        };
+
+        new WorkflowSteps(refreshFails, objectMapper, config, Clock.systemUTC()).consolidate(quoteId, 1);
+
+        assertThat(version(quoteId).get("phase").s()).isEqualTo("TERMINAL");
+        assertThat(version(quoteId).get("gsi2pk").s()).isEqualTo("SUMMARY_PENDING");
+        assertThat(item(QuoteKeys.quotePk(quoteId), "META").get("phase").s()).as("stale summary")
+                .isNotEqualTo("TERMINAL");
+
+        assertThat(versionReconciler.reconcile(Instant.now()).get("summariesRepaired")).isPositive();
+
+        Map<String, AttributeValue> meta = item(QuoteKeys.quotePk(quoteId), "META");
+        assertThat(meta.get("phase").s()).isEqualTo("TERMINAL");
+        assertThat(meta.get("outcome").s()).isEqualTo("INELIGIBLE");
+        assertThat(meta.get("offerCount").n()).isEqualTo("0");
+        assertThat(version(quoteId)).as("out of SUMMARY_PENDING").doesNotContainKey("gsi2pk");
+    }
+
+    @Test
+    void summaryReadBeforeTheConsolidationDoesNotDemoteTheTerminalMeta() throws Exception {
+        String quoteId = newQuote(Usage.PERSONAL, 2017, true, "2010-01-01");
+        step("load-snapshot", quoteId);
+        step("evaluate-eligibility", quoteId);
+        Map<String, AttributeValue> beforeConsolidation = version(quoteId);
+        step("consolidate", quoteId);
+        assertThat(item(QuoteKeys.quotePk(quoteId), "META").get("phase").s()).isEqualTo("TERMINAL");
+        QuoteTable staleRead = new QuoteTable(dynamoDb, config, objectMapper) {
+            @Override
+            Optional<Map<String, AttributeValue>> get(String pk, String sk) {
+                return QuoteKeys.versionSk(1).equals(sk) ? Optional.of(beforeConsolidation) : super.get(pk, sk);
+            }
+        };
+
+        staleRead.refreshSummary(quoteId, 1, Instant.now());
+        staleRead.repairSummary(quoteId, 1, Instant.now());
+
+        Map<String, AttributeValue> meta = item(QuoteKeys.quotePk(quoteId), "META");
+        assertThat(meta.get("phase").s()).isEqualTo("TERMINAL");
+        assertThat(meta.get("outcome").s()).isEqualTo("INELIGIBLE");
+    }
+
+    @Test
+    void waiterThatAlwaysFailsToResumeDoesNotBlockTheOthers() throws Exception {
+        ResultResumer crashing = new ResultResumer(table, cipher, unreachableSfn(), objectMapper, Clock.systemUTC());
+        String poisonQuote = quoteReadyToQuote(Usage.COMMERCIAL);
+        WorkRef poison = insurerRef(poisonQuote, "alpha");
+        Task poisonTask = newTask();
+        dispatch.handleRequest(insurerRequest(poisonQuote, poisonTask), null);
+        assertThatThrownBy(() -> crashing.handle(QuoteFixtures.insurerResult(poison.value(), poisonQuote, "alpha",
+                "QUOTED", QuoteFixtures.insurerResultEventId(poison.value())))).isInstanceOf(SdkClientException.class);
+        updateWaiter(poison, "SET tokenCiphertext = :unreadable, gsi2sk = :oldest", Map.of(
+                ":unreadable", AttributeValue.fromS("unreadable"), ":oldest", AttributeValue.fromS("2000-01-01T00:00:00Z")));
+        String quoteId = quoteReadyToQuote(Usage.COMMERCIAL);
+        WorkRef workRef = insurerRef(quoteId, "alpha");
+        Task task = newTask();
+        dispatch.handleRequest(insurerRequest(quoteId, task), null);
+        assertThatThrownBy(() -> crashing.handle(QuoteFixtures.insurerResult(workRef.value(), quoteId, "alpha",
+                "QUOTED", QuoteFixtures.insurerResultEventId(workRef.value())))).isInstanceOf(SdkClientException.class);
+        try {
+            waiterReconciler.resumeStale(Instant.now().plusSeconds(60));
+
+            assertThat(waiter(poison).get("status").s()).isEqualTo("RESUMING");
+            assertThat(waiter(workRef).get("status").s()).isEqualTo("DONE");
+            assertThat(succeededOutput(task).get("status").asText()).isEqualTo("QUOTED");
+        } finally {
+            updateWaiter(poison, "SET #status = :done REMOVE gsi2pk, gsi2sk", Map.of(":done",
+                    AttributeValue.fromS("DONE")));
+            sfn.stopExecution(builder -> builder.executionArn(poisonTask.executionArn()));
+        }
+    }
+
+    @Test
+    void versionThatAlwaysFailsToReconcileDoesNotBlockTheOthers() throws Exception {
+        String poisonQuote = UUID.randomUUID().toString();
+        QuoteFixtures.createQuote(dynamoDb, poisonQuote, QuoteFixtures.snapshot(Usage.PERSONAL, 2021, false,
+                "2012-03-15"), Instant.now().minusSeconds(900));
+        dynamoDb.updateItem(builder -> builder.tableName(FlociResource.TABLE)
+                .key(Map.of("pk", AttributeValue.fromS(QuoteKeys.quotePk(poisonQuote)), "sk", AttributeValue.fromS("V#0001")))
+                .updateExpression("SET version = :outOfRange, gsi2sk = :oldest")
+                .expressionAttributeValues(Map.of(":outOfRange", AttributeValue.fromN("10000"),
+                        ":oldest", AttributeValue.fromS("2000-01-01T00:00:00Z"))));
+        String quoteId = UUID.randomUUID().toString();
+        QuoteFixtures.createQuote(dynamoDb, quoteId, QuoteFixtures.snapshot(Usage.PERSONAL, 2021, false, "2012-03-15"),
+                Instant.now().minusSeconds(600));
+        try {
+            versionReconciler.reconcile(Instant.now());
+
+            assertThat(issue(QuoteIssues.Type.STUCK_VERSION, QuoteIssues.versionTarget(quoteId, 1))).isNotNull();
+        } finally {
+            dynamoDb.updateItem(builder -> builder.tableName(FlociResource.TABLE)
+                    .key(Map.of("pk", AttributeValue.fromS(QuoteKeys.quotePk(poisonQuote)),
+                            "sk", AttributeValue.fromS("V#0001")))
+                    .updateExpression("REMOVE gsi2pk, gsi2sk"));
+        }
+    }
+
+    @Test
+    void expiredWaiterWithoutAResultIsTheNormalTimeoutAndOpensNoIssue() throws Exception {
+        String quoteId = quoteReadyToQuote(Usage.COMMERCIAL);
+        WorkRef workRef = insurerRef(quoteId, "alpha");
+        Task task = newTask();
+        dispatch.handleRequest(insurerRequest(quoteId, task), null);
+        steps.handleRequest(new StepRequest("record-insurer-outcome", quoteId, 1, "alpha", "TIMED_OUT",
+                objectMapper.readTree("{\"Error\":\"States.Timeout\",\"Cause\":\"\"}")), null);
+        assertThat(waiter(workRef).get("gsi2pk").s()).isEqualTo("WAITER_EXPIRED");
+        assertThat(result(quoteId, "alpha").get("status").s()).as("visible to the user").isEqualTo("TIMED_OUT");
+
+        assertThat(waiterReconciler.reviewExpired(Instant.now())).isZero();
+
+        assertThat(issue(QuoteIssues.Type.TASK_EXPIRED, workRef.value())).isNull();
+        assertThat(waiter(workRef).get("status").s()).isEqualTo("EXPIRED");
+        assertThat(waiter(workRef)).doesNotContainKey("gsi2pk");
+        sfn.stopExecution(builder -> builder.executionArn(task.executionArn()));
+    }
+
+    @Test
+    void recordedResultThatTheEndedExecutionNeverReceivedOpensTaskExpiredOnce() throws Exception {
+        String quoteId = quoteReadyToQuote(Usage.COMMERCIAL);
+        WorkRef workRef = insurerRef(quoteId, "alpha");
+        Task task = newTask();
+        dispatch.handleRequest(insurerRequest(quoteId, task), null);
+        String eventId = QuoteFixtures.insurerResultEventId(workRef.value());
+        String body = QuoteFixtures.insurerResult(workRef.value(), quoteId, "alpha", "QUOTED", eventId);
+        // NOTE: o resume grava o resultado e cai antes do SendTaskSuccess; a execução termina sem recebê-lo
+        ResultResumer crashing = new ResultResumer(table, cipher, unreachableSfn(), objectMapper, Clock.systemUTC());
+        assertThatThrownBy(() -> crashing.handle(body)).isInstanceOf(SdkClientException.class);
+        assertThat(waiter(workRef).get("status").s()).isEqualTo("RESUMING");
+        assertThat(waiter(workRef)).containsKey("resumePayload");
+        sfn.stopExecution(builder -> builder.executionArn(task.executionArn()));
+        await().atMost(Duration.ofSeconds(15)).until(() -> execution(task).status() == ExecutionStatus.ABORTED);
+        updateWaiter(workRef, "SET #status = :expired, gsi2pk = :index, gsi2sk = :now", Map.of(
+                ":expired", AttributeValue.fromS("EXPIRED"), ":index", AttributeValue.fromS("WAITER_EXPIRED"),
+                ":now", AttributeValue.fromS(Instant.now().toString())));
+
+        assertThat(waiterReconciler.reviewExpired(Instant.now())).isPositive();
+
+        Map<String, AttributeValue> issue = issue(QuoteIssues.Type.TASK_EXPIRED, workRef.value());
+        assertThat(issue.get("type").s()).as("the item type (ADR 0015)").isEqualTo("ISSUE");
+        assertThat(issue.get("issueType").s()).isEqualTo("TASK_EXPIRED");
+        assertThat(issue.get("quoteId").s()).isEqualTo(quoteId);
+        assertThat(issue.get("organizationId").s()).isEqualTo("org-acme");
+        assertThat(issue.get("safeSummary").s()).contains("alpha");
+        assertThat(waiter(workRef)).doesNotContainKey("gsi2pk");
+        waiterReconciler.reviewExpired(Instant.now());
+        assertThat(issue(QuoteIssues.Type.TASK_EXPIRED, workRef.value()).get("revision").n()).isEqualTo("1");
+    }
+
+    /** Roda a ação capturando as mensagens de log da classe. */
+    private static <T> T logging(Class<?> source, List<String> messages, Supplier<T> action) {
+        Handler capture = new Handler() {
+            @Override
+            public void publish(LogRecord record) {
+                messages.add(record instanceof ExtLogRecord extended ? extended.getFormattedMessage()
+                        : record.getMessage());
+            }
+
+            @Override
+            public void flush() {
+            }
+
+            @Override
+            public void close() {
+            }
+        };
+        java.util.logging.Logger logger = java.util.logging.Logger.getLogger(source.getName());
+        logger.addHandler(capture);
+        try {
+            return action.get();
+        } finally {
+            logger.removeHandler(capture);
+        }
+    }
+
+    private void updateWaiter(WorkRef workRef, String expression, Map<String, AttributeValue> values) {
+        Map<String, String> names = expression.contains("#status") ? Map.of("#status", "status") : null;
+        dynamoDb.updateItem(builder -> builder.tableName(FlociResource.TABLE)
+                .key(Map.of("pk", AttributeValue.fromS(QuoteKeys.waiterPk(workRef)), "sk", AttributeValue.fromS("META")))
+                .updateExpression(expression)
+                .expressionAttributeNames(names)
+                .expressionAttributeValues(values));
+    }
+
+    @Test
+    void expiredWaiterWhoseResultWasDeliveredDoesNotOpenTaskExpired() throws Exception {
+        String quoteId = quoteReadyToQuote(Usage.COMMERCIAL);
+        WorkRef workRef = insurerRef(quoteId, "alpha");
+        Task task = newTask();
+        dispatch.handleRequest(insurerRequest(quoteId, task), null);
+        String eventId = QuoteFixtures.insurerResultEventId(workRef.value());
+        String body = QuoteFixtures.insurerResult(workRef.value(), quoteId, "alpha", "QUOTED", eventId);
+        assertThat(resumer.handle(body)).isEqualTo(ResultResumer.Disposition.RESUMED);
+        assertThat(succeededOutput(task).get("status").asText()).isEqualTo("QUOTED");
+        // NOTE: o resume cai depois do SendTaskSuccess aceito e antes do DONE; a reentrega marca EXPIRED (§8)
+        dynamoDb.updateItem(builder -> builder.tableName(FlociResource.TABLE)
+                .key(Map.of("pk", AttributeValue.fromS(QuoteKeys.waiterPk(workRef)), "sk", AttributeValue.fromS("META")))
+                .updateExpression("SET #status = :resuming, gsi2pk = :index, gsi2sk = :now")
+                .expressionAttributeNames(Map.of("#status", "status"))
+                .expressionAttributeValues(Map.of(":resuming", AttributeValue.fromS("RESUMING"),
+                        ":index", AttributeValue.fromS("WAITER_RESUMING"),
+                        ":now", AttributeValue.fromS(Instant.now().toString()))));
+
+        assertThat(resumer.handle(body)).isEqualTo(ResultResumer.Disposition.RESUMED);
+        assertThat(waiter(workRef).get("status").s()).isEqualTo("EXPIRED");
+        assertThat(waiter(workRef).get("gsi2pk").s()).isEqualTo("WAITER_EXPIRED");
+        assertThat(result(quoteId, "alpha").get("resultEventId").s()).isEqualTo(eventId);
+
+        waiterReconciler.reviewExpired(Instant.now());
+
+        assertThat(issue(QuoteIssues.Type.TASK_EXPIRED, workRef.value())).isNull();
+        assertThat(waiter(workRef)).doesNotContainKey("gsi2pk");
+    }
+
+    @Test
+    void t31_resultThatKeepsFailingReachesTheDlqAndItsReprocessingDoesNotDuplicateIt() throws Exception {
+        String quoteId = quoteReadyToQuote(Usage.COMMERCIAL);
+        WorkRef workRef = insurerRef(quoteId, "alpha");
+        Task task = newTask();
+        dispatch.handleRequest(insurerRequest(quoteId, task), null);
+        String eventId = QuoteFixtures.insurerResultEventId(workRef.value());
+        String body = QuoteFixtures.insurerResult(workRef.value(), quoteId, "alpha", "QUOTED", eventId);
+        sqs.sendMessage(builder -> builder.queueUrl(resultsQueueUrl).messageBody(body));
+        // NOTE: o consumidor falha sem apagar; o recebimento seguinte passa do maxReceiveCount e a RedrivePolicy move
+        await().atMost(Duration.ofSeconds(30)).pollInterval(Duration.ofSeconds(1)).until(() -> {
+            sqs.receiveMessage(builder -> builder.queueUrl(resultsQueueUrl).maxNumberOfMessages(10).waitTimeSeconds(0));
+            return visibleMessages(deadLetterQueueUrl) > 0;
+        });
+
+        assertThat(deadLetters.reprocess(Instant.now()).get("redriven")).isPositive();
+
+        Message redriven = await().atMost(Duration.ofSeconds(15)).until(() -> sqs.receiveMessage(builder -> builder
+                .queueUrl(resultsQueueUrl).maxNumberOfMessages(1).waitTimeSeconds(1).messageAttributeNames("All"))
+                .messages().stream().findFirst().orElse(null), message -> message != null);
+        assertThat(redriven.body()).isEqualTo(body);
+        assertThat(redriven.messageAttributes().get("dlqAttempt").stringValue()).isEqualTo("2");
+        assertThat(resume.handleRequest(QuoteFixtures.sqs(redriven.body()), null).batchItemFailures()).isEmpty();
+        sqs.deleteMessage(builder -> builder.queueUrl(resultsQueueUrl).receiptHandle(redriven.receiptHandle()));
+        assertThat(succeededOutput(task).get("status").asText()).isEqualTo("QUOTED");
+        assertThat(resumer.handle(body)).as("reprocessed again").isEqualTo(ResultResumer.Disposition.DISCARDED);
+        assertThat(offers(quoteId)).hasSize(1);
+        assertThat(outboxOf(quoteId, QuoteEvents.INSURER_QUOTE_REQUESTED)).as("no new external call").hasSize(1);
+
+        sqs.sendMessage(builder -> builder.queueUrl(deadLetterQueueUrl).messageBody(body)
+                .messageAttributes(Map.of("dlqAttempt", MessageAttributeValue.builder().dataType("Number")
+                        .stringValue("3").build())));
+        assertThat(deadLetters.reprocess(Instant.now()).get("discarded")).isPositive();
+        Map<String, AttributeValue> deadLetter = issue(QuoteIssues.Type.DEAD_LETTER, eventId);
+        assertThat(deadLetter.get("quoteId").s()).isEqualTo(quoteId);
+        assertThat(deadLetter.get("queryId").s()).isEqualTo(QuoteFixtures.providerQueryId(workRef.value()));
+        assertThat(deadLetter.get("organizationId").s()).isEqualTo("org-acme");
+        assertThat(deadLetter.get("safeSummary").s()).contains("tentativa 3").doesNotContain("2450.90");
+        assertThat(visibleMessages(deadLetterQueueUrl)).isZero();
+    }
+
+    @Test
+    void t31_resultReprocessedAfterTheVersionDeadlineGoesBackToTheResumeAndIsKeptAsLate() throws Exception {
+        String quoteId = quoteReadyToQuote(Usage.COMMERCIAL);
+        WorkRef workRef = insurerRef(quoteId, "alpha");
+        Task task = newTask();
+        dispatch.handleRequest(insurerRequest(quoteId, task), null);
+        steps.handleRequest(new StepRequest("record-insurer-outcome", quoteId, 1, "alpha", "TIMED_OUT",
+                objectMapper.readTree("{\"Error\":\"States.Timeout\",\"Cause\":\"\"}")), null);
+        step("consolidate", quoteId);
+        sfn.stopExecution(builder -> builder.executionArn(task.executionArn()));
+        dynamoDb.updateItem(builder -> builder.tableName(FlociResource.TABLE)
+                .key(Map.of("pk", AttributeValue.fromS(QuoteKeys.quotePk(quoteId)), "sk", AttributeValue.fromS("V#0001")))
+                .updateExpression("SET deadlineAt = :past")
+                .expressionAttributeValues(Map.of(":past", AttributeValue.fromS(Instant.now().minusSeconds(60)
+                        .toString()))));
+        String eventId = QuoteFixtures.insurerResultEventId(workRef.value());
+        String body = QuoteFixtures.insurerResult(workRef.value(), quoteId, "alpha", "QUOTED", eventId);
+        sqs.sendMessage(builder -> builder.queueUrl(deadLetterQueueUrl).messageBody(body));
+
+        assertThat(deadLetters.reprocess(Instant.now()).get("redriven")).as("the version deadline does not count")
+                .isPositive();
+
+        Message redriven = await().atMost(Duration.ofSeconds(15)).until(() -> sqs.receiveMessage(builder -> builder
+                .queueUrl(resultsQueueUrl).maxNumberOfMessages(1).waitTimeSeconds(1).messageAttributeNames("All"))
+                .messages().stream().filter(message -> message.body().equals(body)).findFirst().orElse(null),
+                message -> message != null);
+        assertThat(redriven.messageAttributes().get("dlqAttempt").stringValue()).isEqualTo("2");
+        assertThat(resume.handleRequest(QuoteFixtures.sqs(redriven.body()), null).batchItemFailures()).isEmpty();
+        sqs.deleteMessage(builder -> builder.queueUrl(resultsQueueUrl).receiptHandle(redriven.receiptHandle()));
+        assertThat(lateItems(quoteId)).singleElement().satisfies(late -> {
+            assertThat(late.get("reason").s()).isEqualTo("LATE");
+            assertThat(late.get("eventId").s()).isEqualTo(eventId);
+        });
+        assertThat(issue(QuoteIssues.Type.DEAD_LETTER, eventId)).isNull();
+        assertThat(resumer.handle(body)).as("reprocessed again").isEqualTo(ResultResumer.Disposition.DISCARDED);
+        assertThat(lateItems(quoteId)).hasSize(1);
+        assertThat(outboxOf(quoteId, QuoteEvents.INSURER_QUOTE_REQUESTED)).as("no new external call").hasSize(1);
+    }
+
+    @Test
+    void reconcilerRunsEveryDutyAndReportsIt() {
+        Map<String, Object> report = reconciler.handleRequest(Map.of("source", "test"), null);
+
+        assertThat(report).containsKeys("republished", "resumed", "versions", "expiredTasks", "deadLetters",
+                "outboxPendingAgeSeconds");
+        assertThat(report.keySet()).noneMatch(key -> key.endsWith("Error"));
+    }
+
+    /** Execução encerrada no estado pedido, gravada como a execução da versão 1. */
+    private void attachExecution(String quoteId, String machineArn, ExecutionStatus expected) {
+        String executionArn = sfn.startExecution(builder -> builder.stateMachineArn(machineArn)
+                .name(QuoteKeys.executionName(quoteId, 1)).input("{}")).executionArn();
+        if (expected == ExecutionStatus.ABORTED) {
+            sfn.stopExecution(builder -> builder.executionArn(executionArn));
+        }
+        await().atMost(Duration.ofSeconds(20)).until(() ->
+                sfn.describeExecution(builder -> builder.executionArn(executionArn)).status() == expected);
+        dynamoDb.updateItem(builder -> builder.tableName(FlociResource.TABLE)
+                .key(Map.of("pk", AttributeValue.fromS(QuoteKeys.quotePk(quoteId)), "sk", AttributeValue.fromS("V#0001")))
+                .updateExpression("SET executionArn = :arn")
+                .expressionAttributeValues(Map.of(":arn", AttributeValue.fromS(executionArn))));
+    }
+
+    /** Step Functions que não responde, como o {@code resume} que cai depois do commit e antes da retomada. */
+    private static SfnClient unreachableSfn() {
+        return (SfnClient) Proxy.newProxyInstance(SfnClient.class.getClassLoader(), new Class<?>[] {SfnClient.class},
+                (proxy, method, args) -> {
+                    if ("sendTaskSuccess".equals(method.getName())) {
+                        throw SdkClientException.create("connection reset after the commit");
+                    }
+                    throw new UnsupportedOperationException(method.getName());
+                });
+    }
+
+    private int visibleMessages(String queueUrl) {
+        return Integer.parseInt(sqs.getQueueAttributes(builder -> builder.queueUrl(queueUrl)
+                .attributeNames(QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES))
+                .attributes().get(QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES));
+    }
+
+    private Map<String, AttributeValue> issue(QuoteIssues.Type type, String target) {
+        return item(QuoteKeys.issuePk(QuoteIssues.issueId(type, target)), "META");
     }
 
     private String newQuote(Usage usage, int year, boolean salvage, String licenseDate) throws Exception {
