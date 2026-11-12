@@ -1,0 +1,18 @@
+spring:
+  jackson:
+    # WHY: o serverless-java-container 3.x traz o Afterburner, que a descoberta automática registraria no
+    # mapper da aplicação; ele não otimiza records e avisa a cada classe
+    find-and-add-modules: false
+    # O InsurerResultRecorded sai igual ao dos workers: campos opcionais ausentes, não nulos (AsyncAPI)
+    default-property-inclusion: non_null
+
+callbacks:
+  table-name: ${TABLE_NAME}
+  payloads-bucket: ${PAYLOADS_BUCKET}
+  callback-secret-id: ${CALLBACK_SECRET_ID}
+  providers: beta
+
+mmda:
+  aws:
+    s3:
+      path-style-access: ${S3_PATH_STYLE_ACCESS:false}

@@ -1,0 +1,298 @@
+openapi: 3.1.0
+info:
+  title: provider-solution API de callbacks
+  version: 0.1.0
+  description: |
+    API HTTP da `provider-solution`, em Spring MVC: recebe os callbacks das seguradoras assíncronas, como a
+    `beta` simulada. O desenho está em `docs/quotation-platform.md` (§5 e §8); o resultado gravado vira o evento
+    `InsurerResultRecorded`, descrito em `docs/events/provider-solution.asyncapi.yaml`.
+
+    O corpo é assinado pelo fornecedor com o segredo `provider-solution/{stage}/callback-secret`: o cabeçalho
+    `X-Signature` é `sha256=` seguido do hexadecimal minúsculo do HMAC-SHA256 dos bytes exatos do corpo. A API
+    confere a assinatura antes de ler ou gravar qualquer coisa. O simulador envia o corpo só com caracteres
+    ASCII, com o restante escapado em JSON (`\u00E3` no lugar de `ã`), para os bytes assinados chegarem iguais.
+
+    O callback é guardado na inbox (`INBOX#<provider>#<externalEventId>`) com escrita condicional, então um
+    callback repetido, com o mesmo `externalEventId`, é reconhecido e não grava um segundo resultado. Com
+    `clientReference`, a API encontra a consulta e grava o resultado. Só com `providerRequestId`, o callback
+    espera na inbox até o worker gravar a resposta `202` da seguradora; quem enxergar as duas metades do
+    encontro no `CORR#<provider>#<providerRequestId>` grava o resultado.
+
+    O `result` tem o formato da resposta síncrona da seguradora e a mesma classificação: `OFFER` vira
+    `QUOTED`, `DECLINED` vira `DECLINED`, `PENDING_INFORMATION` vira `NEEDS_INFORMATION`, e um resultado
+    ilegível vira `UNAVAILABLE` com `INVALID_PROVIDER_RESPONSE`. A API valida só o envelope: um `result`
+    presente, mas fora do schema `InsurerResult` (um campo com tipo JSON errado, por exemplo), é guardado na
+    inbox e classificado como ilegível, nunca recusado com `400`.
+servers:
+  - url: http://localhost:4566/restapis/{apiId}/local/_user_request_
+    description: API Gateway no Floci, stage local
+    variables:
+      apiId:
+        default: replace-with-api-id
+        description: >-
+          Id da API REST da stack. Obtenha com
+          `aws --endpoint-url http://localhost:4566 apigateway get-rest-apis --query "items[?name=='local-provider-solution'].id" --output text`.
+tags:
+  - name: callbacks
+    description: Resultados de seguradoras entregues por callback
+paths:
+  /v1/providers/{provider}/callbacks:
+    post:
+      tags:
+        - callbacks
+      operationId: receiveInsurerCallback
+      summary: Recebe o resultado de uma seguradora assíncrona
+      description: |
+        Responde `200` quando o resultado do callback já está gravado, inclusive na repetição de um callback
+        processado, e `202` quando ele ficou na inbox à espera do encontro no `CORR#`. A consulta já concluída,
+        por outro callback ou pela reconciliação, só marca o callback como processado, sem novo resultado. O
+        fornecedor reenvia o mesmo callback quando recebe `503` ou não recebe resposta.
+      security:
+        - callbackSignature: []
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          description: Seguradora que entrega por callback.
+          schema:
+            type: string
+            enum:
+              - beta
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InsurerCallback'
+            examples:
+              offer:
+                summary: Oferta, com o clientReference (capturada no Floci)
+                value:
+                  externalEventId: bev-fe7bb0a0-b97a-45c2-a09e-8a833a573277
+                  providerRequestId: beta-365b9edf-6395-495e-989b-f0a5ea27009e
+                  clientReference: q_4a8fc925121ecc4ed1f65738ea1e9423
+                  sentAt: '2026-11-12T01:39:54.631Z'
+                  result:
+                    outcome: OFFER
+                    offerNumber: BETA-095D0858
+                    insurerName: Beta Seguros
+                    premium:
+                      currency: BRL
+                      total: '2481.46'
+                    paymentOptions:
+                      - installments: 1
+                        installmentAmount: '2481.46'
+                      - installments: 12
+                        installmentAmount: '206.79'
+                    coverages:
+                      - description: Colisão, incêndio e roubo
+                        limit: '75000.00'
+                        code: COLLISION
+                      - description: Danos materiais a terceiros
+                        limit: '150000.00'
+                        code: THIRD_PARTY_PROPERTY
+                      - description: Danos corporais a terceiros
+                        limit: '300000.00'
+                        code: THIRD_PARTY_BODILY
+                    deductibles:
+                      - amount: '3000.00'
+                        coverage: COLLISION
+                    expiresAt: '2026-11-12T02:09:50.786Z'
+              early:
+                summary: Recusa entregue só com o providerRequestId
+                value:
+                  externalEventId: bev-2a3b4c5d-6e7f-4a8b-9c0d-1e2f3a4b5c6d
+                  providerRequestId: beta-7d1c2b3a-4e5f-4a6b-8c7d-9e0f1a2b3c4d
+                  sentAt: '2026-11-11T19:31:17.400Z'
+                  result:
+                    outcome: DECLINED
+                    declineCode: RISK_NOT_ACCEPTED
+      responses:
+        '200':
+          description: Resultado gravado, agora ou numa entrega anterior do mesmo callback.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CallbackReceipt'
+        '202':
+          description: Callback guardado na inbox, à espera da metade do worker no `CORR#`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CallbackReceipt'
+        '400':
+          description: >-
+            Envelope assinado, mas fora do formato do callback: corpo que não é um objeto JSON,
+            `externalEventId`, `providerRequestId` ou `clientReference` fora do padrão, sem nenhum dos dois
+            identificadores ou sem `result`. Nada é gravado, e reenviar o mesmo corpo não muda a resposta.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Assinatura ausente ou que não confere com o corpo. Nada é gravado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Provedor que não entrega por callback.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: >-
+            Corpo assinado com mais de 262144 bytes (256 KiB), que não cabe no item da inbox. Nada é gravado, e
+            reenviar o mesmo corpo não muda a resposta.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '415':
+          description: Corpo que não é `application/json`.
+        '503':
+          description: Falha transitória da AWS; o mesmo callback deve ser reenviado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  securitySchemes:
+    callbackSignature:
+      type: apiKey
+      in: header
+      name: X-Signature
+      description: |
+        `sha256=<hex do HMAC-SHA256 do corpo>` (`^sha256=[0-9a-f]{64}$`), com o segredo
+        `provider-solution/{stage}/callback-secret` como chave. Não é uma chave fixa: muda a cada corpo.
+  schemas:
+    InsurerCallback:
+      type: object
+      required:
+        - externalEventId
+        - result
+      description: Pelo menos um de `providerRequestId` e `clientReference` é obrigatório.
+      properties:
+        externalEventId:
+          type: string
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'
+          description: Identidade do callback no fornecedor; a reentrega repete o mesmo valor.
+        providerRequestId:
+          type: string
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'
+          description: Identificador devolvido pela seguradora na resposta `202`.
+        clientReference:
+          type: string
+          pattern: '^q_[0-9a-f]{32}$'
+          description: O `queryId` que a provider enviou no pedido, quando o fornecedor o devolve.
+        sentAt:
+          type: string
+          format: date-time
+        result:
+          $ref: '#/components/schemas/InsurerResult'
+    InsurerResult:
+      type: object
+      required:
+        - outcome
+      description: |
+        Mesmo formato da resposta síncrona da seguradora. `OFFER` exige `offerNumber`, `insurerName`,
+        `premium` e `expiresAt`; `PENDING_INFORMATION` exige `pendingFields`. Valores monetários são strings
+        decimais (`^\d+(\.\d+)?$`); um valor fora do formato torna o resultado ilegível.
+      properties:
+        outcome:
+          type: string
+          enum:
+            - OFFER
+            - DECLINED
+            - PENDING_INFORMATION
+        offerNumber:
+          type: string
+        insurerName:
+          type: string
+        premium:
+          type: object
+          properties:
+            total:
+              type: string
+            currency:
+              type: string
+        paymentOptions:
+          type: array
+          items:
+            type: object
+            properties:
+              installments:
+                type: integer
+              installmentAmount:
+                type: string
+        coverages:
+          type: array
+          items:
+            type: object
+            properties:
+              code:
+                type: string
+              description:
+                type: string
+              limit:
+                type: string
+        deductibles:
+          type: array
+          items:
+            type: object
+            properties:
+              coverage:
+                type: string
+              amount:
+                type: string
+        expiresAt:
+          type: string
+          format: date-time
+        declineCode:
+          type: string
+        pendingFields:
+          type: array
+          items:
+            type: object
+            required:
+              - field
+              - code
+            properties:
+              field:
+                type: string
+                description: Caminho relativo ao snapshot, como `risk.principalDriver.licenseDate`.
+              code:
+                type: string
+    CallbackReceipt:
+      type: object
+      required:
+        - externalEventId
+        - processingStatus
+        - duplicate
+      properties:
+        externalEventId:
+          type: string
+        processingStatus:
+          type: string
+          enum:
+            - RECEIVED
+            - PROCESSED
+        duplicate:
+          type: boolean
+          description: O `externalEventId` já estava na inbox.
+    Error:
+      type: object
+      required:
+        - code
+      properties:
+        code:
+          type: string
+          enum:
+            - INVALID_SIGNATURE
+            - UNKNOWN_PROVIDER
+            - INVALID_CALLBACK
+            - CALLBACK_TOO_LARGE
+            - SERVICE_UNAVAILABLE
+        message:
+          type: string

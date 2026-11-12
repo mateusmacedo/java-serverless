@@ -14,6 +14,7 @@ import com.mmda.serverless.quote.domain.QuoteKeys;
 import com.mmda.serverless.quote.domain.ReuseDecision;
 import com.mmda.serverless.quote.domain.WorkRef;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -31,9 +32,9 @@ import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 
 /**
  * A quote consome os eventos da provider-solution como o {@code docs/events/provider-solution.asyncapi.yaml}
- * os documenta; a provider confere esses exemplos contra o próprio código. Cada campo que o {@code resume} e
- * a consolidação leem precisa estar no exemplo, com o tipo que a quote espera, e cada exemplo de
- * {@code EnrichmentResolved} passa pelo {@code resume}, com DynamoDB simulado, até a evidência usada pela versão.
+ * os documenta, e a provider confere esses exemplos contra o próprio código. Cada exemplo passa pelo
+ * {@code resume}, com DynamoDB simulado, até a evidência usada pela versão ou o resultado e a oferta da
+ * seguradora, alpha ou beta.
  */
 class ProviderEventsConsumptionTest {
 
@@ -133,6 +134,60 @@ class ProviderEventsConsumptionTest {
             quoted++;
         }
         assertThat(quoted).isPositive();
+    }
+
+    /**
+     * A alpha responde na chamada e a beta por callback, mas as duas publicam o mesmo contrato: cada exemplo passa
+     * pelo {@code resume} até o {@code RESULT} da sua seguradora e, com {@code QUOTED}, até a {@code OFFER}.
+     */
+    @Test
+    void insurerResultRecordedExamplesOfEveryInsurerBecomeTheirResultAndOffer() {
+        Set<String> insurers = new HashSet<>();
+        for (JsonNode example : asyncApi.at("/components/messages/" + QuoteEvents.INSURER_RESULT_RECORDED + "/examples")) {
+            JsonNode detail = example.at("/payload/detail");
+            String name = example.path("name").asText();
+            String insurerId = detail.path("insurerId").asText();
+            insurers.add(insurerId);
+            String quoteId = detail.path("quoteId").asText();
+            int version = detail.path("version").asInt();
+            WorkRef workRef = new WorkRef(detail.path("workRef").asText());
+            ResumeProbe probe = new ResumeProbe(workRef, WorkRef.Kind.INSURER, insurerId, quoteId, version,
+                    ResumeProbe.NOW.plusSeconds(20));
+
+            assertThat(probe.resume(example.path("payload").toString()))
+                    .as("example %s", name).isEqualTo(ResultResumer.Disposition.RESUMED);
+
+            String status = detail.path("status").asText();
+            Map<String, AttributeValue> values = probe.update(QuoteKeys.quotePk(quoteId),
+                    QuoteKeys.resultSk(version, insurerId)).expressionAttributeValues();
+            assertThat(values.get(":status").s()).as(name).isEqualTo(status);
+            assertThat(probe.resumePayload().get("status").asText()).isEqualTo(status);
+            assertThat(probe.put(QuoteKeys.TYPE_CONSUMED).get(QuoteKeys.PK).s())
+                    .isEqualTo(QuoteKeys.consumedPk(detail.path("eventId").asText()));
+            for (MissingField field : readMissingFields(values.get(":missing").s())) {
+                assertThat(MissingFieldLabels.labelOf(field.path())).as(field.path()).isNotEqualTo(field.path());
+            }
+            if (!InsurerStatus.QUOTED.name().equals(status)) {
+                assertThat(probe.puts(QuoteKeys.TYPE_OFFER)).as(name).isEmpty();
+                continue;
+            }
+            Map<String, AttributeValue> offer = probe.put(QuoteKeys.TYPE_OFFER);
+            assertThat(offer.get("offerId").s()).isEqualTo(QuoteKeys.offerId(workRef));
+            assertThat(offer.get(QuoteKeys.SK).s()).isEqualTo(QuoteKeys.offerSk(version, QuoteKeys.offerId(workRef)));
+            assertThat(offer.get("insurerId").s()).isEqualTo(insurerId);
+            assertThat(offer.get("insurerName").s()).isEqualTo(Insurers.nameOf(insurerId).orElseThrow());
+            assertThat(offer.get("queryId").s()).isEqualTo(detail.path("queryId").asText());
+            assertThat(probe.resumePayload().get("offerId").asText()).isEqualTo(QuoteKeys.offerId(workRef));
+        }
+        assertThat(insurers).as("alpha and beta publish the same contract").containsExactlyInAnyOrderElementsOf(Insurers.all());
+    }
+
+    private static List<MissingField> readMissingFields(String json) {
+        try {
+            return List.of(MAPPER.readValue(json, MissingField[].class));
+        } catch (IOException exception) {
+            throw new UncheckedIOException(exception);
+        }
     }
 
     private static JsonNode present(JsonNode node, String field) {

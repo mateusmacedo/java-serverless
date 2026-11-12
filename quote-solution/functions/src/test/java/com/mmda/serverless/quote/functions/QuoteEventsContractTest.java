@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mmda.serverless.quote.domain.Hashes;
+import com.mmda.serverless.quote.domain.Insurers;
 import com.mmda.serverless.quote.domain.Outcome;
 import com.mmda.serverless.quote.domain.OutcomeReason;
 import com.mmda.serverless.quote.domain.QuoteEvents;
@@ -58,8 +59,7 @@ class QuoteEventsContractTest {
     }
 
     @Test
-    void insurerQuoteRequestedFollowsTheContract() {
-        WorkRef workRef = WorkRef.of(QUOTE_ID, 1, WorkRef.Kind.INSURER, "alpha");
+    void insurerQuoteRequestedFollowsTheContractForEveryInsurer() {
         Map<String, Object> enrichment = new LinkedHashMap<>();
         enrichment.put("evidenceId", "ev_a8e049d6bebff920a7afb8424c8410df");
         enrichment.put("queryId", "q_6d1f1a54bd4666ed04f96f9a63b420ea");
@@ -67,8 +67,12 @@ class QuoteEventsContractTest {
         enrichment.put("resultType", "FOUND");
         enrichment.put("result", Map.of("vehicle", Map.of("year", 2021)));
 
-        assertValid("InsurerQuoteRequestedDetail", QuoteEvents.insurerQuoteRequested(NOW, workRef, "org-acme", QUOTE_ID,
-                1, "alpha", QuoteFixtures.snapshot(Usage.PERSONAL, 2021, false, null), enrichment, NOW.plusSeconds(20)));
+        for (String insurerId : Insurers.all()) {
+            WorkRef workRef = WorkRef.of(QUOTE_ID, 1, WorkRef.Kind.INSURER, insurerId);
+            assertValid("InsurerQuoteRequestedDetail", QuoteEvents.insurerQuoteRequested(NOW, workRef, "org-acme",
+                    QUOTE_ID, 1, insurerId, QuoteFixtures.snapshot(Usage.PERSONAL, 2021, false, null), enrichment,
+                    NOW.plusSeconds(20)));
+        }
     }
 
     @Test

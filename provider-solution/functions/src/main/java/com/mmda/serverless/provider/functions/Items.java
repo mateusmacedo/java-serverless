@@ -30,10 +30,13 @@ final class Items {
     static final String TYPE_REUSE = "REUSE";
     static final String TYPE_INFLIGHT = "INFLIGHT";
     static final String TYPE_FOLLOWER = "FOLLOWER";
+    static final String TYPE_INBOX = "INBOX";
+    static final String TYPE_CORRELATION = "CORRELATION";
 
     static final String QUERY_IN_FLIGHT = "QUERY_IN_FLIGHT";
     static final String QUERY_UNKNOWN = "QUERY_UNKNOWN";
     static final String OUTBOX_PENDING = "OUTBOX_PENDING";
+    static final String INBOX_RECEIVED = "INBOX_RECEIVED";
 
     private Items() {
     }
@@ -76,6 +79,14 @@ final class Items {
 
     static String consumedPk(String eventId) {
         return "CONSUMED#" + eventId;
+    }
+
+    static String inboxPk(String provider, String externalEventId) {
+        return "INBOX#" + provider + "#" + externalEventId;
+    }
+
+    static String correlationPk(String provider, String providerRequestId) {
+        return "CORR#" + provider + "#" + providerRequestId;
     }
 
     static Map<String, AttributeValue> key(String pk, String sk) {

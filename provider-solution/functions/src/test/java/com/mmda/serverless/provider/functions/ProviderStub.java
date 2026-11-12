@@ -23,7 +23,9 @@ import tools.jackson.databind.json.JsonMapper;
  * mais que o timeout HTTP dos testes, para simular resposta perdida depois do envio. Uma chamada retida por
  * {@link #hold(String)} só responde quando o teste solta, como um fornecedor lento; a retenção que vence sozinha
  * fica em {@link #expiredHolds()}, para o teste distinguir a soltura dele da expiração. O
- * {@code vehicle-observed-ahead} responde com o {@code observedAt} duas horas à frente do relógio.
+ * {@code vehicle-observed-ahead} responde com o {@code observedAt} duas horas à frente do relógio. A seguradora
+ * {@code beta} responde {@code 202} com o {@code providerRequestId} de {@link #betaRequestId(String)}; o resultado
+ * dela chega por callback, que os testes entregam pelo código da API de callbacks.
  */
 final class ProviderStub {
 
@@ -46,6 +48,7 @@ final class ProviderStub {
     private final Map<String, AtomicInteger> enrichmentCallsByVehicle = new ConcurrentHashMap<>();
     private final Map<String, CountDownLatch> holds = new ConcurrentHashMap<>();
     private final Set<String> expiredHolds = ConcurrentHashMap.newKeySet();
+    private final Map<String, Runnable> beforeAnswering = new ConcurrentHashMap<>();
 
     private ProviderStub(HttpServer server) {
         this.server = server;
@@ -63,6 +66,10 @@ final class ProviderStub {
         } catch (IOException exception) {
             throw new IllegalStateException(exception);
         }
+    }
+
+    static String betaRequestId(String clientReference) {
+        return "beta-" + clientReference;
     }
 
     String baseUrl() {
@@ -89,6 +96,14 @@ final class ProviderStub {
         CountDownLatch release = new CountDownLatch(1);
         holds.put(key, release);
         return release;
+    }
+
+    /**
+     * Roda a ação uma vez, durante a chamada da seguradora para a consulta e antes da resposta, como um callback
+     * que chega enquanto o worker ainda espera o {@code 202}.
+     */
+    void beforeAnswering(String clientReference, Runnable action) {
+        beforeAnswering.put(clientReference, action);
     }
 
     /** Chaves cuja retenção venceu por {@link #MAX_HOLD} antes de o teste soltar. */
@@ -131,6 +146,15 @@ final class ProviderStub {
         String reference = request.path("clientReference").asString();
         calls.computeIfAbsent(reference, key -> new AtomicInteger()).incrementAndGet();
         String vehicle = request.path("risk").path("vehicle").path("ref").asString();
+        Runnable action = beforeAnswering.remove(reference);
+        if (action != null) {
+            action.run();
+        }
+        if (exchange.getRequestURI().getPath().startsWith("/sim/insurers/beta/")) {
+            respond(exchange, 202, "{\"clientReference\":\"%s\",\"providerRequestId\":\"%s\",\"status\":\"PROCESSING\"}"
+                    .formatted(reference, betaRequestId(reference)));
+            return;
+        }
         switch (vehicle) {
             case VEHICLE_ALPHA_DOWN -> respond(exchange, 503, "{\"code\":\"TEMPORARILY_UNAVAILABLE\"}");
             case VEHICLE_ALPHA_DECLINES -> respond(exchange, 200,

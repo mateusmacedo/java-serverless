@@ -78,6 +78,20 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- WHY: o encontro no CORR# é testado com o código real das duas metades, a da API e a do worker;
+             só as classes da API entram, sem a pilha web dela -->
+        <dependency>
+            <groupId>com.mmda.serverless</groupId>
+            <artifactId>provider-api</artifactId>
+            <version>${project.version}</version>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
         <dependency>
             <groupId>io.floci</groupId>
             <artifactId>testcontainers-floci-aws</artifactId>

@@ -1,7 +1,7 @@
 asyncapi: 3.1.0
 info:
   title: provider-solution eventos
-  version: 0.2.0
+  version: 0.3.0
   description: |
     Eventos que a `provider-solution`, em Spring, publica no barramento da plataforma
     `platform-{stage}-events` ([ADR 0013](../decisions/0013-barramento-da-plataforma.md)), com
@@ -32,9 +32,18 @@ info:
     enriquecimento, pelo registro de consumo com a chave UUIDv5 do `workRef` (o `eventId` que o contrato da quote
     atribui ao pedido), que cobre também os pedidos sem consulta própria (`HIT` e `JOIN`).
 
+    Na seguradora assíncrona `beta`, a resposta `202` só traz o `providerRequestId`, e o resultado chega por
+    callback na API da provider (`POST /v1/providers/{provider}/callbacks`, em
+    `docs/api/provider-solution.openapi.yaml`). O `InsurerResultRecorded` da beta é gravado por quem conclui o
+    callback, a API ou o `insurerWorker` no encontro do `CORR#`, na mesma transação que passa o callback da inbox
+    para processado e grava o registro de consumo do pedido; o formato e o `eventId` são os da seguradora
+    síncrona.
+
     Os exemplos foram capturados no Floci, stage `local`, com pedidos publicados à mão no barramento. Os
     exemplos `hit` e `join` do `EnrichmentResolved` reutilizam a evidência do exemplo `found`, com os
-    identificadores calculados pelas regras acima.
+    identificadores calculados pelas regras acima. Nos exemplos da beta, o callback foi capturado no Floci
+    (simulador, `simCallbackSender` e API de callbacks) para uma cotação calculada pelas regras acima, e o evento
+    foi derivado dele pela classificação, sem publicar no barramento pedidos de cotações inexistentes.
 channels:
   platformEvents:
     address: platform-{stage}-events
@@ -86,9 +95,12 @@ operations:
     title: O insurerWorker cota numa seguradora
     description: |
       A regra entrega o envelope na fila `insurer-requests`. Antes do HTTP o worker grava a consulta, a
-      tentativa e o débito da quota; depois, a evidência e o `InsurerResultRecorded`. Uma reentrega relê a
-      consulta e nunca repete uma chamada que pode ter chegado à seguradora: sem resposta, a consulta fica
-      `UNKNOWN` para a reconciliação (M4) e nenhum evento é publicado.
+      tentativa e o débito da quota; depois, a evidência e o `InsurerResultRecorded`. Na resposta `202` da
+      seguradora assíncrona, grava o `providerRequestId` na consulta e na tentativa e faz a sua metade do
+      encontro no `CORR#`; o resultado vem do callback. Uma reentrega relê a consulta e nunca repete uma chamada
+      que pode ter chegado à seguradora: com `providerRequestId`, refaz a metade do encontro; sem resposta, a
+      consulta fica `UNKNOWN` para a reconciliação (M4) e nenhum evento é publicado. A quota de cada provedor é
+      comum a todos os workflows (T21).
     channel:
       $ref: '#/channels/platformEvents'
     messages:
@@ -322,21 +334,62 @@ components:
               attemptRef: q_e78a017eb6ded3ddbfe8ab5d4add877b#0001
               status: DECLINED
               reasonCode: RISK_NOT_ACCEPTED
-        - name: needs-information
-          summary: Formato do resultado da seguradora assíncrona beta (M3); sem captura no M1.
+        - name: quoted-by-callback
+          summary: Oferta da seguradora assíncrona beta, gravada a partir do callback.
           payload:
             source: mmda.provider
             detail-type: InsurerResultRecorded
             detail:
-              eventId: f4d7c4ae-160a-522a-8b05-f50415b14e0f
-              occurredAt: '2026-11-11T19:31:20.000Z'
+              eventId: 0fb0f427-12ff-53f0-bee1-51e88b60f9a2
+              occurredAt: '2026-11-12T01:39:54.702Z'
               schemaVersion: '1'
-              workRef: wr_d6a7cf1cea007eb1232d01f4c9226801
-              quoteId: quote-1
+              workRef: wr_ac8e54d6b2b4ad11d353fe20a102c5f8
+              quoteId: m3chk-659717-vehicle-hatch-2021
               version: 1
               insurerId: beta
-              queryId: q_f41698b41124419452df5cd6e35b87d1
-              attemptRef: q_f41698b41124419452df5cd6e35b87d1#0001
+              queryId: q_4a8fc925121ecc4ed1f65738ea1e9423
+              attemptRef: q_4a8fc925121ecc4ed1f65738ea1e9423#0001
+              status: QUOTED
+              offer:
+                externalOfferId: BETA-095D0858
+                insurerName: Beta Seguros
+                premiumTotal: '2481.46'
+                currency: BRL
+                installments:
+                  - count: 1
+                    amount: '2481.46'
+                  - count: 12
+                    amount: '206.79'
+                coverages:
+                  - code: COLLISION
+                    label: Colisão, incêndio e roubo
+                    insuredAmount: '75000.00'
+                  - code: THIRD_PARTY_PROPERTY
+                    label: Danos materiais a terceiros
+                    insuredAmount: '150000.00'
+                  - code: THIRD_PARTY_BODILY
+                    label: Danos corporais a terceiros
+                    insuredAmount: '300000.00'
+                deductibles:
+                  - coverageCode: COLLISION
+                    amount: '3000.00'
+                validUntil: '2026-11-12T02:09:50.786Z'
+                rawResponseRef: raw/q_4a8fc925121ecc4ed1f65738ea1e9423/callback-bev-fe7bb0a0-b97a-45c2-a09e-8a833a573277.json
+        - name: needs-information
+          summary: Pendência de dados da seguradora assíncrona beta (`vehicle-beta-needs-info`), por callback.
+          payload:
+            source: mmda.provider
+            detail-type: InsurerResultRecorded
+            detail:
+              eventId: 60451a71-e7c9-5e95-a4dd-6ebe1efb4b4d
+              occurredAt: '2026-11-12T01:39:56.701Z'
+              schemaVersion: '1'
+              workRef: wr_750f79a5c5738b471698ecd8c0df4ec8
+              quoteId: m3chk-659717-vehicle-beta-needs-info
+              version: 1
+              insurerId: beta
+              queryId: q_b557d94f2294531948d16e0b7a57f431
+              attemptRef: q_b557d94f2294531948d16e0b7a57f431#0001
               status: NEEDS_INFORMATION
               reasonCode: INSURER_NEEDS_INFORMATION
               missingFields:

@@ -2,6 +2,7 @@ package com.mmda.serverless.quote.functions;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.mmda.serverless.quote.domain.Insurers;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -22,9 +23,9 @@ import org.yaml.snakeyaml.nodes.ScalarNode;
 import org.yaml.snakeyaml.nodes.SequenceNode;
 
 /**
- * Teste de configuração do M1 (§9 e §13 do desenho) sobre o {@code serverless.yml} da solução: a invariante
- * de orçamento que substitui o {@code TimeoutSecondsPath}, que o Floci ignora, e a relação visibilidade ×
- * timeout, que a AWS valida no ESM e o Floci não.
+ * Teste de configuração (§6, §9 e §13 do desenho) sobre o {@code serverless.yml} da solução: a invariante
+ * de orçamento que substitui o {@code TimeoutSecondsPath}, que o Floci ignora, com as rodadas do Map de
+ * seguradoras, e a relação visibilidade × timeout, que a AWS valida no ESM e o Floci não.
  */
 class FunctionTimingConfigurationTest {
 
@@ -65,6 +66,53 @@ class FunctionTimingConfigurationTest {
 
         assertThat(resolve(map.get("MaxConcurrency"))).isEqualTo(param("mapConcurrency"));
         assertThat(environment().get("MAX_INSURERS")).isEqualTo("${param:maxInsurers}");
+    }
+
+    @Test
+    void budgetCoversEveryLabInsurerSoNoSelectedInsurerIsCutByTheLimit() {
+        int insurers = Insurers.all().size();
+        int rounds = (int) Math.ceil((double) insurers / param("mapConcurrency"));
+
+        assertThat(param("maxInsurers")).as("sel-1 selects alpha and beta for personal use (T01)")
+                .isGreaterThanOrEqualTo(insurers);
+        assertThat(param("enrichmentTimeoutSeconds") + rounds * param("insurerTimeoutSeconds")
+                + param("stepsMarginSeconds")).isLessThanOrEqualTo(param("quoteDeadlineSeconds"));
+    }
+
+    @Test
+    void quoteInsurersMapDispatchesEachSelectedInsurerAndRecordsItsOwnFailure() {
+        Map<String, Object> states = states(definition());
+        Map<String, Object> map = map(states.get("QuoteInsurers"));
+
+        assertThat(map.get("Type")).isEqualTo("Map");
+        assertThat(map.get("ItemsPath")).isEqualTo("$.selection.insurers");
+        assertThat(map(map.get("ItemSelector"))).containsExactlyInAnyOrderEntriesOf(Map.of(
+                "quoteId.$", "$.quoteId", "version.$", "$.version", "insurerId.$", "$$.Map.Item.Value",
+                "executionArn.$", "$$.Execution.Id"));
+        assertThat(map).as("results stay in DynamoDB (ADR 0014)").containsEntry("ResultPath", null);
+        assertThat(map.get("Next")).isEqualTo("ConsolidateQuote");
+
+        Map<String, Object> processor = map(map.get("ItemProcessor"));
+        Map<String, Object> request = map(states(processor).get(processor.get("StartAt")));
+        assertThat(request.get("Resource")).isEqualTo("arn:aws:states:::lambda:invoke.waitForTaskToken");
+        Map<String, Object> payload = map(map(request.get("Parameters")).get("Payload"));
+        assertThat(payload).containsEntry("kind", "INSURER").containsEntry("insurerId.$", "$.insurerId");
+        List<Object> catches = list(request.get("Catch"));
+        assertThat(catches).extracting(handler -> map(handler).get("ErrorEquals"))
+                .as("States.ALL comes last").containsExactly(List.of("States.Timeout"), List.of("States.ALL"));
+        assertThat(recordedOutcome(processor, catches.get(0))).isEqualTo("TIMED_OUT");
+        assertThat(recordedOutcome(processor, catches.get(1))).isEqualTo("UNAVAILABLE");
+
+        Map<String, Object> hasInsurers = map(states.get("HasInsurers"));
+        assertThat(map(list(hasInsurers.get("Choices")).getFirst()).get("Next")).isEqualTo("QuoteInsurers");
+        assertThat(hasInsurers.get("Default")).as("no applicable insurer (T26)").isEqualTo("ConsolidateQuote");
+    }
+
+    @Test
+    void timeoutsAreStaticBecauseFlociIgnoresTimeoutSecondsPath() {
+        String machine = definition().toString();
+
+        assertThat(machine).doesNotContain("TimeoutSecondsPath", "HeartbeatSecondsPath");
     }
 
     @Test
@@ -132,6 +180,14 @@ class FunctionTimingConfigurationTest {
         Map<String, Object> filter = map(list(stream.get("filterPatterns")).getFirst());
         assertThat(filter.get("eventName")).isEqualTo(List.of("INSERT"));
         assertThat(filter.toString()).contains("OUTBOX");
+    }
+
+    /** {@code outcome} que o passo {@code record-insurer-outcome} do {@code Catch} grava. */
+    private static Object recordedOutcome(Map<String, Object> processor, Object handler) {
+        Map<String, Object> state = map(states(processor).get(map(handler).get("Next")));
+        Map<String, Object> payload = map(map(state.get("Parameters")).get("Payload"));
+        assertThat(payload.get("step")).isEqualTo("record-insurer-outcome");
+        return payload.get("outcome");
     }
 
     private static int functionTimeout(String function) {

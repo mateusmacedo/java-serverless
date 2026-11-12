@@ -1,5 +1,6 @@
 package com.mmda.serverless.quote.domain;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import java.util.List;
 
 /**
@@ -13,6 +14,18 @@ public final class InsurerSelectionRule {
     static final int MIN_VEHICLE_YEAR = 2000;
 
     private InsurerSelectionRule() {
+    }
+
+    /**
+     * Aplica a regra à versão com o perfil da evidência {@code FOUND}: o uso vem do snapshot, que é o pedido, e
+     * o ano do veículo vem do perfil enriquecido ({@code vehicle.year}). Sem o ano no perfil, vale o do snapshot.
+     *
+     * @param enrichedProfile o {@code result} do {@code EnrichmentResolved}, como a evidência usada o guarda
+     */
+    public static InsurerSelection select(QuoteSnapshot snapshot, JsonNode enrichedProfile, int maxInsurers) {
+        JsonNode year = enrichedProfile == null ? null : enrichedProfile.at("/vehicle/year");
+        int vehicleYear = year != null && year.canConvertToInt() ? year.asInt() : snapshot.risk().vehicle().year();
+        return select(snapshot.risk().usage(), vehicleYear, maxInsurers);
     }
 
     /**

@@ -16,6 +16,7 @@ import java.io.UncheckedIOException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -32,7 +33,7 @@ import software.amazon.awssdk.services.dynamodb.model.Update;
 import software.amazon.awssdk.services.sfn.SfnClient;
 
 /**
- * {@link ResultResumer} do enriquecimento sobre DynamoDB e Step Functions simulados: o waiter do pedido fica
+ * {@link ResultResumer} de um pedido sobre DynamoDB e Step Functions simulados: o waiter do pedido fica
  * {@code WAITING}, as transações são aceitas e registradas para conferir o que o {@code resume} grava.
  */
 final class ResumeProbe {
@@ -46,19 +47,27 @@ final class ResumeProbe {
 
     /** Waiter do enriquecimento de {@code quoteId}; {@code expiresAt} vencido leva o resultado a {@code LATE}. */
     ResumeProbe(WorkRef workRef, String quoteId, int version, Instant expiresAt) {
+        this(workRef, WorkRef.Kind.ENRICHMENT, null, quoteId, version, expiresAt);
+    }
+
+    /** Waiter de um pedido do tipo {@code kind}; {@code insurerId} só existe no pedido de seguradora. */
+    ResumeProbe(WorkRef workRef, WorkRef.Kind kind, String insurerId, String quoteId, int version, Instant expiresAt) {
         this.workRef = workRef;
         TokenCipher cipher = new TokenCipher(() -> "token-key");
         resumer = new ResultResumer(new QuoteTable(dynamoDb, new OutboxPublishingTest.TestConfig(), mapper), cipher,
                 mock(SfnClient.class), mapper, Clock.fixed(NOW, ZoneOffset.UTC));
-        Map<String, AttributeValue> waiter = Map.of(
+        Map<String, AttributeValue> waiter = new HashMap<>(Map.of(
                 QuoteKeys.PK, AttributeValue.fromS(QuoteKeys.waiterPk(workRef)),
                 QuoteKeys.SK, AttributeValue.fromS(QuoteKeys.META),
                 "quoteId", AttributeValue.fromS(quoteId),
                 "version", AttributeValue.fromN(Integer.toString(version)),
-                "kind", AttributeValue.fromS(WorkRef.Kind.ENRICHMENT.name()),
+                "kind", AttributeValue.fromS(kind.name()),
                 "status", AttributeValue.fromS("WAITING"),
                 "tokenCiphertext", AttributeValue.fromS(cipher.encrypt("task-token", workRef)),
-                "expiresAt", AttributeValue.fromS(expiresAt.toString()));
+                "expiresAt", AttributeValue.fromS(expiresAt.toString())));
+        if (insurerId != null) {
+            waiter.put("insurerId", AttributeValue.fromS(insurerId));
+        }
         when(dynamoDb.getItem(any(GetItemRequest.class))).thenAnswer(invocation -> {
             GetItemRequest request = invocation.getArgument(0);
             boolean isWaiter = request.key().get(QuoteKeys.PK).s().equals(QuoteKeys.waiterPk(workRef));
@@ -90,6 +99,18 @@ final class ResumeProbe {
         List<Map<String, AttributeValue>> items = puts(type);
         assertThat(items).as("items of type %s", type).hasSize(1);
         return items.getFirst();
+    }
+
+    /** {@code Update} que uma transação aplicou ao item {@code pk}/{@code sk}. */
+    Update update(String pk, String sk) {
+        List<Update> updates = writes().stream()
+                .map(TransactWriteItem::update)
+                .filter(Objects::nonNull)
+                .filter(candidate -> pk.equals(candidate.key().get(QuoteKeys.PK).s())
+                        && sk.equals(candidate.key().get(QuoteKeys.SK).s()))
+                .toList();
+        assertThat(updates).as("updates of %s %s", pk, sk).hasSize(1);
+        return updates.getFirst();
     }
 
     /** {@code resumePayload} que a transação grava no waiter e o {@code SendTaskSuccess} devolve à máquina. */

@@ -409,6 +409,214 @@ class QuoteFunctionsFlociIT {
         sfn.stopExecution(builder -> builder.executionArn(task.executionArn()));
     }
 
+    @Test
+    void t01_twoInsurersQuoteInTheMapAndEveryOfferLinksItsEvidence() throws Exception {
+        String quoteId = quoteReadyToQuote(Usage.PERSONAL);
+        Map<String, AttributeValue> selected = version(quoteId);
+        assertThat(Attr.strings(selected, "selectedInsurers")).containsExactly("alpha", "beta");
+        assertThat(selected.get("selectionRuleVersion").s()).isEqualTo("sel-1");
+        assertThat(selected.get("phase").s()).isEqualTo("QUOTING");
+        for (String insurerId : List.of("alpha", "beta")) {
+            assertThat(result(quoteId, insurerId).get("status").s()).isEqualTo("PENDING");
+        }
+        assertThat(result(quoteId, "beta").get("insurerName").s()).isEqualTo("Beta Seguros");
+
+        Map<String, Task> tasks = dispatchInsurers(quoteId, "alpha", "beta");
+        String enrichmentEvidence = evidence(quoteId, WorkRef.of(quoteId, 1, WorkRef.Kind.ENRICHMENT, null))
+                .get("evidenceId").s();
+        for (String insurerId : List.of("alpha", "beta")) {
+            assertThat(result(quoteId, insurerId).get("status").s()).isEqualTo("PROCESSING");
+            JsonNode request = outboxDetail(insurerRef(quoteId, insurerId).requestEventId());
+            assertThat(request.get("insurerId").asText()).isEqualTo(insurerId);
+            assertThat(request.at("/enrichment/evidenceId").asText()).isEqualTo(enrichmentEvidence);
+        }
+        assertThat(outboxOf(quoteId, QuoteEvents.INSURER_QUOTE_REQUESTED)).hasSize(2);
+
+        for (String insurerId : List.of("beta", "alpha")) {
+            WorkRef workRef = insurerRef(quoteId, insurerId);
+            LambdaEvents.BatchResponse response = resume.handleRequest(QuoteFixtures.sqs(QuoteFixtures.insurerResult(
+                    workRef.value(), quoteId, insurerId, "QUOTED", QuoteFixtures.insurerResultEventId(workRef.value()))),
+                    null);
+            assertThat(response.batchItemFailures()).isEmpty();
+            assertThat(succeededOutput(tasks.get(insurerId)).get("status").asText()).isEqualTo("QUOTED");
+            assertThat(waiter(workRef).get("status").s()).isEqualTo("DONE");
+        }
+
+        Map<String, Object> consolidation = step("consolidate", quoteId);
+        assertThat(consolidation.get("outcome")).isEqualTo("COMPLETED");
+        assertThat(consolidation.get("outcomeReason")).isNull();
+        assertThat(offers(quoteId)).extracting(offer -> offer.get("insurerId").s())
+                .containsExactlyInAnyOrder("alpha", "beta");
+        for (Map<String, AttributeValue> offer : offers(quoteId)) {
+            String insurerId = offer.get("insurerId").s();
+            WorkRef workRef = insurerRef(quoteId, insurerId);
+            Map<String, AttributeValue> result = result(quoteId, insurerId);
+            assertThat(offer.get("offerId").s()).isEqualTo(QuoteKeys.offerId(workRef));
+            assertThat(offer.get("insurerName").s()).isEqualTo(result.get("insurerName").s());
+            assertThat(offer.get("queryId").s()).isEqualTo(QuoteFixtures.providerQueryId(workRef.value()))
+                    .isEqualTo(result.get("queryRef").s());
+            assertThat(result.get("attemptRef").s()).isEqualTo(offer.get("queryId").s() + "#0001");
+            assertThat(offer.get("rawResponseRef").s()).startsWith("raw/" + offer.get("queryId").s());
+        }
+        assertThat(item(QuoteKeys.quotePk(quoteId), "META").get("offerCount").n()).isEqualTo("2");
+        assertThat(outboxDetail(QuoteEvents.completedEventId(quoteId, 1)).get("offerCount").asInt()).isEqualTo(2);
+    }
+
+    @Test
+    void t07_offerAndDeclineCompleteWithOneOfferAndTheDeclineReason() throws Exception {
+        String quoteId = quoteReadyToQuote(Usage.PERSONAL);
+        Map<String, Task> tasks = dispatchInsurers(quoteId, "alpha", "beta");
+
+        resumeInsurer(quoteId, "alpha", "QUOTED");
+        resumeInsurer(quoteId, "beta", "DECLINED");
+        assertThat(succeededOutput(tasks.get("beta")).get("status").asText()).isEqualTo("DECLINED");
+
+        Map<String, Object> consolidation = step("consolidate", quoteId);
+        assertThat(consolidation.get("outcome")).isEqualTo("COMPLETED");
+        assertThat(consolidation.get("outcomeReason")).isNull();
+        assertThat(offers(quoteId)).singleElement()
+                .satisfies(offer -> assertThat(offer.get("insurerId").s()).isEqualTo("alpha"));
+        Map<String, AttributeValue> declined = result(quoteId, "beta");
+        assertThat(declined.get("status").s()).isEqualTo("DECLINED");
+        assertThat(declined.get("reasonCode").s()).isEqualTo("RISK_NOT_ACCEPTED");
+    }
+
+    @Test
+    void t08_offerIsVisibleBeforeTheOtherInsurerTimesOutAndTheVersionEndsPartial() throws Exception {
+        String quoteId = quoteReadyToQuote(Usage.PERSONAL);
+        Map<String, Task> tasks = dispatchInsurers(quoteId, "alpha", "beta");
+
+        resumeInsurer(quoteId, "alpha", "QUOTED");
+        assertThat(succeededOutput(tasks.get("alpha")).get("status").asText()).isEqualTo("QUOTED");
+        assertThat(result(quoteId, "alpha").get("status").s()).isEqualTo("QUOTED");
+        assertThat(result(quoteId, "beta").get("status").s()).as("beta still waits").isEqualTo("PROCESSING");
+        assertThat(offers(quoteId)).as("the offer is recorded before the consolidation").hasSize(1);
+        assertThat(version(quoteId).get("phase").s()).isEqualTo("QUOTING");
+        Map<String, AttributeValue> meta = item(QuoteKeys.quotePk(quoteId), "META");
+        assertThat(meta.get("phase").s()).isEqualTo("QUOTING");
+        assertThat(meta.get("offerCount").n()).isEqualTo("1");
+
+        Map<String, Object> recorded = steps.handleRequest(new StepRequest("record-insurer-outcome", quoteId, 1, "beta",
+                "TIMED_OUT", objectMapper.readTree("{\"Error\":\"States.Timeout\",\"Cause\":\"\"}")), null);
+        assertThat(recorded.get("status")).isEqualTo("TIMED_OUT");
+        assertThat(result(quoteId, "beta").get("reasonCode").s()).isEqualTo("STEP_TIMEOUT");
+        assertThat(waiter(insurerRef(quoteId, "beta")).get("status").s()).isEqualTo("EXPIRED");
+
+        Map<String, Object> consolidation = step("consolidate", quoteId);
+        assertThat(consolidation.get("outcome")).isEqualTo("PARTIAL");
+        assertThat(consolidation.get("outcomeReason")).isNull();
+        String revision = version(quoteId).get("revision").n();
+
+        WorkRef beta = insurerRef(quoteId, "beta");
+        assertThat(resumer.handle(QuoteFixtures.insurerResult(beta.value(), quoteId, "beta", "QUOTED",
+                QuoteFixtures.insurerResultEventId(beta.value())))).isEqualTo(ResultResumer.Disposition.LATE);
+        assertThat(lateItems(quoteId)).singleElement().satisfies(late -> {
+            assertThat(late.get("sk").s()).isEqualTo(QuoteKeys.lateSk(1, "beta", QuoteFixtures.providerQueryId(beta.value())));
+            assertThat(late.get("reason").s()).isEqualTo("LATE");
+            assertThat(late.get("status").s()).isEqualTo("QUOTED");
+            assertThat(late).containsKeys("offerSummary", "rawResponseRef");
+        });
+        assertThat(result(quoteId, "beta").get("status").s()).isEqualTo("TIMED_OUT");
+        assertThat(offers(quoteId)).as("a late offer is never selectable (RN10)").hasSize(1);
+        assertThat(version(quoteId).get("outcome").s()).isEqualTo("PARTIAL");
+        assertThat(version(quoteId).get("revision").n()).isEqualTo(revision);
+        assertThat(step("consolidate", quoteId).get("outcome")).isEqualTo("PARTIAL");
+        sfn.stopExecution(builder -> builder.executionArn(tasks.get("beta").executionArn()));
+    }
+
+    @Test
+    void betaNeedsInformationFollowsThePrecedenceWithAndWithoutAnOffer() throws Exception {
+        String withOffer = quoteReadyToQuote(Usage.PERSONAL);
+        dispatchInsurers(withOffer, "alpha", "beta");
+        resumeInsurer(withOffer, "alpha", "QUOTED");
+        resumeInsurer(withOffer, "beta", "NEEDS_INFORMATION");
+
+        assertThat(step("consolidate", withOffer).get("outcome")).isEqualTo("PARTIAL");
+        JsonNode betaMissing = objectMapper.readTree(result(withOffer, "beta").get("missingFields").s());
+        assertThat(betaMissing.get(0).get("path").asText()).isEqualTo("risk.principalDriver.licenseDate");
+
+        String withoutOffer = quoteReadyToQuote(Usage.PERSONAL);
+        dispatchInsurers(withoutOffer, "alpha", "beta");
+        resumeInsurer(withoutOffer, "alpha", "DECLINED");
+        resumeInsurer(withoutOffer, "beta", "NEEDS_INFORMATION");
+
+        Map<String, Object> consolidation = step("consolidate", withoutOffer);
+        assertThat(consolidation.get("outcome")).isEqualTo("NEEDS_INFORMATION");
+        assertThat(consolidation.get("outcomeReason")).isEqualTo("INSURER_NEEDS_INFORMATION");
+        JsonNode missing = objectMapper.readTree(version(withoutOffer).get("missingFields").s());
+        assertThat(missing).singleElement().satisfies(field -> {
+            assertThat(field.get("path").asText()).isEqualTo("risk.principalDriver.licenseDate");
+            assertThat(field.get("reasonCode").asText()).isEqualTo("MISSING_LICENSE_DATE");
+        });
+    }
+
+    @Test
+    void t11_duplicatedBetaCallbackKeepsOneOfferAndTheResumeIsIdempotent() throws Exception {
+        String quoteId = quoteReadyToQuote(Usage.PERSONAL);
+        Map<String, Task> tasks = dispatchInsurers(quoteId, "alpha", "beta");
+        WorkRef beta = insurerRef(quoteId, "beta");
+        String eventId = QuoteFixtures.insurerResultEventId(beta.value());
+        String quoted = QuoteFixtures.insurerResult(beta.value(), quoteId, "beta", "QUOTED", eventId);
+
+        assertThat(resumer.handle(quoted)).isEqualTo(ResultResumer.Disposition.RESUMED);
+        assertThat(succeededOutput(tasks.get("beta")).get("status").asText()).isEqualTo("QUOTED");
+        LambdaEvents.BatchResponse republished = resume.handleRequest(QuoteFixtures.sqs(quoted), null);
+        assertThat(republished.batchItemFailures()).isEmpty();
+        assertThat(resumer.handle(quoted)).as("same eventId of the same queryId").isEqualTo(ResultResumer.Disposition.DISCARDED);
+        assertThat(resumer.handle(QuoteFixtures.insurerResult(beta.value(), quoteId, "beta", "QUOTED",
+                UUID.randomUUID().toString()))).isEqualTo(ResultResumer.Disposition.DUPLICATE);
+
+        Task retry = newTask();
+        assertThat(dispatch.handleRequest(insurerRequest(quoteId, "beta", retry), null).get("status")).isEqualTo("RESUMED");
+        assertThat(succeededOutput(retry).get("offerId").asText()).isEqualTo(QuoteKeys.offerId(beta));
+        assertThat(outboxOf(quoteId, QuoteEvents.INSURER_QUOTE_REQUESTED)).as("no new request").hasSize(2);
+
+        resumeInsurer(quoteId, "alpha", "QUOTED");
+        assertThat(step("consolidate", quoteId).get("outcome")).isEqualTo("COMPLETED");
+        assertThat(offers(quoteId)).filteredOn(offer -> offer.get("insurerId").s().equals("beta")).hasSize(1);
+        assertThat(offers(quoteId)).hasSize(2);
+        assertThat(result(quoteId, "beta").get("revision").n()).as("PENDING, PROCESSING and QUOTED").isEqualTo("3");
+        assertThat(lateItems(quoteId)).singleElement()
+                .satisfies(late -> assertThat(late.get("reason").s()).isEqualTo("DUPLICATE"));
+        assertThat(item(QuoteKeys.consumedPk(eventId), "META")).isNotNull();
+    }
+
+    @Test
+    void t26_enrichedVehicleBefore2000EndsAsNoOfferWithoutQueryingInsurers() throws Exception {
+        String quoteId = eligibleQuote(Usage.PERSONAL);
+        resolveEnrichment(quoteId, 1998);
+
+        assertThat(step("select-insurers", quoteId).get("insurers")).isEqualTo(List.of());
+        assertThat(step("select-insurers", quoteId).get("insurers")).as("a retry reads the empty selection")
+                .isEqualTo(List.of());
+        Map<String, AttributeValue> version = version(quoteId);
+        assertThat(Attr.strings(version, "selectedInsurers")).isEmpty();
+        assertThat(version.get("selectionRuleVersion").s()).isEqualTo("sel-1");
+        assertThat(version.get("phase").s()).as("no insurer, no QUOTING").isEqualTo("ENRICHING");
+
+        Map<String, Object> consolidation = step("consolidate", quoteId);
+        assertThat(consolidation.get("outcome")).isEqualTo("NO_OFFER");
+        assertThat(consolidation.get("outcomeReason")).isEqualTo("NO_APPLICABLE_INSURER");
+        assertThat(query(quoteId, QuoteKeys.resultPrefix(1))).isEmpty();
+        assertThat(outboxOf(quoteId, QuoteEvents.INSURER_QUOTE_REQUESTED)).isEmpty();
+        assertThat(outboxDetail(QuoteEvents.completedEventId(quoteId, 1)).get("outcomeReason").asText())
+                .isEqualTo("NO_APPLICABLE_INSURER");
+        assertThat(outboxDetail(QuoteEvents.completedEventId(quoteId, 1)).get("offerCount").asInt()).isZero();
+    }
+
+    @Test
+    void selectionUsesTheEnrichedVehicleYearInsteadOfTheInputYear() throws Exception {
+        String quoteId = newQuote(Usage.PERSONAL, 1998, false, "2012-03-15");
+        step("load-snapshot", quoteId);
+        assertThat(step("evaluate-eligibility", quoteId).get("decision")).isEqualTo("ELIGIBLE");
+        resolveEnrichment(quoteId, 2021);
+
+        assertThat(step("select-insurers", quoteId).get("insurers")).isEqualTo(List.of("alpha", "beta"));
+        assertThat(step("select-insurers", quoteId).get("insurers")).as("a retry reads what was recorded")
+                .isEqualTo(List.of("alpha", "beta"));
+        assertThat(query(quoteId, QuoteKeys.resultPrefix(1))).hasSize(2);
+    }
+
     private String newQuote(Usage usage, int year, boolean salvage, String licenseDate) throws Exception {
         String quoteId = UUID.randomUUID().toString();
         QuoteFixtures.createQuote(dynamoDb, quoteId, QuoteFixtures.snapshot(usage, year, salvage, licenseDate),
@@ -450,7 +658,36 @@ class QuoteFunctionsFlociIT {
     }
 
     private DispatchRequest insurerRequest(String quoteId, Task task) {
-        return new DispatchRequest(WorkRef.Kind.INSURER, quoteId, 1, "alpha", task.executionArn(), task.token(), 20);
+        return insurerRequest(quoteId, "alpha", task);
+    }
+
+    private DispatchRequest insurerRequest(String quoteId, String insurerId, Task task) {
+        return new DispatchRequest(WorkRef.Kind.INSURER, quoteId, 1, insurerId, task.executionArn(), task.token(), 20);
+    }
+
+    private static WorkRef insurerRef(String quoteId, String insurerId) {
+        return WorkRef.of(quoteId, 1, WorkRef.Kind.INSURER, insurerId);
+    }
+
+    /** Um item do Map por seguradora, cada um com o próprio task token, como a máquina os despacha. */
+    private Map<String, Task> dispatchInsurers(String quoteId, String... insurerIds) {
+        Map<String, Task> tasks = new HashMap<>();
+        for (String insurerId : insurerIds) {
+            Task task = newTask();
+            assertThat(dispatch.handleRequest(insurerRequest(quoteId, insurerId, task), null).get("status"))
+                    .isEqualTo("WAITING");
+            tasks.put(insurerId, task);
+        }
+        return tasks;
+    }
+
+    /** Resultado da seguradora pela fila {@code results}, com o {@code eventId} determinístico da provider. */
+    private void resumeInsurer(String quoteId, String insurerId, String status) {
+        WorkRef workRef = insurerRef(quoteId, insurerId);
+        LambdaEvents.BatchResponse response = resume.handleRequest(QuoteFixtures.sqs(QuoteFixtures.insurerResult(
+                workRef.value(), quoteId, insurerId, status, QuoteFixtures.insurerResultEventId(workRef.value()))), null);
+        assertThat(response.batchItemFailures()).isEmpty();
+        assertThat(result(quoteId, insurerId).get("status").s()).isEqualTo(status);
     }
 
     private DispatchRequest enrichmentRequest(String quoteId, Task task) {

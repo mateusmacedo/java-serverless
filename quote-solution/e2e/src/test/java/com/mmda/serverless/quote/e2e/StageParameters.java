@@ -18,15 +18,18 @@ record StageParameters(int enrichmentTimeoutSeconds, int insurerTimeoutSeconds, 
         int stepsMarginSeconds, int retryAfterSeconds) {
 
     static StageParameters load(Path serverlessYml, String stage) {
-        Map<String, Object> params = paramsOf(serverlessYml);
-        Map<String, Object> values = new HashMap<>(section(params, "default"));
-        values.putAll(section(params, stage));
+        Map<String, Object> values = valuesOf(serverlessYml, stage);
         return new StageParameters(
                 number(values, "enrichmentTimeoutSeconds"),
                 number(values, "insurerTimeoutSeconds"),
                 number(values, "mapConcurrency"),
                 number(values, "stepsMarginSeconds"),
                 number(values, "retryAfterSeconds"));
+    }
+
+    /** Parâmetro numérico de outro {@code serverless.yml} no stage, como a quota de um provedor na provider (T21). */
+    static int number(Path serverlessYml, String stage, String name) {
+        return number(valuesOf(serverlessYml, stage), name);
     }
 
     /** Orçamento sem esperas externas: a versão termina nos passos simples (T23, T24). */
@@ -42,6 +45,13 @@ record StageParameters(int enrichmentTimeoutSeconds, int insurerTimeoutSeconds, 
 
     Duration pollInterval() {
         return Duration.ofSeconds(retryAfterSeconds);
+    }
+
+    private static Map<String, Object> valuesOf(Path serverlessYml, String stage) {
+        Map<String, Object> params = paramsOf(serverlessYml);
+        Map<String, Object> values = new HashMap<>(section(params, "default"));
+        values.putAll(section(params, stage));
+        return values;
     }
 
     // WHY: o resto do arquivo usa tags do CloudFormation (!Ref, !GetAtt) que o SnakeYAML não conhece; o bloco

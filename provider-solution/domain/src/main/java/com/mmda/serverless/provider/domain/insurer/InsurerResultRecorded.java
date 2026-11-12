@@ -2,6 +2,7 @@ package com.mmda.serverless.provider.domain.insurer;
 
 import com.mmda.serverless.provider.domain.EventIds;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -44,14 +45,21 @@ public record InsurerResultRecorded(
 
     public static InsurerResultRecorded of(InsurerQuoteRequest request, String queryId, String attemptRef,
                                            Outcome outcome, String occurredAt) {
+        return of(new Origin(request.workRef(), request.quoteId(), request.version(), request.insurerId()), queryId,
+                attemptRef, outcome, occurredAt);
+    }
+
+    /** Evento a partir da consulta gravada, como no callback, que não tem o pedido em mãos. */
+    public static InsurerResultRecorded of(Origin origin, String queryId, String attemptRef, Outcome outcome,
+                                           String occurredAt) {
         return new InsurerResultRecorded(
                 EventIds.insurerResultRecorded(queryId),
                 occurredAt,
                 SCHEMA_VERSION,
-                request.workRef(),
-                request.quoteId(),
-                request.version(),
-                request.insurerId(),
+                origin.workRef(),
+                origin.quoteId(),
+                origin.version(),
+                origin.insurerId(),
                 queryId,
                 attemptRef,
                 outcome.status(),
@@ -60,9 +68,34 @@ public record InsurerResultRecorded(
                 outcome.offer());
     }
 
+    /** Pedido da quote que abriu a consulta, como fica gravado na {@code QUERY}. */
+    public record Origin(String workRef, String quoteId, int version, String insurerId) {
+    }
+
     /** Resultado terminal da seguradora, como fica na evidência e no evento. */
     public record Outcome(InsurerResultStatus status, String reasonCode, List<MissingField> missingFields,
                           Offer offer) {
+
+        /** Resultado de uma classificação terminal; a oferta recebe a chave da resposta bruta. */
+        public static Outcome of(InsurerVerdict verdict, String rawResponseRef) {
+            return switch (verdict) {
+                case InsurerVerdict.Quoted quoted -> quoted(quoted.offer().withRawResponseRef(rawResponseRef));
+                case InsurerVerdict.Declined declined -> declined(declined.reasonCode());
+                case InsurerVerdict.NeedsInformation needs -> needsInformation(needs.reasonCode(), needs.missingFields());
+                case InsurerVerdict.Unavailable unavailable -> unavailable(unavailable.reasonCode());
+                default -> throw new IllegalArgumentException("Not a terminal insurer result: " + verdict);
+            };
+        }
+
+        /** Conteúdo normalizado da evidência: a oferta, ou o motivo com os campos pendentes. */
+        public Object evidenceBody() {
+            if (offer != null) {
+                return offer;
+            }
+            return missingFields == null
+                    ? Map.of("reasonCode", reasonCode)
+                    : Map.of("reasonCode", reasonCode, "missingFields", missingFields);
+        }
 
         public static Outcome quoted(Offer offer) {
             return new Outcome(InsurerResultStatus.QUOTED, null, null, offer);

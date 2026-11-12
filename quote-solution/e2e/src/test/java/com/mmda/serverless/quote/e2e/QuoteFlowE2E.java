@@ -18,8 +18,10 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -40,6 +42,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.apigateway.ApiGatewayClient;
 import software.amazon.awssdk.services.apigateway.model.RestApi;
+import software.amazon.awssdk.services.cloudwatchlogs.CloudWatchLogsClient;
 import software.amazon.awssdk.services.cognitoidentityprovider.CognitoIdentityProviderClient;
 import software.amazon.awssdk.services.cognitoidentityprovider.model.AuthFlowType;
 import software.amazon.awssdk.services.cognitoidentityprovider.model.GroupType;
@@ -49,18 +52,22 @@ import software.amazon.awssdk.services.cognitoidentityprovider.model.UserPoolCli
 import software.amazon.awssdk.services.cognitoidentityprovider.model.UserPoolDescriptionType;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.eventbridge.EventBridgeClient;
+import software.amazon.awssdk.services.eventbridge.model.PutEventsResponse;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
 import software.amazon.awssdk.services.sfn.SfnClient;
 import software.amazon.awssdk.services.sfn.model.ExecutionListItem;
 import software.amazon.awssdk.services.sfn.model.ExecutionStatus;
 import software.amazon.awssdk.services.sfn.model.StateMachineListItem;
+import software.amazon.awssdk.services.sqs.SqsClient;
+import software.amazon.awssdk.services.sqs.model.QueueAttributeName;
 
 /**
- * Ponta a ponta do M1 e do M2 (§14) no Floci, com as três stacks implantadas e as esperas no orçamento do stage
- * (§9), sem supor funções aquecidas. O catálogo é fixo e a {@code queryKey} depende só de organização, veículo e
- * condutor (§5): os casos de reuso apagam antes o {@code REUSE#} e o {@code INFLIGHT#} do próprio par (§10), e
- * cada caso usa um par diferente.
+ * Ponta a ponta do M1, do M2 e do M3 (§14) no Floci, com as três stacks implantadas e as esperas no orçamento do
+ * stage (§9), sem supor funções aquecidas. A {@code queryKey} depende só de organização, veículo e condutor (§5):
+ * os casos de reuso apagam antes o {@code REUSE#} e o {@code INFLIGHT#} do próprio par (§10). Os casos da beta
+ * escolhem o cenário pelo veículo, com uso {@code PERSONAL}, que cota na alpha e na beta.
  */
 class QuoteFlowE2E {
 
@@ -85,6 +92,22 @@ class QuoteFlowE2E {
     private static final String SALVAGE = "vehicle-salvage";
     private static final String UNKNOWN_TO_THE_PROVIDER = "vehicle-not-found";
     private static final String ENRICHMENT_DOWN = "vehicle-enrichment-down";
+    private static final String HATCH = "vehicle-hatch-2021";
+    private static final String BETA_DECLINES = "vehicle-beta-declines";
+    private static final String BETA_SILENT = "vehicle-beta-silent";
+    private static final String BETA_DUPLICATE = "vehicle-beta-duplicate";
+    private static final String BETA_EARLY = "vehicle-beta-early";
+    private static final String ALPHA = "alpha";
+    private static final String BETA = "beta";
+    private static final String CALLBACK_SECRET = "provider-solution/" + STAGE + "/callback-secret";
+    private static final Path PROVIDER_SERVERLESS = Path.of("../../provider-solution/serverless.yml");
+    private static final String EVENT_BUS = "platform-" + STAGE + "-events";
+    private static final String RESULTS_QUEUE = QUOTE_PREFIX + "-results";
+    private static final String SIM_CALLBACKS_QUEUE = PROVIDER_PREFIX + "-sim-callbacks";
+    /** Credencial padrão da provider ({@code PROVIDER_CREDENTIAL_REF}), parte da chave {@code QUOTA#} (§5). */
+    private static final String CREDENTIAL_REF = "default";
+    private static final DateTimeFormatter QUOTA_WINDOW =
+            DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss").withZone(ZoneOffset.UTC);
     /** Partes fixas da {@code queryKey} (§5), como a quote as envia no {@code EnrichmentRequested} (§3). */
     private static final List<String> ENRICHMENT_REQUEST = List.of("enrichment-sim", "VEHICLE_DRIVER_PROFILE", "1");
     private static final String QUERY_KEY_SECRET = "provider-solution/" + STAGE + "/query-key-secret";
@@ -105,13 +128,18 @@ class QuoteFlowE2E {
     private static final DynamoDbClient DYNAMO_DB = DynamoDbClient.create();
     private static final SfnClient SFN = SfnClient.create();
     private static final S3Client S3 = S3Client.builder().forcePathStyle(true).build();
+    private static final SqsClient SQS = SqsClient.create();
+    private static final EventBridgeClient EVENT_BRIDGE = EventBridgeClient.create();
+    private static final CloudWatchLogsClient LOGS = CloudWatchLogsClient.create();
 
     private static StageParameters stage;
     private static String apiBase;
+    private static String providerApiBase;
     private static String accessToken;
     private static String stateMachineArn;
     private static String desiredStartDate;
     private static byte[] queryKeySecret;
+    private static byte[] callbackSecret;
 
     @BeforeAll
     static void locateTheStacksAndSignIn() {
@@ -119,6 +147,7 @@ class QuoteFlowE2E {
         desiredStartDate = LocalDate.now(ZoneOffset.UTC).plusDays(30).toString();
         try (ApiGatewayClient apiGateway = ApiGatewayClient.create()) {
             apiBase = baseUrlOf(apiGateway, STAGE + "-quote-solution");
+            providerApiBase = baseUrlOf(apiGateway, STAGE + "-provider-solution");
         }
         stateMachineArn = SFN.listStateMachinesPaginator(builder -> builder.maxResults(100)).stateMachines().stream()
                 .filter(machine -> machine.name().equals(QUOTE_PREFIX + "-quote-flow"))
@@ -129,6 +158,8 @@ class QuoteFlowE2E {
         try (SecretsManagerClient secrets = SecretsManagerClient.create()) {
             queryKeySecret = secrets.getSecretValue(builder -> builder.secretId(QUERY_KEY_SECRET)).secretString()
                     .getBytes(StandardCharsets.UTF_8);
+            callbackSecret = secrets.getSecretValue(builder -> builder.secretId(CALLBACK_SECRET)).secretString()
+                    .getBytes(StandardCharsets.UTF_8);
         }
     }
 
@@ -137,6 +168,8 @@ class QuoteFlowE2E {
         DYNAMO_DB.close();
         SFN.close();
         S3.close();
+        SQS.close();
+        EVENT_BRIDGE.close();
     }
 
     @Test
@@ -471,6 +504,232 @@ class QuoteFlowE2E {
         assertNoInsurerConsulted(accepted.quoteId());
     }
 
+    /**
+     * T01 com as duas seguradoras: a alpha responde na chamada e a beta por callback. Cada oferta aponta a consulta e
+     * a evidência da provider, e o callback da beta fica processado na inbox.
+     */
+    @Test
+    void t01_twoInsurersQuoteAndEveryOfferLinksItsEvidence() throws Exception {
+        forgetEnrichmentReuse(HATCH, DRIVER_ANA);
+        Accepted accepted = create(newKey(), JSON.writeValueAsString(request(HATCH, "PERSONAL", DRIVER_ANA)));
+
+        JsonNode version = awaitTerminal(accepted, stage.withInsurers(2));
+
+        assertThat(version.path("outcome").asText()).isEqualTo("COMPLETED");
+        assertThat(version.path("outcomeReason").isNull()).isTrue();
+        assertThat(version.path("missingFields")).isEmpty();
+        assertThat(statusByInsurer(version)).containsExactly(Map.entry(ALPHA, "QUOTED"), Map.entry(BETA, "QUOTED"));
+        Map<String, String> names = namesByInsurer(version);
+        assertThat(names).containsEntry(ALPHA, "Alpha Seguros").containsEntry(BETA, "Beta Seguros");
+        Map<String, JsonNode> offers = offersByInsurer(accepted);
+        assertThat(offers).containsOnlyKeys(ALPHA, BETA);
+        for (JsonNode offer : offers.values()) {
+            assertThat(offer.path("insurerName").asText()).isEqualTo(names.get(offer.path("insurerId").asText()));
+            assertThat(offer.path("premiumTotal").asText()).matches(DECIMAL);
+            assertThat(offer.path("coverages")).isNotEmpty();
+            assertThat(offer.path("selectable").asBoolean()).isTrue();
+            assertInsurerEvidence(accepted.quoteId(), offer.path("id").asText());
+        }
+        assertEnrichmentEvidence(accepted.quoteId());
+        String betaQuery = string(insurerQuery(accepted.quoteId(), BETA), "queryId");
+        Map<String, AttributeValue> callback = single(inboxOf(betaQuery));
+        assertThat(string(callback, "processingStatus")).isEqualTo("PROCESSED");
+        assertThat(string(single(providerItems(betaQuery, "EVIDENCE#")), "rawResponseRef"))
+                .as("the beta evidence keeps the callback").contains(string(callback, "externalEventId"));
+        assertThat(awaitSingleExecution(accepted.quoteId()).status()).isEqualTo(ExecutionStatus.SUCCEEDED);
+        logInsurerChain("T01", accepted.quoteId());
+    }
+
+    /** T07: a beta recusa e a alpha oferece; a versão conclui com uma oferta e o motivo da recusa da beta. */
+    @Test
+    void t07_insurerDeclinesAndTheOtherOfferCompletesTheQuote() throws Exception {
+        Accepted accepted = create(newKey(), JSON.writeValueAsString(request(BETA_DECLINES, "PERSONAL", DRIVER)));
+
+        JsonNode version = awaitTerminal(accepted, stage.withInsurers(2));
+
+        assertThat(version.path("outcome").asText()).isEqualTo("COMPLETED");
+        assertThat(version.path("outcomeReason").isNull()).isTrue();
+        assertThat(statusByInsurer(version)).containsExactly(Map.entry(ALPHA, "QUOTED"), Map.entry(BETA, "DECLINED"));
+        assertThat(insurerResult(version, BETA).path("reasonCode").asText()).as("the decline reason of the beta")
+                .isEqualTo("RISK_NOT_ACCEPTED");
+        assertThat(offersByInsurer(accepted)).containsOnlyKeys(ALPHA);
+        String betaQuery = string(insurerQuery(accepted.quoteId(), BETA), "queryId");
+        assertThat(string(providerQuery(betaQuery), "state")).isEqualTo("COMPLETED");
+        assertThat(string(single(providerItems(betaQuery, "EVIDENCE#")), "resultType")).isEqualTo("DECLINED");
+        assertThat(string(single(quoteItems(accepted.quoteId(), "V#0001#RESULT#" + BETA)), "queryRef"))
+                .isEqualTo(betaQuery);
+    }
+
+    /**
+     * T08: a beta aceita o pedido e não responde ({@code vehicle-beta-silent}). A oferta da alpha aparece no GET
+     * enquanto a beta está em processamento, e a versão termina {@code PARTIAL}, com a mesma oferta.
+     */
+    @Test
+    void t08_offerIsVisibleBeforeTheOtherInsurerTimesOut() throws Exception {
+        Accepted accepted = create(newKey(), JSON.writeValueAsString(request(BETA_SILENT, "PERSONAL", DRIVER)));
+        Duration budget = stage.withInsurers(2);
+
+        JsonNode quoting = await().atMost(budget).pollInterval(stage.pollInterval())
+                .until(() -> getOk(accepted.statusUrl()), found -> "QUOTED".equals(statusByInsurer(found).get(ALPHA)));
+        Map<String, JsonNode> offersWhileQuoting = offersByInsurer(accepted);
+        JsonNode version = awaitTerminal(accepted, budget);
+
+        assertThat(quoting.path("phase").asText()).as("the alpha offer is visible before the consolidation")
+                .isEqualTo("QUOTING");
+        assertThat(statusByInsurer(quoting)).containsEntry(BETA, "PROCESSING");
+        assertThat(offersWhileQuoting).containsOnlyKeys(ALPHA);
+        assertThat(version.path("outcome").asText()).isEqualTo("PARTIAL");
+        assertThat(version.path("outcomeReason").isNull()).isTrue();
+        assertThat(statusByInsurer(version)).containsExactly(Map.entry(ALPHA, "QUOTED"), Map.entry(BETA, "TIMED_OUT"));
+        assertThat(insurerResult(version, BETA).path("reasonCode").asText()).isEqualTo("STEP_TIMEOUT");
+        Map<String, JsonNode> offers = offersByInsurer(accepted);
+        assertThat(offers).containsOnlyKeys(ALPHA);
+        assertThat(offers.get(ALPHA).path("id").asText()).isEqualTo(offersWhileQuoting.get(ALPHA).path("id").asText());
+        Map<String, AttributeValue> betaQuery = insurerQuery(accepted.quoteId(), BETA);
+        assertThat(string(betaQuery, "providerRequestId")).as("the beta accepted the request").isNotBlank();
+        assertThat(string(betaQuery, "state")).as("left for the reconciliation (M4)").isIn("IN_FLIGHT", "UNKNOWN");
+        assertThat(providerItems(string(betaQuery, "queryId"), "EVIDENCE#")).isEmpty();
+    }
+
+    /**
+     * T11: a beta entrega o mesmo callback duas vezes ({@code vehicle-beta-duplicate}); depois da conclusão, o
+     * harness reenvia o callback assinado e publica de novo o {@code InsurerResultRecorded}. A inbox reconhece a
+     * repetição, a retomada descarta o evento repetido (o descarte só deixa a linha de log com o {@code eventId}),
+     * e nada muda na cotação nem na consulta.
+     */
+    @Test
+    void t11_duplicateCallbackYieldsOneOffer() throws Exception {
+        Accepted accepted = create(newKey(), JSON.writeValueAsString(request(BETA_DUPLICATE, "PERSONAL", DRIVER)));
+        JsonNode version = awaitTerminal(accepted, stage.withInsurers(2));
+        awaitDrained(SIM_CALLBACKS_QUEUE);
+        String betaQuery = string(insurerQuery(accepted.quoteId(), BETA), "queryId");
+        Map<String, AttributeValue> callback = single(inboxOf(betaQuery));
+        List<Map<String, AttributeValue>> versionBefore = quoteItems(accepted.quoteId(), "V#0001");
+        List<Map<String, AttributeValue>> queryBefore = providerHistory(betaQuery);
+        String eventId = string(waiterOf(accepted.quoteId(), BETA), "resultEventId");
+
+        HttpResponse<String> resent = postCallback(BETA, string(callback, "payload"));
+        Instant republishedAt = Instant.now();
+        republish(single(queryByPrefix(QUERIES_TABLE, "OUTBOX#" + eventId, "META")));
+        awaitDiscarded(eventId, republishedAt);
+        awaitDrained(RESULTS_QUEUE);
+
+        assertThat(version.path("outcome").asText()).isEqualTo("COMPLETED");
+        assertThat(statusByInsurer(version)).containsExactly(Map.entry(ALPHA, "QUOTED"), Map.entry(BETA, "QUOTED"));
+        assertThat(string(callback, "processingStatus")).isEqualTo("PROCESSED");
+        assertThat(resent.statusCode()).as(resent.body()).isEqualTo(200);
+        JsonNode receipt = JSON.readTree(resent.body());
+        assertThat(receipt.path("duplicate").asBoolean()).isTrue();
+        assertThat(receipt.path("processingStatus").asText()).isEqualTo("PROCESSED");
+        assertThat(offersByInsurer(accepted)).containsOnlyKeys(ALPHA, BETA);
+        assertThat(quoteItems(accepted.quoteId(), "V#0001")).as("no late or duplicate result and no other offer")
+                .containsExactlyInAnyOrderElementsOf(versionBefore);
+        assertThat(providerHistory(betaQuery)).containsExactlyInAnyOrderElementsOf(queryBefore);
+        assertThat(inboxOf(betaQuery)).containsExactly(callback);
+        assertThat(string(waiterOf(accepted.quoteId(), BETA), "status")).isEqualTo("DONE");
+        assertThat(queryByPrefix(QUOTES_TABLE, "CONSUMED#" + eventId, "META")).hasSize(1);
+    }
+
+    /**
+     * T12: a beta agenda o callback sem atraso e só com o {@code providerRequestId} ({@code vehicle-beta-early}); ele
+     * só é associado pelo encontro no {@code CORR#} (§8), e a oferta chega sem perda. NOTE: o ESM do Floci entrega o
+     * callback cerca de 1 s depois, já depois do {@code 202}; a ordem inversa fica na integração da provider.
+     */
+    @Test
+    void t12_callbackBeforeCorrelationIsNotLost() throws Exception {
+        Accepted accepted = create(newKey(), JSON.writeValueAsString(request(BETA_EARLY, "PERSONAL", DRIVER)));
+
+        JsonNode version = awaitTerminal(accepted, stage.withInsurers(2));
+
+        assertThat(version.path("outcome").asText()).isEqualTo("COMPLETED");
+        assertThat(statusByInsurer(version)).containsExactly(Map.entry(ALPHA, "QUOTED"), Map.entry(BETA, "QUOTED"));
+        assertThat(offersByInsurer(accepted)).containsOnlyKeys(ALPHA, BETA);
+        Map<String, AttributeValue> query = insurerQuery(accepted.quoteId(), BETA);
+        String queryId = string(query, "queryId");
+        String providerRequestId = string(query, "providerRequestId");
+        assertThat(string(query, "state")).isEqualTo("COMPLETED");
+        Map<String, AttributeValue> callback = single(inboxOf(queryId));
+        assertThat(string(callback, "processingStatus")).isEqualTo("PROCESSED");
+        assertThat(callback).as("the early callback carries only the providerRequestId")
+                .doesNotContainKey("clientReference");
+        assertThat(string(callback, "providerRequestId")).isEqualTo(providerRequestId);
+        Map<String, AttributeValue> correlation =
+                single(queryByPrefix(QUERIES_TABLE, "CORR#" + BETA + "#" + providerRequestId, "META"));
+        assertThat(string(correlation, "queryId")).as("the worker half").isEqualTo(queryId);
+        assertThat(correlation.get("pendingEvents").ss()).as("the API half")
+                .contains(string(callback, "externalEventId"));
+        logInsurerChain("T12", accepted.quoteId());
+    }
+
+    /**
+     * T21: a quota da alpha é uma só para todos os workflows (§9). Com a janela corrente reservada até sobrarem
+     * {@code granted} chamadas e a seguinte esgotada, as cotações simultâneas fazem só essas chamadas; as demais
+     * terminam sem chamada, com {@code QUOTA_EXHAUSTED}, e nenhuma janela passa do limite.
+     */
+    @Test
+    void t21_insurerQuotaIsGlobalAcrossWorkflows() throws Exception {
+        int limit = StageParameters.number(PROVIDER_SERVERLESS, STAGE, "alphaQuotaPerMinute");
+        int granted = 2;
+        int quotes = 5;
+        Instant window = awaitFreshQuotaWindow();
+        Instant next = window.plusSeconds(60);
+        try {
+            putQuota(ALPHA, window, limit - granted);
+            putQuota(ALPHA, next, limit);
+            String body = JSON.writeValueAsString(request(VAN, "COMMERCIAL", DRIVER));
+            List<Accepted> accepted = new ArrayList<>();
+            for (int i = 0; i < quotes; i++) {
+                accepted.add(create(newKey(), body));
+            }
+            Map<String, Integer> outcomes = new TreeMap<>();
+            int calls = 0;
+            for (Accepted quote : accepted) {
+                JsonNode version = awaitTerminal(quote, stage.withInsurers(1).plusSeconds(quotes));
+                JsonNode alpha = insurerResult(version, ALPHA);
+                outcomes.merge("%s/%s alpha=%s/%s".formatted(version.path("outcome").asText(),
+                        version.path("outcomeReason").asText(), alpha.path("status").asText(),
+                        alpha.path("reasonCode").asText()), 1, Integer::sum);
+                calls += providerItems(string(insurerQuery(quote.quoteId(), ALPHA), "queryId"), "ATTEMPT#").size();
+            }
+
+            assertThat(outcomes).containsOnly(
+                    Map.entry("COMPLETED/null alpha=QUOTED/null", granted),
+                    Map.entry("TECHNICAL_FAILURE/INSURER_TECHNICAL_FAILURE alpha=UNAVAILABLE/QUOTA_EXHAUSTED",
+                            quotes - granted));
+            assertThat(calls).as("calls to the alpha, one per granted reservation").isEqualTo(granted);
+            assertThat(quotaUsed(ALPHA, window)).as("the window ends exactly at the limit").isEqualTo(limit);
+            assertThat(quotaUsed(ALPHA, next)).isEqualTo(limit);
+        } finally {
+            deleteQuota(ALPHA, window);
+            deleteQuota(ALPHA, next);
+        }
+    }
+
+    /**
+     * T26: o veículo anterior a 2000 não tem seguradora aplicável (§10): {@code NO_OFFER}, sem pedido, com a
+     * seleção feita depois do enriquecimento. NOTE: no {@code vehicle-classic-1998} o ano do catálogo e o do
+     * enriquecimento coincidem; que a regra usa o ano enriquecido, e não o de entrada, é provado no
+     * {@code QuoteFunctionsFlociIT} ({@code selectionUsesTheEnrichedVehicleYearInsteadOfTheInputYear}).
+     */
+    @Test
+    void t26_noApplicableInsurerEndsWithoutOffers() throws Exception {
+        Accepted accepted = create(newKey(), JSON.writeValueAsString(request(CLASSIC, "PERSONAL", DRIVER_ANA)));
+
+        JsonNode version = awaitTerminal(accepted, stage.withInsurers(0));
+
+        assertThat(version.path("outcome").asText()).isEqualTo("NO_OFFER");
+        assertThat(version.path("outcomeReason").asText()).isEqualTo("NO_APPLICABLE_INSURER");
+        assertThat(version.path("missingFields")).isEmpty();
+        assertThat(version.path("insurerResults")).isEmpty();
+        assertThat(getOk(accepted.statusUrl() + "/offers").path("items")).isEmpty();
+        assertThat(string(enrichmentEvidenceUsed(accepted.quoteId()), "resultType")).isEqualTo("FOUND");
+        Map<String, AttributeValue> stored = versionItem(accepted.quoteId());
+        assertThat(stored).containsKey("selectedInsurers");
+        assertThat(stored.get("selectedInsurers").l()).as("the selection rule ran and chose no insurer").isEmpty();
+        assertThat(string(stored, "selectionRuleVersion")).isNotBlank();
+        assertNoInsurerConsulted(accepted.quoteId());
+    }
+
     /** Evidência usada do enriquecimento na quote, com a consulta e a evidência correspondentes na provider. */
     private static void assertEnrichmentEvidence(String quoteId) {
         Map<String, AttributeValue> used = single(quoteItems(quoteId, "V#0001#EVIDENCE#"));
@@ -493,7 +752,7 @@ class QuoteFlowE2E {
         assertThat(rawResponseRef).isEqualTo(string(offer, "rawResponseRef"));
         assertThat(S3.headObject(builder -> builder.bucket(PAYLOADS_BUCKET).key(rawResponseRef)).contentLength())
                 .isPositive();
-        Map<String, AttributeValue> result = single(quoteItems(quoteId, "V#0001#RESULT#alpha"));
+        Map<String, AttributeValue> result = single(quoteItems(quoteId, "V#0001#RESULT#" + string(offer, "insurerId")));
         assertThat(string(result, "queryRef")).isEqualTo(queryId);
     }
 
@@ -547,10 +806,15 @@ class QuoteFlowE2E {
         parts.addAll(ENRICHMENT_REQUEST);
         parts.add(vehicleRef);
         parts.add(driverRef);
+        return HexFormat.of().formatHex(hmacSha256(queryKeySecret,
+                String.join("|", parts).getBytes(StandardCharsets.UTF_8)));
+    }
+
+    private static byte[] hmacSha256(byte[] key, byte[] value) {
         try {
             Mac mac = Mac.getInstance("HmacSHA256");
-            mac.init(new SecretKeySpec(queryKeySecret, "HmacSHA256"));
-            return HexFormat.of().formatHex(mac.doFinal(String.join("|", parts).getBytes(StandardCharsets.UTF_8)));
+            mac.init(new SecretKeySpec(key, "HmacSHA256"));
+            return mac.doFinal(value);
         } catch (GeneralSecurityException exception) {
             throw new IllegalStateException("HmacSHA256 is not available", exception);
         }
@@ -652,6 +916,210 @@ class QuoteFlowE2E {
                     terminal.getFirst(), terminal.get(terminal.size() / 2), terminal.getLast(),
                     enrichment.getFirst(), enrichment.get(enrichment.size() / 2), enrichment.getLast());
         }
+    }
+
+    /**
+     * Cadeia de uma versão com seguradoras, pelos instantes gravados (§12): do {@code POST} a {@code TERMINAL} e à
+     * primeira oferta gravada, que o GET já mostra; por seguradora, da {@code dispatch} à chamada, ao {@code 202}, ao
+     * callback recebido e processado pela inbox e à retomada ({@code updatedAt} do {@code RESULT}).
+     */
+    private static void logInsurerChain(String label, String quoteId) {
+        Map<String, AttributeValue> version = versionItem(quoteId);
+        Instant posted = Instant.parse(string(version, "createdAt"));
+        StringBuilder line = new StringBuilder("%s quoteId=%s postToTerminal=%d ms".formatted(label, quoteId,
+                millisBetween(posted, string(version, "updatedAt"))));
+        quoteItems(quoteId, "V#0001#OFFER#").stream()
+                .map(offer -> string(offer, "createdAt"))
+                .min(Comparator.comparing(Instant::parse))
+                .ifPresent(first -> line.append(" postToFirstOffer=%d ms".formatted(millisBetween(posted, first))));
+        for (Map<String, AttributeValue> result : quoteItems(quoteId, "V#0001#RESULT#")) {
+            String insurerId = string(result, "sk").substring("V#0001#RESULT#".length());
+            Instant dispatched = Instant.parse(string(waiterOf(quoteId, insurerId), "createdAt"));
+            line.append(" %s[dispatchToResume=%d ms".formatted(insurerId,
+                    millisBetween(dispatched, string(result, "updatedAt"))));
+            String queryId = stringOrNull(result, "queryRef");
+            List<Map<String, AttributeValue>> attempts =
+                    queryId == null ? List.of() : providerItems(queryId, "ATTEMPT#");
+            if (!attempts.isEmpty()) {
+                Map<String, AttributeValue> attempt = attempts.getFirst();
+                String started = string(attempt, "startedAt");
+                line.append(" dispatchToCall=%d ms".formatted(millisBetween(dispatched, started)));
+                String acceptedAt = stringOrNull(attempt, "acceptedAt");
+                if (acceptedAt != null) {
+                    line.append(" callTo202=%d ms".formatted(millisBetween(Instant.parse(started), acceptedAt)));
+                }
+                for (Map<String, AttributeValue> callback : inboxOf(queryId)) {
+                    line.append(" callToCallback=%d ms callbackToProcessed=%d ms".formatted(
+                            millisBetween(Instant.parse(started), string(callback, "receivedAt")),
+                            millisBetween(Instant.parse(string(callback, "receivedAt")),
+                                    string(callback, "processedAt"))));
+                }
+            }
+            line.append(']');
+        }
+        LOG.info(line::toString);
+    }
+
+    private static long millisBetween(Instant from, String to) {
+        return Duration.between(from, Instant.parse(to)).toMillis();
+    }
+
+    /** Status de cada seguradora no GET da versão, por {@code insurerId}. */
+    private static Map<String, String> statusByInsurer(JsonNode version) {
+        Map<String, String> statuses = new TreeMap<>();
+        version.path("insurerResults").forEach(result ->
+                statuses.put(result.path("insurerId").asText(), result.path("status").asText()));
+        return statuses;
+    }
+
+    private static Map<String, String> namesByInsurer(JsonNode version) {
+        Map<String, String> names = new TreeMap<>();
+        version.path("insurerResults").forEach(result ->
+                names.put(result.path("insurerId").asText(), result.path("insurerName").asText()));
+        return names;
+    }
+
+    private static JsonNode insurerResult(JsonNode version, String insurerId) {
+        for (JsonNode result : version.path("insurerResults")) {
+            if (insurerId.equals(result.path("insurerId").asText())) {
+                return result;
+            }
+        }
+        throw new AssertionError("the version has no result of " + insurerId + ": " + version);
+    }
+
+    /** Ofertas da versão 1 no GET, por seguradora; cada seguradora tem no máximo uma. */
+    private static Map<String, JsonNode> offersByInsurer(Accepted accepted) throws Exception {
+        Map<String, JsonNode> offers = new TreeMap<>();
+        for (JsonNode offer : getOk(accepted.statusUrl() + "/offers").path("items")) {
+            assertThat(offers.put(offer.path("insurerId").asText(), offer)).as("one offer per insurer").isNull();
+        }
+        return offers;
+    }
+
+    /** Consulta de cotação ({@code operation = QUOTE}) que a provider abriu para a seguradora na cotação. */
+    private static Map<String, AttributeValue> insurerQuery(String quoteId, String insurerId) {
+        return single(providerQueriesOf(quoteId, "QUOTE").stream()
+                .filter(query -> insurerId.equals(string(query, "insurerId")))
+                .toList());
+    }
+
+    /** Callbacks da consulta na inbox da provider, pelo {@code queryId} que o processamento grava (§5). */
+    private static List<Map<String, AttributeValue>> inboxOf(String queryId) {
+        return DYNAMO_DB.scanPaginator(builder -> builder.tableName(QUERIES_TABLE).consistentRead(true)
+                        .filterExpression("#type = :inbox AND queryId = :queryId")
+                        .expressionAttributeNames(Map.of("#type", "type"))
+                        .expressionAttributeValues(Map.of(":inbox", AttributeValue.fromS("INBOX"),
+                                ":queryId", AttributeValue.fromS(queryId))))
+                .items().stream().toList();
+    }
+
+    private static Map<String, AttributeValue> waiterOf(String quoteId, String insurerId) {
+        return single(DYNAMO_DB.scanPaginator(builder -> builder.tableName(QUOTES_TABLE).consistentRead(true)
+                        .filterExpression("begins_with(pk, :waiter) AND quoteId = :quoteId AND insurerId = :insurerId")
+                        .expressionAttributeValues(Map.of(":waiter", AttributeValue.fromS("WAITER#"),
+                                ":quoteId", AttributeValue.fromS(quoteId),
+                                ":insurerId", AttributeValue.fromS(insurerId))))
+                .items().stream().toList());
+    }
+
+    /** Callback assinado como o fornecedor assina (§8): {@code sha256=} e o HMAC-SHA256 dos bytes do corpo. */
+    private static HttpResponse<String> postCallback(String provider, String body) throws Exception {
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        String signature = "sha256=" + HexFormat.of().formatHex(hmacSha256(callbackSecret, bytes));
+        URI callbacks = URI.create(providerApiBase + "/v1/providers/" + provider + "/callbacks");
+        return HTTP.send(HttpRequest.newBuilder(callbacks)
+                        .header("Content-Type", "application/json")
+                        .header("X-Signature", signature)
+                        .POST(HttpRequest.BodyPublishers.ofByteArray(bytes))
+                        .timeout(Duration.ofMinutes(1))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+    }
+
+    /** Publica de novo no barramento o evento gravado no outbox da provider, como uma entrega repetida. */
+    private static void republish(Map<String, AttributeValue> outbox) {
+        PutEventsResponse response = EVENT_BRIDGE.putEvents(builder -> builder.entries(entry -> entry
+                .eventBusName(EVENT_BUS)
+                .source("mmda.provider")
+                .detailType(string(outbox, "detailType"))
+                .detail(string(outbox, "detail"))));
+        assertThat(response.failedEntryCount()).isZero();
+    }
+
+    /**
+     * Espera a retomada registrar o descarte do evento. NOTE: o descarte não grava nada na tabela, então só a linha
+     * de log com o {@code eventId} distingue o evento descartado do evento que nunca chegou.
+     */
+    private static void awaitDiscarded(String eventId, Instant since) {
+        String logGroup = "/aws/lambda/" + QUOTE_PREFIX + "-resume";
+        String line = "result " + eventId + " already consumed, discarded";
+        await().atMost(Duration.ofSeconds(60)).pollInterval(Duration.ofSeconds(1)).untilAsserted(() ->
+                assertThat(LOGS.filterLogEvents(builder -> builder.logGroupName(logGroup)
+                                .startTime(since.minusSeconds(5).toEpochMilli()))
+                        .events())
+                        .as("the resume discarded the republished %s", eventId)
+                        .anySatisfy(event -> assertThat(event.message()).contains(line)));
+    }
+
+    /**
+     * Espera a fila ficar sem mensagens visíveis, em processamento ou atrasadas. NOTE: a primeira leitura espera
+     * 5 s, porque cada salto do barramento e do ESM no Floci leva cerca de 1 s (§13) e a fila ainda vazia não diz
+     * que a mensagem já passou.
+     */
+    private static void awaitDrained(String queueName) {
+        String queueUrl = SQS.getQueueUrl(builder -> builder.queueName(queueName)).queueUrl();
+        await().pollDelay(Duration.ofSeconds(5)).atMost(Duration.ofSeconds(60)).pollInterval(Duration.ofSeconds(1))
+                .until(() -> pendingMessages(queueUrl) == 0);
+    }
+
+    private static int pendingMessages(String queueUrl) {
+        return SQS.getQueueAttributes(builder -> builder.queueUrl(queueUrl).attributeNames(
+                        QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES,
+                        QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES_NOT_VISIBLE,
+                        QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES_DELAYED))
+                .attributes().values().stream().mapToInt(Integer::parseInt).sum();
+    }
+
+    /**
+     * Início da janela de quota corrente (1 min, §12), esperando a virada quando já passaram 10 s dela: assim as
+     * cotações do T21 reservam na mesma janela, e a virada fica além do {@code deadlineAt} de cada pedido, então o
+     * pedido sem quota conclui sem ser adiado para a janela seguinte (§9).
+     */
+    private static Instant awaitFreshQuotaWindow() {
+        return await().atMost(Duration.ofSeconds(70)).pollInterval(Duration.ofMillis(250))
+                .until(Instant::now, now -> now.getEpochSecond() % 60 < 10)
+                .truncatedTo(ChronoUnit.MINUTES);
+    }
+
+    private static Map<String, AttributeValue> quotaKey(String provider, Instant window) {
+        return Map.of("pk", AttributeValue.fromS("QUOTA#" + provider + "#" + CREDENTIAL_REF + "#"
+                        + QUOTA_WINDOW.format(window)),
+                "sk", AttributeValue.fromS("META"));
+    }
+
+    /** Contador {@code QUOTA#} da janela (§5), com o TTL que a provider usa: 1 h depois do fim da janela. */
+    private static void putQuota(String provider, Instant window, int used) {
+        Map<String, AttributeValue> item = new LinkedHashMap<>(quotaKey(provider, window));
+        item.put("type", AttributeValue.fromS("QUOTA"));
+        item.put("used", AttributeValue.fromN(Integer.toString(used)));
+        item.put("ttl", AttributeValue.fromN(Long.toString(window.plusSeconds(60 + 3600).getEpochSecond())));
+        DYNAMO_DB.putItem(builder -> builder.tableName(QUERIES_TABLE).item(item));
+    }
+
+    private static long quotaUsed(String provider, Instant window) {
+        return number(DYNAMO_DB.getItem(builder -> builder.tableName(QUERIES_TABLE).consistentRead(true)
+                .key(quotaKey(provider, window))).item(), "used");
+    }
+
+    /** Remove o contador que o T21 fabricou, para os casos seguintes terem a quota real da janela. */
+    private static void deleteQuota(String provider, Instant window) {
+        DYNAMO_DB.deleteItem(builder -> builder.tableName(QUERIES_TABLE).key(quotaKey(provider, window)));
+    }
+
+    private static String stringOrNull(Map<String, AttributeValue> item, String attribute) {
+        AttributeValue value = item.get(attribute);
+        return value == null ? null : value.s();
     }
 
     /**

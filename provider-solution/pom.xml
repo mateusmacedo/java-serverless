@@ -16,6 +16,7 @@
 
     <modules>
         <module>domain</module>
+        <module>api</module>
         <module>functions</module>
         <module>simulators</module>
     </modules>

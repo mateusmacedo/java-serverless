@@ -8,6 +8,8 @@ import com.mmda.serverless.provider.domain.enrichment.EnrichmentProfile;
 import com.mmda.serverless.provider.domain.enrichment.EnrichmentRequest;
 import com.mmda.serverless.provider.domain.enrichment.EnrichmentResolved;
 import com.mmda.serverless.provider.domain.enrichment.ReuseDecision;
+import com.mmda.serverless.provider.domain.insurer.InsurerCallback;
+import com.mmda.serverless.provider.domain.insurer.InsurerProtocol;
 import com.mmda.serverless.provider.domain.insurer.InsurerQuoteRequest;
 import com.mmda.serverless.provider.domain.insurer.InsurerResultRecorded;
 import com.mmda.serverless.provider.domain.insurer.Offer;
@@ -116,6 +118,50 @@ class EventContractTest {
                 InsurerResultRecorded.Outcome.quoted(offer), documented.path("occurredAt").asString());
 
         assertThat(objectMapper.readTree(objectMapper.writeValueAsString(event))).isEqualTo(documented);
+    }
+
+    /**
+     * O exemplo de callback do OpenAPI da provider, classificado como na API de callbacks, produz exatamente o
+     * {@code InsurerResultRecorded} documentado da beta, com o nome da seguradora que a quote registra (§3).
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void callbackExampleOfTheApiBecomesTheDocumentedBetaEvent() throws IOException {
+        JsonNode documented = examples(messages("provider-solution.asyncapi.yaml"), "InsurerResultRecorded").stream()
+                .map(example -> example.path("detail"))
+                .filter(detail -> "beta".equals(detail.path("insurerId").asString())
+                        && "QUOTED".equals(detail.path("status").asString()))
+                .findFirst()
+                .orElseThrow();
+        Map<String, Object> openApi;
+        try (Reader reader = Files.newBufferedReader(EVENTS.resolveSibling("api")
+                .resolve("provider-solution.openapi.yaml"))) {
+            openApi = new Yaml().load(reader);
+        }
+        Map<String, Object> operation = (Map<String, Object>) ((Map<String, Object>) ((Map<String, Object>) openApi
+                .get("paths")).get("/v1/providers/{provider}/callbacks")).get("post");
+        Map<String, Object> examples = (Map<String, Object>) ((Map<String, Object>) ((Map<String, Object>)
+                ((Map<String, Object>) operation.get("requestBody")).get("content")).get("application/json"))
+                .get("examples");
+        InsurerCallback callback = objectMapper.convertValue(((Map<String, Object>) examples.get("offer")).get("value"),
+                InsurerCallback.class);
+        String queryId = documented.path("queryId").asString();
+        String quoteId = documented.path("quoteId").asString();
+        String workRef = Identities.workRef(quoteId, 1, Identities.INSURER, "beta");
+
+        InsurerResultRecorded event = InsurerResultRecorded.of(
+                new InsurerResultRecorded.Origin(workRef, quoteId, 1, "beta"), queryId,
+                Identities.attemptRef(queryId, 1),
+                InsurerResultRecorded.Outcome.of(InsurerProtocol.classifyCallback(callback.result()),
+                        "raw/" + queryId + "/callback-" + callback.externalEventId() + ".json"),
+                documented.path("occurredAt").asString());
+
+        assertThat(callback.problems()).isEmpty();
+        assertThat(callback.clientReference()).isEqualTo(queryId);
+        assertThat(queryId).isEqualTo(Identities.queryId(workRef));
+        assertThat(documented.path("eventId").asString()).isEqualTo(EventIds.insurerResultRecorded(queryId));
+        assertThat(objectMapper.readTree(objectMapper.writeValueAsString(event))).isEqualTo(documented);
+        assertThat(event.offer().insurerName()).isEqualTo("Beta Seguros");
     }
 
     @Test

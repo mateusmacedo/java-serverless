@@ -23,18 +23,27 @@ params:
     reusePolicyVersion: "reuse-v1"
     enrichmentValiditySeconds: 900
     offerValiditySeconds: 1800
+    # Quota por provedor e credencial, numa janela de 1 min comum a todos os workflows (T21)
     enrichmentSimQuotaPerMinute: 30
     alphaQuotaPerMinute: 30
     betaQuotaPerMinute: 30
+    # Atraso dos callbacks da beta; o do vehicle-beta-late passa da espera da seguradora na quote (90 s na AWS)
+    betaCallbackDelaySeconds: 3
+    betaLateCallbackDelaySeconds: 120
     outboxRepublishAfterSeconds: 30
     dlqMaxAttempts: 3
     requestQueueVisibilityTimeoutSeconds: 150
     requestQueueMaxReceiveCount: 3
+    simCallbackSenderTimeoutSeconds: 15
+    simCallbacksVisibilityTimeoutSeconds: 90
+    simCallbacksMaxReceiveCount: 5
     reconcilerRate: rate(1 minute)
   local:
     awsEndpointUrl: http://floci:4566
     s3PathStyleAccess: "true"
     providersBaseUrl: http://floci:4566/restapis/${ApiGatewayRestApi}/local/_user_request_
+    # A espera da seguradora no local é de 20 s (insurerTimeoutSeconds da quote)
+    betaLateCallbackDelaySeconds: 30
 
 custom:
   names:
@@ -46,6 +55,8 @@ custom:
     insurerRequestsQueue: ${self:service}-${sls:stage}-insurer-requests
     insurerRequestsDeadLetterQueue: ${self:service}-${sls:stage}-insurer-requests-dlq
     streamFailuresQueue: ${self:service}-${sls:stage}-stream-failures
+    simCallbacksQueue: ${self:service}-${sls:stage}-sim-callbacks
+    simCallbacksDeadLetterQueue: ${self:service}-${sls:stage}-sim-callbacks-dlq
     queryKeySecret: ${self:service}/${sls:stage}/query-key-secret
     callbackSecret: ${self:service}/${sls:stage}/callback-secret
   # Barramento da plataforma pela convenção de nomes, sem referência entre stacks (ADR 0013)
@@ -92,8 +103,9 @@ provider:
     ENRICHMENT_SIM_QUOTA_PER_MINUTE: "${param:enrichmentSimQuotaPerMinute}"
     ALPHA_QUOTA_PER_MINUTE: "${param:alphaQuotaPerMinute}"
     BETA_QUOTA_PER_MINUTE: "${param:betaQuotaPerMinute}"
-  # Papel das funções da provider; a Lambda dos simuladores tem papel próprio (SimulatorsRole). O reuso do
-  # enriquecimento (REUSE#, INFLIGHT# e FOLLOWER#) usa as mesmas ações na tabela de consultas
+  # Papel das funções da provider; têm papel próprio a Lambda dos simuladores (SimulatorsRole), a API de callbacks
+  # (CallbacksApiRole) e o simCallbackSender (SimCallbackSenderRole). O reuso do enriquecimento (REUSE#, INFLIGHT#
+  # e FOLLOWER#) usa as mesmas ações na tabela de consultas
   iam:
     role:
       statements:
@@ -128,6 +140,21 @@ package:
   individually: true
 
 functions:
+  # API de callbacks das seguradoras assíncronas (§7); papel próprio, porque os workers não podem ler o
+  # callback-secret
+  api:
+    handler: com.mmda.serverless.provider.api.StreamLambdaHandler::handleRequest
+    timeout: 29
+    role: CallbacksApiRole
+    package:
+      artifact: api/target/provider-api-lambda.zip
+    environment:
+      CALLBACK_SECRET_ID: ${self:custom.names.callbackSecret}
+    events:
+      - http:
+          path: v1/providers/{provider}/callbacks
+          method: post
+
   simulators:
     handler: com.mmda.serverless.provider.simulators.StreamLambdaHandler::handleRequest
     timeout: 29
@@ -137,10 +164,30 @@ functions:
     environment:
       SIMULATORS_TABLE_NAME: ${self:custom.names.simulatorsTable}
       OFFER_VALIDITY_SECONDS: "${param:offerValiditySeconds}"
+      SIM_CALLBACKS_QUEUE_URL: !Ref SimCallbacksQueue
+      BETA_CALLBACK_DELAY_SECONDS: "${param:betaCallbackDelaySeconds}"
+      BETA_LATE_CALLBACK_DELAY_SECONDS: "${param:betaLateCallbackDelaySeconds}"
     events:
       - http:
           path: sim/{proxy+}
           method: any
+
+  # O fornecedor simulado entrega os callbacks agendados pela beta, assinados, na API da própria stack
+  simCallbackSender:
+    handler: com.mmda.serverless.provider.simulators.SimCallbackSenderHandler::handleRequest
+    timeout: ${param:simCallbackSenderTimeoutSeconds}
+    role: SimCallbackSenderRole
+    package:
+      artifact: simulators/target/provider-simulators-lambda.zip
+    environment:
+      CALLBACK_SECRET_ID: ${self:custom.names.callbackSecret}
+      CALLBACKS_BASE_URL:
+        Fn::Sub: ${param:providersBaseUrl}
+    events:
+      - sqs:
+          arn: !GetAtt SimCallbacksQueue.Arn
+          batchSize: 1
+          functionResponseType: ReportBatchItemFailures
 
   enrichmentWorker:
     handler: ${self:custom.functionsHandler}
@@ -241,7 +288,7 @@ resources:
             KeyType: HASH
           - AttributeName: sk
             KeyType: RANGE
-        # Índice esparso do trabalho pendente: OUTBOX_PENDING, QUERY_IN_FLIGHT, QUERY_UNKNOWN (ADR 0015)
+        # Índice esparso do trabalho pendente: OUTBOX_PENDING, QUERY_IN_FLIGHT, QUERY_UNKNOWN e INBOX_RECEIVED (ADR 0015)
         GlobalSecondaryIndexes:
           - IndexName: gsi2
             KeySchema:
@@ -306,6 +353,21 @@ resources:
       Type: AWS::SQS::Queue
       Properties:
         QueueName: ${self:custom.names.insurerRequestsDeadLetterQueue}
+        MessageRetentionPeriod: 1209600
+
+    SimCallbacksQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.names.simCallbacksQueue}
+        VisibilityTimeout: ${param:simCallbacksVisibilityTimeoutSeconds}
+        RedrivePolicy:
+          deadLetterTargetArn: !GetAtt SimCallbacksDeadLetterQueue.Arn
+          maxReceiveCount: ${param:simCallbacksMaxReceiveCount}
+
+    SimCallbacksDeadLetterQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.names.simCallbacksDeadLetterQueue}
         MessageRetentionPeriod: 1209600
 
     # Só destino de falha do stream da relay: aponta shard e faixa de sequência, sem consumidor (§9)
@@ -384,7 +446,7 @@ resources:
           PasswordLength: 48
           ExcludePunctuation: true
 
-    # Assinatura dos callbacks (X-Signature), usada pela API de callbacks e pelo simCallbackSender (M3)
+    # Assinatura dos callbacks (X-Signature), usada pela API de callbacks e pelo simCallbackSender
     CallbackSecret:
       Type: AWS::SecretsManager::Secret
       Properties:
@@ -417,8 +479,79 @@ resources:
                 - Effect: Allow
                   Action:
                     - dynamodb:GetItem
+                    - dynamodb:PutItem
                     - dynamodb:UpdateItem
                   Resource: !GetAtt SimulatorsTable.Arn
+                # A beta agenda os callbacks com atraso
+                - Effect: Allow
+                  Action: sqs:SendMessage
+                  Resource: !GetAtt SimCallbacksQueue.Arn
+
+    # O simCallbackSender só consome a fila sim-callbacks e lê o segredo que assina os callbacks
+    SimCallbackSenderRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: sim-callback-sender
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource: arn:aws:logs:${aws:region}:${aws:accountId}:log-group:/aws/lambda/${self:service}-${sls:stage}-simCallbackSender:*
+                - Effect: Allow
+                  Action:
+                    - sqs:ReceiveMessage
+                    - sqs:DeleteMessage
+                    - sqs:GetQueueAttributes
+                  Resource: !GetAtt SimCallbacksQueue.Arn
+                - Effect: Allow
+                  Action: secretsmanager:GetSecretValue
+                  Resource: !Ref CallbackSecret
+
+    # A API de callbacks grava inbox, correlação e o resultado na tabela de consultas e a resposta bruta no bucket
+    CallbacksApiRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: callbacks-api
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource: arn:aws:logs:${aws:region}:${aws:accountId}:log-group:/aws/lambda/${self:service}-${sls:stage}-api:*
+                - Effect: Allow
+                  Action:
+                    - dynamodb:GetItem
+                    - dynamodb:PutItem
+                    - dynamodb:UpdateItem
+                    - dynamodb:Query
+                  Resource: !GetAtt QueriesTable.Arn
+                - Effect: Allow
+                  Action: s3:PutObject
+                  Resource: arn:aws:s3:::${self:custom.names.payloadsBucket}/raw/*
+                - Effect: Allow
+                  Action: secretsmanager:GetSecretValue
+                  Resource: !Ref CallbackSecret
 
   Outputs:
     SimulatorsRestApiId:

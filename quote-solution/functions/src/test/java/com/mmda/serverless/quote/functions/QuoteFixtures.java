@@ -1,8 +1,10 @@
 package com.mmda.serverless.quote.functions;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.mmda.serverless.quote.domain.Hashes;
+import com.mmda.serverless.quote.domain.Insurers;
 import com.mmda.serverless.quote.domain.QuoteEvents;
 import com.mmda.serverless.quote.domain.QuoteKeys;
 import com.mmda.serverless.quote.domain.QuoteSnapshot;
@@ -10,6 +12,7 @@ import com.mmda.serverless.quote.domain.Usage;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
@@ -89,8 +92,34 @@ final class QuoteFixtures {
         return item;
     }
 
-    /** {@code InsurerResultRecorded} como a provider publica, dentro do envelope do EventBridge. */
+    /** {@code InsurerResultRecorded} da alpha como a provider publica, dentro do envelope do EventBridge. */
     static String insurerResult(String workRef, String quoteId, String status, String eventId) {
+        return insurerResult(workRef, quoteId, Insurers.ALPHA, status, eventId, "q_" + workRef.substring(3),
+                "ATTEMPT#0001");
+    }
+
+    /**
+     * {@code InsurerResultRecorded} da seguradora informada, com o {@code queryId} e o {@code attemptRef} que a
+     * provider deriva do {@code workRef} (§5 do desenho). A beta, que responde por callback, publica o mesmo
+     * contrato da alpha.
+     */
+    static String insurerResult(String workRef, String quoteId, String insurerId, String status, String eventId) {
+        String queryId = providerQueryId(workRef);
+        return insurerResult(workRef, quoteId, insurerId, status, eventId, queryId, queryId + "#0001");
+    }
+
+    /** {@code queryId} que a provider grava para o pedido: {@code q_} + 32 hexadecimais do SHA-256 do {@code workRef}. */
+    static String providerQueryId(String workRef) {
+        return "q_" + Hashes.sha256Hex(workRef).substring(0, 32);
+    }
+
+    /** {@code eventId} do {@code InsurerResultRecorded}: UUIDv5 do {@code queryId}, igual em toda republicação. */
+    static String insurerResultEventId(String workRef) {
+        return Hashes.uuidV5(providerQueryId(workRef)).toString();
+    }
+
+    private static String insurerResult(String workRef, String quoteId, String insurerId, String status, String eventId,
+            String queryId, String attemptRef) {
         ObjectNode detail = MAPPER.createObjectNode()
                 .put("eventId", eventId)
                 .put("occurredAt", Instant.now().toString())
@@ -98,25 +127,32 @@ final class QuoteFixtures {
                 .put("workRef", workRef)
                 .put("quoteId", quoteId)
                 .put("version", 1)
-                .put("insurerId", "alpha")
-                .put("queryId", "q_" + workRef.substring(3))
-                .put("attemptRef", "ATTEMPT#0001")
+                .put("insurerId", insurerId)
+                .put("queryId", queryId)
+                .put("attemptRef", attemptRef)
                 .put("status", status);
-        detail.putArray("missingFields");
-        if ("QUOTED".equals(status)) {
-            ObjectNode offer = detail.putObject("offer")
-                    .put("externalOfferId", "ALPHA-123")
-                    .put("insurerName", "Alpha Seguros")
-                    .put("premiumTotal", "2450.90")
-                    .put("currency", "BRL")
-                    .put("validUntil", Instant.now().plusSeconds(1800).toString())
-                    .put("rawResponseRef", "s3://provider-solution-local-payloads/raw/q_1.json");
-            offer.putArray("installments").addObject().put("count", 1).put("amount", "2450.90");
-            offer.putArray("coverages").addObject().put("code", "COLLISION").put("label", "Colisão")
-                    .put("insuredAmount", "90000.00");
-            offer.putArray("deductibles").addObject().put("coverageCode", "COLLISION").put("amount", "3500.00");
-        } else {
-            detail.put("reasonCode", "RISK_NOT_ACCEPTED");
+        ArrayNode missingFields = detail.putArray("missingFields");
+        switch (status) {
+            case "QUOTED" -> {
+                String premium = Insurers.ALPHA.equals(insurerId) ? "2450.90" : "2299.00";
+                ObjectNode offer = detail.putObject("offer")
+                        .put("externalOfferId", insurerId.toUpperCase(Locale.ROOT) + "-123")
+                        .put("insurerName", Insurers.nameOf(insurerId).orElseThrow())
+                        .put("premiumTotal", premium)
+                        .put("currency", "BRL")
+                        .put("validUntil", Instant.now().plusSeconds(1800).toString())
+                        .put("rawResponseRef", "raw/" + queryId + "/0001.json");
+                offer.putArray("installments").addObject().put("count", 1).put("amount", premium);
+                offer.putArray("coverages").addObject().put("code", "COLLISION").put("label", "Colisão")
+                        .put("insuredAmount", "90000.00");
+                offer.putArray("deductibles").addObject().put("coverageCode", "COLLISION").put("amount", "3500.00");
+            }
+            case "NEEDS_INFORMATION" -> {
+                detail.put("reasonCode", "INSURER_NEEDS_INFORMATION");
+                missingFields.addObject().put("path", "risk.principalDriver.licenseDate")
+                        .put("reasonCode", "MISSING_LICENSE_DATE");
+            }
+            default -> detail.put("reasonCode", "RISK_NOT_ACCEPTED");
         }
         return envelope("InsurerResultRecorded", detail);
     }

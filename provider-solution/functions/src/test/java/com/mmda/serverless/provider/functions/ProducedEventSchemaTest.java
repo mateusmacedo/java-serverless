@@ -12,6 +12,7 @@ import com.mmda.serverless.provider.domain.enrichment.EnrichmentResolved;
 import com.mmda.serverless.provider.domain.enrichment.ReuseDecision;
 import com.mmda.serverless.provider.domain.insurer.InsurerProtocol;
 import com.mmda.serverless.provider.domain.insurer.InsurerQuoteRequest;
+import com.mmda.serverless.provider.domain.insurer.InsurerReply;
 import com.mmda.serverless.provider.domain.insurer.InsurerResultRecorded;
 import com.mmda.serverless.provider.domain.insurer.MissingField;
 import com.mmda.serverless.provider.domain.insurer.Offer;
@@ -152,6 +153,40 @@ class ProducedEventSchemaTest {
 
             assertThat(validate(schema("InsurerResultRecordedDetail"), objectMapper.valueToTree(event), "detail"))
                     .as("%s %s", insurerCase.outcome().status(), insurerCase.outcome().reasonCode())
+                    .isEmpty();
+        }
+    }
+
+    /** O resultado de cada callback da beta, classificado como na API de callbacks, segue o schema. */
+    @Test
+    void insurerResultRecordedFromEveryCallbackResultFollowsTheSchema() {
+        String workRef = Identities.workRef(QUOTE_ID, 1, Identities.INSURER, "beta");
+        String queryId = Identities.queryId(workRef);
+        InsurerReply offer = new InsurerReply(null, "OFFER", "BETA-095D0858", "Beta Seguros",
+                new InsurerReply.Premium("2481.46", "BRL"),
+                List.of(new InsurerReply.PaymentOption(1, "2481.46"), new InsurerReply.PaymentOption(12, "206.79")),
+                List.of(new InsurerReply.CoverageItem("COLLISION", "Colisão, incêndio e roubo", "75000.00")),
+                List.of(new InsurerReply.DeductibleItem("COLLISION", "3000.00")),
+                "2026-11-12T02:09:50.786Z", null, null, null, null);
+        List<InsurerReply> results = List.of(offer,
+                new InsurerReply(null, "DECLINED", null, null, null, null, null, null, null, "RISK_NOT_ACCEPTED", null,
+                        null, null),
+                new InsurerReply(null, "PENDING_INFORMATION", null, null, null, null, null, null, null, null,
+                        List.of(new InsurerReply.PendingField("risk.principalDriver.licenseDate", "MISSING_LICENSE_DATE")),
+                        null, null),
+                new InsurerReply(null, "OFFER", null, "Beta Seguros", null, null, null, null, null, null, null, null,
+                        null));
+
+        for (InsurerReply result : results) {
+            InsurerResultRecorded event = InsurerResultRecorded.of(
+                    new InsurerResultRecorded.Origin(workRef, QUOTE_ID, 1, "beta"), queryId,
+                    Identities.attemptRef(queryId, 1),
+                    InsurerResultRecorded.Outcome.of(InsurerProtocol.classifyCallback(result),
+                            "raw/" + queryId + "/callback-bev-1.json"),
+                    occurredAt);
+
+            assertThat(validate(schema("InsurerResultRecordedDetail"), objectMapper.valueToTree(event), "detail"))
+                    .as("callback %s", result.outcome())
                     .isEmpty();
         }
     }

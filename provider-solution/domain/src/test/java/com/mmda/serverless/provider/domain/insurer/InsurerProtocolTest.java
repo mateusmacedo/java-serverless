@@ -104,6 +104,15 @@ class InsurerProtocolTest {
     }
 
     @Test
+    void acceptedWithAProviderRequestIdThatNoCallbackCouldCarryIsUnavailableWithoutRetry() {
+        InsurerReply accepted = new InsurerReply("q_1", null, null, null, null, null, null, null, null, null, null,
+                "req:2026/abc", null);
+
+        assertThat(InsurerProtocol.classify(new CallOutcome.Responded<>(202, accepted)))
+                .isEqualTo(new InsurerVerdict.Unavailable(ErrorClasses.INVALID_PROVIDER_RESPONSE));
+    }
+
+    @Test
     void unreadableOrIncompleteAnswersAreUnavailableWithoutRetry() {
         InsurerReply withoutPremium = new InsurerReply("q_1", "OFFER", "ALPHA-1", "Alpha Seguros", null, null, null,
                 null, "2026-11-11T15:30:00.000Z", null, null, null, null);
@@ -118,6 +127,50 @@ class InsurerProtocolTest {
                 .isEqualTo(new InsurerVerdict.Unavailable(ErrorClasses.PROVIDER_REJECTED_REQUEST));
         assertThat(InsurerProtocol.classify(new CallOutcome.Responded<>(401, null)))
                 .isEqualTo(new InsurerVerdict.Unavailable(ErrorClasses.PROVIDER_AUTHENTICATION_FAILED));
+    }
+
+    @Test
+    void callbackResultIsClassifiedLikeTheSynchronousAnswer() {
+        InsurerReply pending = reply("PENDING_INFORMATION", null,
+                List.of(new InsurerReply.PendingField("risk.principalDriver.licenseDate", "MISSING_LICENSE_DATE")));
+
+        assertThat(InsurerProtocol.classifyCallback(OFFER))
+                .isEqualTo(InsurerProtocol.classify(new CallOutcome.Responded<>(200, OFFER)));
+        assertThat(InsurerProtocol.classifyCallback(reply("DECLINED", "RISK_NOT_ACCEPTED", null)))
+                .isEqualTo(new InsurerVerdict.Declined("RISK_NOT_ACCEPTED"));
+        assertThat(InsurerProtocol.classifyCallback(pending)).isInstanceOf(InsurerVerdict.NeedsInformation.class);
+        assertThat(InsurerProtocol.classifyCallback(null))
+                .isEqualTo(new InsurerVerdict.Unavailable(ErrorClasses.INVALID_PROVIDER_RESPONSE));
+        assertThat(InsurerProtocol.classifyCallback(reply("MAYBE", null, null)))
+                .isEqualTo(new InsurerVerdict.Unavailable(ErrorClasses.INVALID_PROVIDER_RESPONSE));
+    }
+
+    @Test
+    void terminalVerdictsBecomeOutcomesAndOnlyTheOfferCarriesTheRawResponse() {
+        InsurerVerdict quoted = InsurerProtocol.classifyCallback(OFFER);
+
+        InsurerResultRecorded.Outcome offer = InsurerResultRecorded.Outcome.of(quoted, "raw/q_1/callback.json");
+
+        assertThat(offer.status()).isEqualTo(InsurerResultStatus.QUOTED);
+        assertThat(offer.offer().rawResponseRef()).isEqualTo("raw/q_1/callback.json");
+        assertThat(offer.evidenceBody()).isEqualTo(offer.offer());
+        assertThat(InsurerResultRecorded.Outcome.of(new InsurerVerdict.Declined("RISK_NOT_ACCEPTED"), "raw").evidenceBody())
+                .isEqualTo(Map.of("reasonCode", "RISK_NOT_ACCEPTED"));
+        assertThat(InsurerResultRecorded.Outcome.of(new InsurerVerdict.Unavailable("INVALID_PROVIDER_RESPONSE"), "raw")
+                .status()).isEqualTo(InsurerResultStatus.UNAVAILABLE);
+        assertThatThrownBy(() -> InsurerResultRecorded.Outcome.of(new InsurerVerdict.Accepted("beta-1"), null))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void eventFromTheRecordedQueryEqualsTheEventFromTheRequest() {
+        InsurerQuoteRequest request = new InsurerQuoteRequest("evt-1", "wr_1", "org-acme", "quote-1", 2, "beta",
+                Map.of(), Map.of(), Instant.parse("2026-11-11T15:05:00Z"));
+        InsurerResultRecorded.Outcome outcome = InsurerResultRecorded.Outcome.declined("RISK_NOT_ACCEPTED");
+
+        assertThat(InsurerResultRecorded.of(new InsurerResultRecorded.Origin("wr_1", "quote-1", 2, "beta"), "q_1",
+                "q_1#0001", outcome, "2026-11-11T15:00:00.000Z"))
+                .isEqualTo(InsurerResultRecorded.of(request, "q_1", "q_1#0001", outcome, "2026-11-11T15:00:00.000Z"));
     }
 
     @Test
