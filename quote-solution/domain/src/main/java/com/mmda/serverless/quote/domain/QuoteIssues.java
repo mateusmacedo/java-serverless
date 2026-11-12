@@ -19,7 +19,10 @@ public final class QuoteIssues {
         TASK_EXPIRED,
         /** {@code ACTIVE_VERSION} além de {@code deadlineAt} + {@code stuckVersionMarginSeconds}. */
         STUCK_VERSION,
-        /** Mensagem descartada da {@code results-dlq} depois do limite ou do prazo (ADR 0007). */
+        /**
+         * Mensagem descartada da {@code results-dlq} no limite de tentativas ou sem identificar a cotação
+         * (ADR 0007).
+         */
         DEAD_LETTER
     }
 
