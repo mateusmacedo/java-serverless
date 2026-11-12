@@ -43,6 +43,16 @@ class ReconcilerMetricsTest {
         }
 
         @Override
+        public String issuesQueueUrl() {
+            return "issues";
+        }
+
+        @Override
+        public String issuesDeadLetterQueueUrl() {
+            return "issues-dlq";
+        }
+
+        @Override
         public int dlqMaxAttempts() {
             return 3;
         }

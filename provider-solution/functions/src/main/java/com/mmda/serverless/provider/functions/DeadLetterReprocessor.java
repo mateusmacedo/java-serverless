@@ -9,6 +9,7 @@ import com.mmda.serverless.provider.domain.operations.ReconcileStatus;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.Map;
+import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -35,15 +36,18 @@ class DeadLetterReprocessor {
     private final DeadLetterPolicy policy;
     private final OperationIssues issues;
     private final OperationLedger operationLedger;
+    private final QueryLedger ledger;
     private final EventJson json;
     private final OperationsProperties operations;
 
     DeadLetterReprocessor(SqsClient sqs, DeadLetterPolicy policy, OperationIssues issues,
-                          OperationLedger operationLedger, EventJson json, OperationsProperties operations) {
+                          OperationLedger operationLedger, QueryLedger ledger, EventJson json,
+                          OperationsProperties operations) {
         this.sqs = sqs;
         this.policy = policy;
         this.issues = issues;
         this.operationLedger = operationLedger;
+        this.ledger = ledger;
         this.json = json;
         this.operations = operations;
     }
@@ -105,9 +109,9 @@ class DeadLetterReprocessor {
         }
         DeadLetterPolicy.Reason reason = ((DeadLetterPolicy.Discard) decision).reason();
         Payload described = payload == null ? Payload.unreadable(message.messageId()) : payload;
+        Payload scoped = scoped(route, described);
         issues.raise(new OperationIssues.Observation(IssueType.DEAD_LETTER, route.name() + "|" + described.key(),
-                described.organizationId(), described.queryId(), described.quoteId(),
-                summary(route, reason, attempt)), true);
+                described.organizationId(), scoped.queryId(), scoped.quoteId(), summary(route, reason, attempt)), true);
         if (payload != null && RECONCILE_REQUESTS.equals(route.name())) {
             finishDiscardedReconciliation(message, now);
         }
@@ -132,6 +136,27 @@ class DeadLetterReprocessor {
             LOGGER.error("Discarded reconciliation without a usable request: messageId={}", message.messageId(),
                     unusable);
         }
+    }
+
+    /**
+     * WHY: o par {@code queryId} e {@code organizationId} da ocorrência autoriza a reconciliação manual na quote
+     * ({@code QUERYREF#}). Fica fora dela a consulta de outra organização e, no pedido de reconciliação, a que não
+     * existe: o {@code reconcileWorker} trata as duas como inexistentes. No pedido de consulta, a consulta derivada do
+     * {@code workRef} é do próprio pedido, mesmo antes de existir. A cotação que a mensagem não traz, como no pedido
+     * de reconciliação, vem da {@code QUERY} da própria organização.
+     */
+    private Payload scoped(OperationsProperties.DeadLetterRoute route, Payload payload) {
+        if (payload.queryId() == null || payload.organizationId() == null) {
+            return payload;
+        }
+        Optional<QueryLedger.QueryOwner> owner = ledger.ownerOf(payload.queryId());
+        if (owner.isEmpty()) {
+            return RECONCILE_REQUESTS.equals(route.name()) ? payload.withoutQuery() : payload;
+        }
+        if (!owner.get().organizationId().equals(payload.organizationId())) {
+            return payload.withoutQuery();
+        }
+        return payload.quoteId() == null ? payload.withQuote(owner.get().quoteId()) : payload;
     }
 
     private void delete(OperationsProperties.DeadLetterRoute route, Message message) {
@@ -183,6 +208,14 @@ class DeadLetterReprocessor {
 
         static Payload unreadable(String messageId) {
             return new Payload(messageId, null, null, null, null);
+        }
+
+        Payload withoutQuery() {
+            return new Payload(key, organizationId, null, null, deadlineAt);
+        }
+
+        Payload withQuote(String ownerQuoteId) {
+            return new Payload(key, organizationId, queryId, ownerQuoteId, deadlineAt);
         }
 
         private static String text(Map<?, ?> values, String name) {

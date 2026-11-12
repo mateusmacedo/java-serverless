@@ -6,14 +6,18 @@ import static com.mmda.serverless.quote.api.Items.s;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mmda.serverless.quote.domain.Idempotency;
+import com.mmda.serverless.quote.domain.Outcome;
 import com.mmda.serverless.quote.domain.Phase;
 import com.mmda.serverless.quote.domain.QuoteEvents;
 import com.mmda.serverless.quote.domain.QuoteKeys;
 import com.mmda.serverless.quote.domain.Retries;
+import com.mmda.serverless.quote.domain.Selections;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.io.UncheckedIOException;
 import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -25,6 +29,7 @@ import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.CancellationReason;
+import software.amazon.awssdk.services.dynamodb.model.ConditionCheck;
 import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.Put;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
@@ -39,6 +44,11 @@ import software.amazon.awssdk.services.dynamodb.model.Update;
 public class QuoteStore {
 
     private static final String NOT_EXISTS = "attribute_not_exists(" + QuoteKeys.PK + ")";
+    private static final String SELECTION_UNAVAILABLE =
+            "Não foi possível registrar a seleção agora; reenvie com a mesma Idempotency-Key.";
+    /** Prefixo de segundo de um instante, que limita o período no {@code gsi1sk}. */
+    private static final DateTimeFormatter SECOND =
+            DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
     private final DynamoDbClient dynamoDb;
     private final ObjectMapper objectMapper;
@@ -268,6 +278,221 @@ public class QuoteStore {
         return writes;
     }
 
+    /** Filtros da listagem; nulos são ignorados. O período é inclusivo nos dois extremos. */
+    public record QuoteFilter(Phase phase, Outcome outcome, Instant createdFrom, Instant createdTo) {
+    }
+
+    /**
+     * Cotações da organização pelo {@code gsi1} ({@code ORG#<organizationId>}), as mais novas primeiro, com
+     * {@code phase} e {@code outcome} do resumo do {@code META} em {@code FilterExpression} (§4 do desenho).
+     * WHY: o {@code createdAt} tem precisão variável no {@code gsi1sk}; a chave limita o período ao segundo e o
+     * instante exato é conferido no código.
+     */
+    public IndexPages.Page listQuotes(String organizationId, QuoteFilter filter, String afterPosition, int limit) {
+        List<String> conditions = new ArrayList<>();
+        Map<String, AttributeValue> values = new HashMap<>();
+        if (filter.phase() != null) {
+            conditions.add("phase = :phase");
+            values.put(":phase", s(filter.phase().name()));
+        }
+        if (filter.outcome() != null) {
+            conditions.add("outcome = :outcome");
+            values.put(":outcome", s(filter.outcome().name()));
+        }
+        String sortKey = null;
+        String from = filter.createdFrom() == null ? null : SECOND.format(filter.createdFrom());
+        String to = filter.createdTo() == null ? null : SECOND.format(filter.createdTo()) + "~";
+        if (from != null) {
+            values.put(":from", s(from));
+            sortKey = "#gsk >= :from";
+        }
+        if (to != null) {
+            values.put(":to", s(to));
+            sortKey = sortKey == null ? "#gsk <= :to" : "#gsk BETWEEN :from AND :to";
+        }
+        // WHY: o DynamoDB recusa com ValidationException o ExclusiveStartKey fora da condição da chave; o cursor de
+        // outra combinação de filtros responde 400, como o contrato prevê
+        if (afterPosition != null && ((from != null && afterPosition.compareTo(from) < 0)
+                || (to != null && afterPosition.compareTo(to) > 0))) {
+            throw ApiException.validation(List.of(new ErrorResponse.FieldError("cursor", "Cursor inválido.")));
+        }
+        IndexPages.Filter indexFilter = new IndexPages.Filter(sortKey,
+                conditions.isEmpty() ? null : String.join(" AND ", conditions), Map.of(), values,
+                meta -> createdWithin(meta, filter));
+        return IndexPages.read(dynamoDb, config.tableName(), QuoteKeys.organizationIndexPk(organizationId), indexFilter,
+                afterPosition, position -> Map.of(QuoteKeys.PK, s(QuoteKeys.quotePk(IndexPages.idOf(position))),
+                        QuoteKeys.SK, s(QuoteKeys.META)), limit);
+    }
+
+    private static boolean createdWithin(Map<String, AttributeValue> meta, QuoteFilter filter) {
+        String createdAt = Items.string(meta, "createdAt");
+        if (createdAt == null) {
+            return false;
+        }
+        Instant created = Instant.parse(createdAt);
+        return (filter.createdFrom() == null || !created.isBefore(filter.createdFrom()))
+                && (filter.createdTo() == null || !created.isAfter(filter.createdTo()));
+    }
+
+    /** Pedido de seleção, depois da permissão e da organização conferidas pela API. */
+    public record NewSelection(Idempotency.Key idempotencyKey, String requestHash, String quoteId, int version,
+            String offerId, String organizationId, String selectedBy, Instant selectedAt) {
+    }
+
+    /** Seleção devolvida ao cliente: a gravada agora, a de um reenvio ou a existente com a mesma oferta. */
+    public record RecordedSelection(String selectionId, String offerId, String selectedAt) {
+    }
+
+    /**
+     * Seleção definitiva (§8 do desenho, RN13, T18, T28 e T29). A decisão sai do {@code META} e da oferta lidos agora;
+     * a transação grava idempotência, {@code SELECTION}, {@code META} e outbox {@code OfferSelected} e confere a
+     * oferta. A condição do {@code META} é a mesma da nova versão, então só uma das duas vence.
+     */
+    public RecordedSelection select(NewSelection selection, Map<String, AttributeValue> meta) {
+        try {
+            return selectOrReplay(selection, meta);
+        } catch (SdkClientException | AwsServiceException failure) {
+            if (failure instanceof AwsServiceException service && !service.isThrottlingException()
+                    && service.statusCode() < 500) {
+                throw failure;
+            }
+            throw unavailable(SELECTION_UNAVAILABLE);
+        }
+    }
+
+    private RecordedSelection selectOrReplay(NewSelection selection, Map<String, AttributeValue> meta) {
+        Optional<Map<String, AttributeValue>> recorded = idempotencyRecord(selection.idempotencyKey());
+        if (recorded.isPresent()) {
+            return replaySelection(recorded.get(), selection.requestHash());
+        }
+        Optional<Map<String, AttributeValue>> offer = getItem(QuoteKeys.quotePk(selection.quoteId()),
+                QuoteKeys.offerSk(selection.version(), selection.offerId()));
+        Selections.Decision decision = decide(selection, meta, offer);
+        if (decision != Selections.Decision.RECORD) {
+            return answer(decision, selection);
+        }
+        TransactWriteItemsRequest request = TransactWriteItemsRequest.builder()
+                .transactItems(selectionWrites(selection)).build();
+        try {
+            retries.run(() -> dynamoDb.transactWriteItems(request), QuoteStore::isTransactionConflict);
+            return new RecordedSelection(QuoteKeys.selectionId(selection.quoteId(), selection.version()),
+                    selection.offerId(), selection.selectedAt().toString());
+        } catch (TransactionCanceledException canceled) {
+            recorded = idempotencyRecord(selection.idempotencyKey());
+            if (recorded.isPresent()) {
+                return replaySelection(recorded.get(), selection.requestHash());
+            }
+            List<String> reasons = canceled.hasCancellationReasons()
+                    ? canceled.cancellationReasons().stream().map(CancellationReason::code).toList() : List.of();
+            if (failed(reasons, 1) || failed(reasons, 2)) {
+                // NOTE: outra seleção ou uma nova versão venceu a corrida (T29); a decisão relê o META
+                Map<String, AttributeValue> current = meta(selection.quoteId()).orElseThrow(ApiException::notFound);
+                Selections.Decision after = decide(selection, current, offer);
+                if (after != Selections.Decision.RECORD) {
+                    return answer(after, selection);
+                }
+            } else if (failed(reasons, 3)) {
+                return answer(Selections.Decision.OFFER_EXPIRED, selection);
+            }
+            throw unavailable(SELECTION_UNAVAILABLE);
+        }
+    }
+
+    private Selections.Decision decide(NewSelection selection, Map<String, AttributeValue> meta,
+            Optional<Map<String, AttributeValue>> offer) {
+        String selectedOfferId = Items.string(meta, "selectedOfferId");
+        Selections.Existing existing = Items.string(meta, "selectionId") == null || selectedOfferId == null ? null
+                : new Selections.Existing((int) Items.number(meta, "selectedVersion", 0), selectedOfferId);
+        String validUntil = offer.map(item -> Items.string(item, "validUntil")).orElse(null);
+        return Selections.decide(selection.version(), (int) Items.number(meta, "currentVersion", 1), existing,
+                selection.offerId(), offer.isPresent(), validUntil == null ? null : Instant.parse(validUntil),
+                selection.selectedAt());
+    }
+
+    private RecordedSelection answer(Selections.Decision decision, NewSelection selection) {
+        return switch (decision) {
+            case EXISTING -> getItem(QuoteKeys.quotePk(selection.quoteId()), QuoteKeys.selectionSk(selection.version()))
+                    .map(item -> new RecordedSelection(Items.string(item, "selectionId"), Items.string(item, "offerId"),
+                            Items.string(item, "selectedAt")))
+                    .orElseThrow(() -> unavailable(SELECTION_UNAVAILABLE));
+            case NOT_FOUND -> throw ApiException.notFound();
+            case VERSION_SUPERSEDED -> throw new ApiException(409, "VERSION_SUPERSEDED",
+                    "A versão foi substituída por uma mais nova; leia a versão atual da cotação.");
+            case SELECTION_ALREADY_EXISTS -> throw new ApiException(409, "SELECTION_ALREADY_EXISTS",
+                    "A cotação já tem outra oferta selecionada; a seleção é definitiva.");
+            case OFFER_EXPIRED -> throw new ApiException(409, "OFFER_EXPIRED",
+                    "A oferta expirou; atualize as ofertas da versão.");
+            case RECORD -> throw unavailable(SELECTION_UNAVAILABLE);
+        };
+    }
+
+    /** Mesmo hash devolve a seleção gravada pela chave; hash diferente é 409 {@code IDEMPOTENCY_CONFLICT}. */
+    private static RecordedSelection replaySelection(Map<String, AttributeValue> recorded, String requestHash) {
+        if (Idempotency.compare(Items.string(recorded, "requestHash"), requestHash) == Idempotency.Decision.CONFLICT) {
+            throw new ApiException(409, "IDEMPOTENCY_CONFLICT", "A Idempotency-Key já foi usada com outro conteúdo.");
+        }
+        return new RecordedSelection(Items.string(recorded, "selectionId"), Items.string(recorded, "offerId"),
+                Items.string(recorded, "selectedAt"));
+    }
+
+    private static boolean failed(List<String> reasons, int action) {
+        return reasons.size() > action && "ConditionalCheckFailed".equals(reasons.get(action));
+    }
+
+    /** Ordem das ações: idempotência, {@code SELECTION}, {@code META}, conferência da oferta e outbox. */
+    private List<TransactWriteItem> selectionWrites(NewSelection selection) {
+        String now = selection.selectedAt().toString();
+        String pk = QuoteKeys.quotePk(selection.quoteId());
+        String selectionId = QuoteKeys.selectionId(selection.quoteId(), selection.version());
+        Map<String, AttributeValue> idempotency = new HashMap<>();
+        idempotency.put(QuoteKeys.PK, s(selection.idempotencyKey().pk()));
+        idempotency.put(QuoteKeys.SK, s(QuoteKeys.META));
+        idempotency.put(QuoteKeys.TYPE, s(QuoteKeys.TYPE_IDEMPOTENCY));
+        idempotency.put("organizationId", s(selection.organizationId()));
+        idempotency.put("operation", s(selection.idempotencyKey().operation().name()));
+        idempotency.put("scope", s(selection.idempotencyKey().scope()));
+        idempotency.put("requestHash", s(selection.requestHash()));
+        idempotency.put("resourceRef", s(QuoteKeys.statusUrl(selection.quoteId(), selection.version())));
+        idempotency.put("quoteId", s(selection.quoteId()));
+        idempotency.put("version", n(selection.version()));
+        idempotency.put("selectionId", s(selectionId));
+        idempotency.put("offerId", s(selection.offerId()));
+        idempotency.put("selectedAt", s(now));
+        idempotency.put("createdAt", s(now));
+
+        Map<String, AttributeValue> selectionItem = new HashMap<>();
+        selectionItem.put(QuoteKeys.PK, s(pk));
+        selectionItem.put(QuoteKeys.SK, s(QuoteKeys.selectionSk(selection.version())));
+        selectionItem.put(QuoteKeys.TYPE, s(QuoteKeys.TYPE_SELECTION));
+        selectionItem.put("quoteId", s(selection.quoteId()));
+        selectionItem.put("version", n(selection.version()));
+        selectionItem.put("selectionId", s(selectionId));
+        selectionItem.put("offerId", s(selection.offerId()));
+        selectionItem.put("selectedAt", s(now));
+        selectionItem.put("selectedBy", s(selection.selectedBy()));
+
+        List<TransactWriteItem> writes = new ArrayList<>();
+        writes.add(put(idempotency));
+        writes.add(put(selectionItem));
+        writes.add(update(pk, QuoteKeys.META,
+                "SET selectionId = :selectionId, selectedVersion = :v, selectedOfferId = :offerId, updatedAt = :now",
+                "currentVersion = :v AND attribute_not_exists(selectionId) AND organizationId = :org",
+                Map.of(":selectionId", s(selectionId), ":v", n(selection.version()), ":offerId", s(selection.offerId()),
+                        ":now", s(now), ":org", s(selection.organizationId()))));
+        writes.add(TransactWriteItem.builder().conditionCheck(ConditionCheck.builder()
+                .tableName(config.tableName())
+                .key(Map.of(QuoteKeys.PK, s(pk), QuoteKeys.SK, s(QuoteKeys.offerSk(selection.version(),
+                        selection.offerId()))))
+                .conditionExpression("attribute_exists(" + QuoteKeys.PK + ") AND validUntil > :now")
+                .expressionAttributeValues(Map.of(":now", s(now)))
+                .build()).build());
+        Map<String, Object> selected = QuoteEvents.offerSelected(selection.selectedAt(), selection.quoteId(),
+                selection.version(), selection.offerId(), selectionId);
+        writes.add(put(outbox((String) selected.get("eventId"), QuoteEvents.OFFER_SELECTED, selection.quoteId(),
+                selection.version(), selection.selectedAt(), selected)));
+        return writes;
+    }
+
     private Map<String, AttributeValue> versionItem(String quoteId, int number, String snapshotJson, String inputHash,
             Instant acceptedAt, Instant deadlineAt) {
         String now = acceptedAt.toString();
@@ -345,6 +570,9 @@ public class QuoteStore {
     }
 
     public Optional<Map<String, AttributeValue>> meta(String quoteId) {
+        if (!Items.fitsKey(quoteId)) {
+            return Optional.empty();
+        }
         return getItem(QuoteKeys.quotePk(quoteId), QuoteKeys.META);
     }
 
@@ -391,8 +619,11 @@ public class QuoteStore {
     }
 
     private static ApiException unavailable() {
-        return new ApiException(503, "SERVICE_UNAVAILABLE",
-                "Não foi possível aceitar a cotação agora; reenvie com a mesma Idempotency-Key.");
+        return unavailable("Não foi possível aceitar a cotação agora; reenvie com a mesma Idempotency-Key.");
+    }
+
+    static ApiException unavailable(String message) {
+        return new ApiException(503, "SERVICE_UNAVAILABLE", message);
     }
 
     private String toJson(Object value) {

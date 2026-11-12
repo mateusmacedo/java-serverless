@@ -1,0 +1,156 @@
+{
+  "description": "Painel operacional: ocorrências da quote e da provider com RECONCILE só na consulta UNKNOWN aberta, pedido de reconciliação (202 com QUEUED) e acompanhamento até SUCCEEDED ou FAILED. Uma reconciliação aceita não significa consulta recuperada.",
+  "exchanges": [
+    {
+      "name": "ocorrências abertas",
+      "request": {
+        "method": "GET",
+        "path": "/v1/operations/issues?status=OPEN"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "items": [
+            {
+              "id": "is_377e241dcf78da8d2801824b0048a237",
+              "queryId": "q_099d4987d3e2f2e6656e9285ac76a83e",
+              "quoteId": "5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11",
+              "type": "UNKNOWN_QUERY",
+              "status": "OPEN",
+              "firstSeenAt": "2026-11-12T04:12:57.575Z",
+              "lastSeenAt": "2026-11-12T04:12:57.575Z",
+              "safeSummary": "Consulta sem resposta do fornecedor, que não tem API de situação",
+              "allowedActions": [
+                "RECONCILE"
+              ]
+            },
+            {
+              "id": "iss_9b8a7c6d5e4f30211203f4e5d6c7b8a9",
+              "queryId": null,
+              "quoteId": "8e2a7d3c-41b6-4f0e-9c5a-1d2e3f4a5b6c",
+              "type": "WORKFLOW_FAILED",
+              "status": "OPEN",
+              "firstSeenAt": "2026-11-12T04:10:00.000Z",
+              "lastSeenAt": "2026-11-12T04:10:00.000Z",
+              "safeSummary": "A execução da versão 1 terminou em FAILED; a reconciliação finalizou a versão com os resultados já gravados.",
+              "allowedActions": []
+            },
+            {
+              "id": "is_1a2b3c4d5e6f708192a3b4c5d6e7f809",
+              "queryId": "q_5f4e3d2c1b0a99887766554433221100",
+              "quoteId": "8e2a7d3c-41b6-4f0e-9c5a-1d2e3f4a5b6c",
+              "type": "DEAD_LETTER",
+              "status": "OPEN",
+              "firstSeenAt": "2026-11-12T04:05:00.000Z",
+              "lastSeenAt": "2026-11-12T04:06:10.000Z",
+              "safeSummary": "Mensagem de insurer-requests descartada depois do prazo do pedido",
+              "allowedActions": []
+            }
+          ],
+          "nextCursor": null
+        }
+      }
+    },
+    {
+      "name": "versão parada resolvida",
+      "request": {
+        "method": "GET",
+        "path": "/v1/operations/issues?type=STUCK_VERSION"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "items": [
+            {
+              "id": "iss_0c1d2e3f405162738495a6b7c8d9e0f1",
+              "queryId": null,
+              "quoteId": "5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11",
+              "type": "STUCK_VERSION",
+              "status": "RESOLVED",
+              "firstSeenAt": "2026-11-12T03:00:00.000Z",
+              "lastSeenAt": "2026-11-12T03:04:00.000Z",
+              "safeSummary": "A versão 1 terminou depois de passar do prazo; a ocorrência foi resolvida.",
+              "allowedActions": []
+            }
+          ],
+          "nextCursor": null
+        }
+      }
+    },
+    {
+      "name": "reconciliação aceita",
+      "request": {
+        "method": "POST",
+        "path": "/v1/operations/queries/q_099d4987d3e2f2e6656e9285ac76a83e/reconcile",
+        "headers": {
+          "Idempotency-Key": "reconcile-1"
+        },
+        "body": {
+          "reason": "Consulta UNKNOWN há mais de 10 minutos; conferir com o fornecedor."
+        }
+      },
+      "response": {
+        "status": 202,
+        "body": {
+          "operationId": "op_6c0d3f1e2a4b5c6d7e8f901a2b3c4d5e",
+          "status": "QUEUED",
+          "statusUrl": "/v1/operations/op_6c0d3f1e2a4b5c6d7e8f901a2b3c4d5e"
+        },
+        "headers": {
+          "Location": "/v1/operations/op_6c0d3f1e2a4b5c6d7e8f901a2b3c4d5e"
+        }
+      }
+    },
+    {
+      "name": "na fila",
+      "request": {
+        "method": "GET",
+        "path": "/v1/operations/op_6c0d3f1e2a4b5c6d7e8f901a2b3c4d5e"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "operationId": "op_6c0d3f1e2a4b5c6d7e8f901a2b3c4d5e",
+          "queryId": "q_099d4987d3e2f2e6656e9285ac76a83e",
+          "status": "QUEUED",
+          "safeSummary": "Pedido de reconciliação registrado; aguardando a provider.",
+          "updatedAt": "2026-11-12T04:13:17.902Z"
+        }
+      }
+    },
+    {
+      "name": "concluída sem sucesso",
+      "request": {
+        "method": "GET",
+        "path": "/v1/operations/op_6c0d3f1e2a4b5c6d7e8f901a2b3c4d5e"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "operationId": "op_6c0d3f1e2a4b5c6d7e8f901a2b3c4d5e",
+          "queryId": "q_099d4987d3e2f2e6656e9285ac76a83e",
+          "status": "FAILED",
+          "safeSummary": "O fornecedor não tem API de situação; a consulta continua UNKNOWN",
+          "updatedAt": "2026-11-12T04:13:18.155Z"
+        }
+      }
+    },
+    {
+      "name": "concluída",
+      "request": {
+        "method": "GET",
+        "path": "/v1/operations/op_6c0d3f1e2a4b5c6d7e8f901a2b3c4d5e"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "operationId": "op_6c0d3f1e2a4b5c6d7e8f901a2b3c4d5e",
+          "queryId": "q_099d4987d3e2f2e6656e9285ac76a83e",
+          "status": "SUCCEEDED",
+          "safeSummary": "A consulta já estava concluída",
+          "updatedAt": "2026-11-12T04:13:18.636Z"
+        }
+      }
+    }
+  ]
+}

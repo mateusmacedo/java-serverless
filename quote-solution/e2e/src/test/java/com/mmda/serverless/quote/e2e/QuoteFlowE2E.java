@@ -15,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
+import java.text.Normalizer;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -28,11 +29,14 @@ import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -47,6 +51,7 @@ import software.amazon.awssdk.services.apigateway.ApiGatewayClient;
 import software.amazon.awssdk.services.apigateway.model.RestApi;
 import software.amazon.awssdk.services.cloudwatchlogs.CloudWatchLogsClient;
 import software.amazon.awssdk.services.cognitoidentityprovider.CognitoIdentityProviderClient;
+import software.amazon.awssdk.services.cognitoidentityprovider.model.AdminListGroupsForUserResponse;
 import software.amazon.awssdk.services.cognitoidentityprovider.model.AuthFlowType;
 import software.amazon.awssdk.services.cognitoidentityprovider.model.GroupType;
 import software.amazon.awssdk.services.cognitoidentityprovider.model.MessageActionType;
@@ -69,9 +74,10 @@ import software.amazon.awssdk.services.cloudwatchlogs.model.FilteredLogEvent;
 import software.amazon.awssdk.services.sqs.model.QueueAttributeName;
 
 /**
- * Ponta a ponta do M1 ao M4 (§14) no Floci, com as esperas no orçamento do stage (§9). Cada caso usa um par
+ * Ponta a ponta do M1 ao M5 (§14) no Floci, com as esperas no orçamento do stage (§9). Cada caso usa um par
  * veículo/condutor próprio, porque a {@code queryKey} só depende dele (§5), e apaga o reuso do par (§10); os do M4
- * apagam também, no {@code finally}, o estado que fabricaram e esperam os reconcilers pelo agendamento real.
+ * e do M5 apagam também, no {@code finally}, o estado que fabricaram e esperam os reconcilers pelo agendamento real.
+ * Toda troca com a API da quote passa pelo {@link ContractClient}, que a confere contra o contrato (T22).
  */
 class QuoteFlowE2E {
 
@@ -87,6 +93,17 @@ class QuoteFlowE2E {
     /** {@code perm_offers_select} desde o M4: o T17 confere que só a versão atual oferece {@code SELECT_OFFER}. */
     private static final List<String> GROUPS =
             List.of("org_org-acme", "perm_quotes_read", "perm_quotes_write", "perm_offers_select");
+    private static final User WRITER = new User(USERNAME, GROUPS);
+    /** Operador da Acme com as cinco permissões do contrato. */
+    private static final User OPERATOR = new User("e2e-acme-operator", List.of("org_org-acme", "perm_quotes_read",
+            "perm_quotes_write", "perm_offers_select", "perm_operations_read", "perm_operations_reconcile"));
+    /** Acme sem {@code offers:select} nem {@code operations:reconcile} (T30). */
+    private static final User VIEWER = new User("e2e-acme-viewer",
+            List.of("org_org-acme", "perm_quotes_read", "perm_quotes_write", "perm_operations_read"));
+    /** Operador da Globex com as cinco permissões: o 404 dele vem da organização, não da permissão (T18). */
+    private static final User GLOBEX = new User("e2e-globex-operator", List.of("org_org-globex", "perm_quotes_read",
+            "perm_quotes_write", "perm_offers_select", "perm_operations_read", "perm_operations_reconcile"));
+    private static final List<User> USERS = List.of(WRITER, OPERATOR, VIEWER, GLOBEX);
 
     private static final String APPLICANT = "customer-acme-frota";
     private static final String DRIVER = "driver-acme-bruno";
@@ -106,6 +123,18 @@ class QuoteFlowE2E {
     private static final String BETA_LATE = "vehicle-beta-late";
     private static final String ALPHA_DECLINES = "vehicle-alpha-declines";
     private static final String ALPHA_DOWN = "vehicle-alpha-down";
+    private static final String BETA_NEEDS_INFO = "vehicle-beta-needs-info";
+    private static final String FLAKY = "vehicle-flaky";
+    private static final String DRIVER_NOT_FOUND = "driver-not-found";
+    private static final String GLOBEX_ORGANIZATION = "org-globex";
+    private static final String GLOBEX_APPLICANT = "customer-globex-carla";
+    private static final String GLOBEX_VEHICLE = "vehicle-globex-suv-2022";
+    private static final String GLOBEX_DRIVER = "driver-globex-carla";
+    private static final Path CATALOG = Path.of("../../contracts/fixtures/catalog.json");
+    private static final Path FIXTURES = Path.of("../../contracts/fixtures");
+    /** Campos internos que nenhuma resposta da API pode trazer (§12 do PRD). */
+    private static final List<String> RAW_FIELDS = List.of("taskToken", "tokenCiphertext", "rawResponseRef",
+            "rawRequestRef", "payload", "detail", "requestHash", "gsi1pk", "gsi2pk");
     private static final String ALPHA = "alpha";
     private static final String BETA = "beta";
     private static final String CALLBACK_SECRET = "provider-solution/" + STAGE + "/callback-secret";
@@ -139,6 +168,11 @@ class QuoteFlowE2E {
     private static final String ORGANIZATION = "org-acme";
     /** Dois disparos de {@code rate(1 minute)} e a publicação; o Floci dispara a cada 60 a 70 s. */
     private static final Duration RECONCILER_BUDGET = Duration.ofMinutes(3);
+    /** Ida e volta da reconciliação manual: relay, barramento, filas e as duas Lambdas, sem agendamento. */
+    private static final Duration RECONCILE_BUDGET = Duration.ofMinutes(1);
+    /** Pedidos de cada lado por rodada do T29, e rodadas antes de selecionar sem disputa. */
+    private static final int T29_CONTENDERS = 3;
+    private static final int T29_ROUNDS = 3;
     private static final DateTimeFormatter SECONDS =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
     /** Formato do {@code Timestamps} da provider, comparado como texto no {@code gsi2sk}. */
@@ -158,7 +192,8 @@ class QuoteFlowE2E {
     private static StageParameters stage;
     private static String apiBase;
     private static String providerApiBase;
-    private static String accessToken;
+    private static ContractClient api;
+    private static final Map<User, String> TOKENS = new LinkedHashMap<>();
     private static String stateMachineArn;
     private static String desiredStartDate;
     private static byte[] queryKeySecret;
@@ -172,12 +207,13 @@ class QuoteFlowE2E {
             apiBase = baseUrlOf(apiGateway, STAGE + "-quote-solution");
             providerApiBase = baseUrlOf(apiGateway, STAGE + "-provider-solution");
         }
+        api = new ContractClient(apiBase);
         stateMachineArn = SFN.listStateMachinesPaginator(builder -> builder.maxResults(100)).stateMachines().stream()
                 .filter(machine -> machine.name().equals(QUOTE_PREFIX + "-quote-flow"))
                 .map(StateMachineListItem::stateMachineArn)
                 .findFirst()
                 .orElseThrow(() -> new IllegalStateException("state machine not found; deploy quote-solution first"));
-        accessToken = signIn();
+        signIn();
         try (SecretsManagerClient secrets = SecretsManagerClient.create()) {
             queryKeySecret = secrets.getSecretValue(builder -> builder.secretId(QUERY_KEY_SECRET)).secretString()
                     .getBytes(StandardCharsets.UTF_8);
@@ -534,7 +570,12 @@ class QuoteFlowE2E {
     @Test
     void t01_twoInsurersQuoteAndEveryOfferLinksItsEvidence() throws Exception {
         forgetEnrichmentReuse(HATCH, DRIVER_ANA);
+        Instant posted = Instant.now();
         Accepted accepted = create(newKey(), JSON.writeValueAsString(request(HATCH, "PERSONAL", DRIVER_ANA)));
+        awaitFirstOffer(accepted, stage.withInsurers(2));
+        Duration firstOffer = Duration.between(posted, Instant.now());
+        LOG.info(() -> "T01 first offer visible %d ms after the POST: quoteId=%s".formatted(firstOffer.toMillis(),
+                accepted.quoteId()));
 
         JsonNode version = awaitTerminal(accepted, stage.withInsurers(2));
 
@@ -1212,6 +1253,503 @@ class QuoteFlowE2E {
         } finally {
             forgetEnrichmentReuse(VAN, DRIVER_ANA);
         }
+    }
+
+    /**
+     * T18: a oferta expirada e a oferta de outra organização são recusadas sem gravar intenção de proposta: nem
+     * {@code SELECTION}, nem {@code selectionId} no {@code META}, nem idempotência, nem {@code OfferSelected}. A
+     * expiração é fabricada no {@code validUntil} da oferta e desfeita no {@code finally}.
+     */
+    @Test
+    void t18_expiredOfferOrOfferOfAnotherOrganizationIsRejectedWithoutRecordingAnIntent() throws Exception {
+        forgetEnrichmentReuse(ALPHA_DECLINES, DRIVER_ANA);
+        Map<String, AttributeValue> offerKey = null;
+        String originalValidUntil = null;
+        try {
+            Accepted accepted = create(newKey(),
+                    JSON.writeValueAsString(request(ALPHA_DECLINES, "PERSONAL", DRIVER_ANA)));
+            JsonNode version = awaitTerminal(accepted, stage.withInsurers(2));
+            JsonNode offer = offersByInsurer(accepted).get(BETA);
+            String offerId = offer.path("id").asText();
+            String globexKey = newKey();
+
+            HttpResponse<String> ofAnotherOrganization = select(GLOBEX, accepted, globexKey, offerId);
+            HttpResponse<String> readByAnotherOrganization = call(GLOBEX, "GET", accepted.statusUrl(), null, null);
+            offerKey = Map.of("pk", AttributeValue.fromS("QUOTE#" + accepted.quoteId()),
+                    "sk", AttributeValue.fromS("V#0001#OFFER#" + offerId));
+            originalValidUntil = string(item(QUOTES_TABLE, offerKey), "validUntil");
+            setValidUntil(offerKey, Instant.now().minusSeconds(1).toString());
+            JsonNode expiredOffers = getOk(accepted.statusUrl() + "/offers");
+            JsonNode versionAfterExpiry = getOk(accepted.statusUrl());
+            String writerKey = newKey();
+            HttpResponse<String> expired = select(WRITER, accepted, writerKey, offerId);
+
+            assertThat(statusByInsurer(version)).containsExactly(Map.entry(ALPHA, "DECLINED"), Map.entry(BETA, "QUOTED"));
+            assertThat(offer.path("selectable").asBoolean()).as("valid when the other organization tried").isTrue();
+            assertError(ofAnotherOrganization, 404, "NOT_FOUND");
+            assertError(readByAnotherOrganization, 404, "NOT_FOUND");
+            assertError(expired, 409, "OFFER_EXPIRED");
+            assertThat(expiredOffers.path("items")).singleElement().satisfies(item -> {
+                assertThat(item.path("selectable").asBoolean()).isFalse();
+                assertThat(item.path("unavailabilityReason").asText()).isEqualTo("OFFER_EXPIRED");
+            });
+            assertThat(texts(versionAfterExpiry.path("allowedActions"))).containsExactly("CREATE_VERSION");
+            assertNoSelectionRecorded(accepted.quoteId(),
+                    idempotencyPk(GLOBEX_ORGANIZATION, "SELECT_OFFER", accepted.quoteId(), globexKey),
+                    idempotencyPk(ORGANIZATION, "SELECT_OFFER", accepted.quoteId(), writerKey));
+        } finally {
+            if (originalValidUntil != null) {
+                setValidUntil(offerKey, originalValidUntil);
+            }
+            forgetEnrichmentReuse(ALPHA_DECLINES, DRIVER_ANA);
+        }
+    }
+
+    /**
+     * T22 na API implantada: cada operação do contrato é exercitada e conferida contra o {@code openapi.yaml}, com
+     * erros, {@code PARTIAL} com pendência e {@code NEEDS_INFORMATION} do enriquecimento. O catálogo servido, os
+     * erros e a pendência da beta são os das fixtures, e as coberturas das ofertas são as do {@code catalog.json}.
+     */
+    @Test
+    void t22_everyContractOperationAnswersTheSharedSchemaWithErrorsAndPartialResults() throws Exception {
+        forgetEnrichmentReuse(BETA_NEEDS_INFO, DRIVER_ANA);
+        forgetEnrichmentReuse(UNKNOWN_TO_THE_PROVIDER, DRIVER_NOT_FOUND);
+        try {
+            Accepted partial = create(newKey(),
+                    JSON.writeValueAsString(request(BETA_NEEDS_INFO, "PERSONAL", DRIVER_ANA)));
+            Accepted notFound = create(newKey(),
+                    JSON.writeValueAsString(request(UNKNOWN_TO_THE_PROVIDER, "PERSONAL", DRIVER_NOT_FOUND)));
+            for (User user : USERS) {
+                JsonNode me = okJson(user, "/v1/me");
+                assertThat(me.path("organizationId").asText()).as(user.username())
+                        .isEqualTo(user.groups().getFirst().substring("org_".length()));
+                assertThat(texts(me.path("permissions"))).as(user.username())
+                        .containsExactlyInAnyOrderElementsOf(user.permissions());
+            }
+            for (JsonNode exchange : fixture("catalog-pages.json").path("exchanges")) {
+                assertThat(okJson(OPERATOR, exchange.at("/request/path").asText()))
+                        .as(exchange.path("name").asText()).isEqualTo(exchange.at("/response/body"));
+            }
+            JsonNode errors = fixture("errors.json").path("exchanges");
+            JsonNode validation = errors.get(0);
+            HttpResponse<String> invalid = call(WRITER, "POST", "/v1/quotes", newKey(),
+                    JSON.writeValueAsString(validation.at("/request/body")));
+            HttpResponse<String> unauthenticated = api.send(null, "GET", "/v1/me", Map.of(), null);
+            HttpResponse<String> tampered = api.send(TOKENS.get(WRITER) + "x", "GET", "/v1/me", Map.of(), null);
+            HttpResponse<String> unsupported = api.send(TOKENS.get(WRITER), "POST", "/v1/quotes",
+                    Map.of("Content-Type", "text/plain", "Idempotency-Key", newKey()),
+                    JSON.writeValueAsString(request(VAN, "COMMERCIAL", DRIVER)));
+            HttpResponse<String> withoutOperationsRead = call(WRITER, "GET", "/v1/operations/issues", null, null);
+            HttpResponse<String> unknownQuote = call(OPERATOR, "GET",
+                    "/v1/quotes/" + UUID.randomUUID() + "/versions/1", null, null);
+            HttpResponse<String> unknownOperation = call(OPERATOR, "GET",
+                    "/v1/operations/op_" + UUID.randomUUID().toString().replace("-", ""), null, null);
+            HttpResponse<String> unknownQuery = reconcile(OPERATOR,
+                    "q_" + UUID.randomUUID().toString().replace("-", ""), newKey(), "e2e: consulta desconhecida");
+            HttpResponse<String> issues = call(OPERATOR, "GET", "/v1/operations/issues?limit=5", null, null);
+            HttpResponse<String> quotes = call(WRITER, "GET", "/v1/quotes?limit=2", null, null);
+
+            JsonNode partialVersion = awaitTerminal(partial, stage.withInsurers(2));
+            JsonNode partialOffers = getOk(partial.statusUrl() + "/offers?limit=1");
+            JsonNode notFoundVersion = awaitTerminal(notFound, stage.withInsurers(1));
+            HttpResponse<String> staleVersion = postVersion(partial.quoteId(), newKey(),
+                    JSON.writeValueAsString(versionRequest(2, BETA_NEEDS_INFO, "PERSONAL", DRIVER_ANA)));
+            HttpResponse<String> readByAnotherOrganization = call(GLOBEX, "GET", partial.statusUrl(), null, null);
+            String alphaOffer = partialOffers.path("items").get(0).path("id").asText();
+            HttpResponse<String> selected = select(OPERATOR, partial, newKey(), alphaOffer);
+            JsonNode selectedVersion = getOk(partial.statusUrl());
+
+            JsonNode expectedPartial = fixture("quote-partial-needs-information.json").at("/exchanges/0/response/body");
+            assertThat(partialVersion.path("outcome").asText()).isEqualTo("PARTIAL");
+            assertThat(partialVersion.path("outcomeReason").isNull()).isTrue();
+            assertThat(partialVersion.path("missingFields")).as("the pending fields stay in the insurer result")
+                    .isEmpty();
+            assertThat(statusByInsurer(partialVersion)).isEqualTo(statusByInsurer(expectedPartial));
+            JsonNode beta = insurerResult(partialVersion, BETA);
+            JsonNode expectedBeta = insurerResult(expectedPartial, BETA);
+            assertThat(beta.path("reasonCode")).isEqualTo(expectedBeta.path("reasonCode"));
+            assertThat(beta.path("missingFields")).isEqualTo(expectedBeta.path("missingFields"));
+            assertThat(texts(partialVersion.path("allowedActions")))
+                    .containsExactlyElementsOf(texts(expectedPartial.path("allowedActions")));
+            JsonNode alpha = partialOffers.path("items").get(0);
+            assertThat(partialOffers.path("items")).hasSize(1);
+            assertThat(partialOffers.path("nextCursor").isNull()).isTrue();
+            assertThat(alpha.path("insurerId").asText()).isEqualTo(ALPHA);
+            assertThat(alpha.path("coverages")).as("the coverage profile of catalog.json, read by the simulators")
+                    .isEqualTo(coverageProfile("COMPREHENSIVE").path("coverages"));
+            assertThat(alpha.path("deductibles")).singleElement()
+                    .satisfies(deductible -> assertThat(deductible.path("coverageCode").asText()).isEqualTo("COLLISION"));
+
+            JsonNode expectedVehicleNotFound = fixture("quote-needs-information.json")
+                    .at("/exchanges/1/response/body/missingFields/0");
+            assertThat(notFoundVersion.path("outcome").asText()).isEqualTo("NEEDS_INFORMATION");
+            assertThat(notFoundVersion.path("outcomeReason").asText()).isEqualTo("ENRICHMENT_NOT_FOUND");
+            assertThat(notFoundVersion.path("missingFields")).hasSize(2);
+            assertThat(notFoundVersion.path("missingFields").get(0)).isEqualTo(expectedVehicleNotFound);
+            JsonNode driverNotFound = notFoundVersion.path("missingFields").get(1);
+            assertThat(driverNotFound.path("path").asText()).isEqualTo("risk.principalDriverRef");
+            assertThat(driverNotFound.path("reasonCode").asText()).isEqualTo("ENRICHMENT_NOT_FOUND");
+            assertThat(notFoundVersion.path("insurerResults")).isEmpty();
+            assertThat(texts(notFoundVersion.path("allowedActions"))).containsExactly("CREATE_VERSION");
+            assertNoInsurerConsulted(notFound.quoteId());
+
+            JsonNode invalidError = assertError(invalid, 400, "VALIDATION_ERROR");
+            assertThat(invalidError.path("message")).isEqualTo(validation.at("/response/body/message"));
+            assertThat(invalidError.path("fieldErrors")).isEqualTo(validation.at("/response/body/fieldErrors"));
+            for (HttpResponse<String> response : List.of(unauthenticated, tampered)) {
+                assertThat(assertError(response, 401, "UNAUTHENTICATED").path("message"))
+                        .isEqualTo(errors.get(1).at("/response/body/message"));
+            }
+            assertError(unsupported, 415, "UNSUPPORTED_MEDIA_TYPE");
+            assertError(withoutOperationsRead, 403, "FORBIDDEN");
+            for (HttpResponse<String> response : List.of(unknownQuote, unknownOperation, unknownQuery,
+                    readByAnotherOrganization)) {
+                assertError(response, 404, "NOT_FOUND");
+            }
+            assertError(staleVersion, 409, "VERSION_CONFLICT");
+            assertThat(issues.statusCode()).as(issues.body()).isEqualTo(200);
+            assertThat(quotes.statusCode()).as(quotes.body()).isEqualTo(200);
+            assertThat(selected.statusCode()).as(selected.body()).isEqualTo(201);
+            assertThat(selectedVersion.path("selection")).isEqualTo(JSON.readTree(selected.body()));
+            assertThat(selectedVersion.path("allowedActions")).isEmpty();
+            assertThat(api.exercised()).as("operations of contracts/openapi.yaml exercised by the e2e")
+                    .containsAll(api.operationIds());
+            // NOTE: aqui a nova versão só recebe 409 e a reconciliação, 404; o 2xx delas é conferido contra o contrato
+            // no T17 e no T29 (nova versão) e no m5_manual (reconciliação aceita e acompanhada)
+            Set<String> successElsewhere = Set.of("createQuoteVersion", "reconcileQuery", "getOperation");
+            assertThat(api.succeeded()).as("operations whose 2xx response T22 itself checks against the contract")
+                    .containsAll(api.operationIds().stream().filter(id -> !successElsewhere.contains(id)).toList());
+        } finally {
+            forgetEnrichmentReuse(BETA_NEEDS_INFO, DRIVER_ANA);
+            forgetEnrichmentReuse(UNKNOWN_TO_THE_PROVIDER, DRIVER_NOT_FOUND);
+        }
+    }
+
+    /**
+     * T28: a mesma oferta devolve a seleção existente, com a mesma chave ou com outra; outra oferta recebe 409
+     * {@code SELECTION_ALREADY_EXISTS}, e a chave reutilizada com outra oferta, 409 {@code IDEMPOTENCY_CONFLICT}. Fica
+     * uma única {@code SELECTION} e um único {@code OfferSelected}.
+     */
+    @Test
+    void t28_repeatedSelectionReturnsTheExistingOneAndAnotherOfferConflicts() throws Exception {
+        forgetEnrichmentReuse(BETA_DUPLICATE, DRIVER_ANA);
+        try {
+            Accepted accepted = create(newKey(),
+                    JSON.writeValueAsString(request(BETA_DUPLICATE, "PERSONAL", DRIVER_ANA)));
+            awaitTerminal(accepted, stage.withInsurers(2));
+            Map<String, JsonNode> offers = offersByInsurer(accepted);
+            String alphaOffer = offers.get(ALPHA).path("id").asText();
+            String betaOffer = offers.get(BETA).path("id").asText();
+            String key = newKey();
+
+            HttpResponse<String> first = select(WRITER, accepted, key, alphaOffer);
+            HttpResponse<String> replayed = select(WRITER, accepted, key, alphaOffer);
+            HttpResponse<String> sameOfferOtherKey = select(WRITER, accepted, newKey(), alphaOffer);
+            HttpResponse<String> otherOffer = select(WRITER, accepted, newKey(), betaOffer);
+            HttpResponse<String> reusedKey = select(WRITER, accepted, key, betaOffer);
+            JsonNode version = getOk(accepted.statusUrl());
+            JsonNode offersAfter = getOk(accepted.statusUrl() + "/offers");
+
+            assertThat(offers).containsOnlyKeys(ALPHA, BETA);
+            assertThat(first.statusCode()).as(first.body()).isEqualTo(201);
+            JsonNode selection = JSON.readTree(first.body());
+            assertThat(selection.path("offerId").asText()).isEqualTo(alphaOffer);
+            assertThat(selection.path("status").asText()).isEqualTo("INTENT_RECORDED");
+            assertThat(selection.path("selectionId").asText()).startsWith("sel_");
+            for (HttpResponse<String> same : List.of(replayed, sameOfferOtherKey)) {
+                assertThat(same.statusCode()).as(same.body()).isEqualTo(201);
+                assertThat(JSON.readTree(same.body())).isEqualTo(selection);
+            }
+            assertError(otherOffer, 409, "SELECTION_ALREADY_EXISTS");
+            assertError(reusedKey, 409, "IDEMPOTENCY_CONFLICT");
+            assertThat(version.path("selection")).isEqualTo(selection);
+            assertThat(version.path("allowedActions")).isEmpty();
+            assertThat(offersAfter.path("items")).hasSize(2).allSatisfy(item -> {
+                assertThat(item.path("selectable").asBoolean()).isFalse();
+                assertThat(item.path("unavailabilityReason").asText()).isEqualTo("SELECTION_ALREADY_EXISTS");
+            });
+            assertThat(quoteItems(accepted.quoteId(), "V#0001#SELECTION")).singleElement()
+                    .satisfies(item -> assertThat(string(item, "offerId")).isEqualTo(alphaOffer));
+            assertThat(outboxOf("OfferSelected", "quoteId", accepted.quoteId())).singleElement()
+                    .satisfies(outbox -> assertThat(string(outbox, "detail"))
+                            .contains(selection.path("selectionId").asText()));
+        } finally {
+            forgetEnrichmentReuse(BETA_DUPLICATE, DRIVER_ANA);
+        }
+    }
+
+    /**
+     * T29: seleções e novas versões disputam a mesma versão atual, e só um dos lados vence. Se a nova versão vence, a
+     * disputa se repete na versão criada. Depois da seleção, a nova versão recebe 409 {@code QUOTE_ALREADY_SELECTED},
+     * e a pendência da beta ({@code NEEDS_INFORMATION}), lida depois da seleção, não oferece {@code CREATE_VERSION}.
+     */
+    @Test
+    void t29_selectionAndNewVersionRaceHasOneWinnerAndASelectedQuoteTakesNoNewVersion() throws Exception {
+        forgetEnrichmentReuse(BETA_NEEDS_INFO, DRIVER);
+        ExecutorService executor = Executors.newFixedThreadPool(2 * T29_CONTENDERS);
+        try {
+            Accepted current = create(newKey(), JSON.writeValueAsString(request(BETA_NEEDS_INFO, "PERSONAL", DRIVER)));
+            JsonNode selection = null;
+            for (int round = 1; selection == null && round <= T29_ROUNDS; round++) {
+                String offerId = awaitFirstOffer(current, stage.withInsurers(2)).path("items").get(0).path("id")
+                        .asText();
+                String phase = getOk(current.statusUrl()).path("phase").asText();
+                Race race = race(executor, current, offerId);
+                List<HttpResponse<String>> selected = race.selections().stream()
+                        .filter(response -> response.statusCode() == 201).toList();
+                List<HttpResponse<String>> created = race.versions().stream()
+                        .filter(response -> response.statusCode() == 202).toList();
+                String summary = "T29 round=%d quoteId=%s version=%d phase=%s selections=%s versions=%s".formatted(round,
+                        current.quoteId(), current.version(), phase, statuses(race.selections()),
+                        statuses(race.versions()));
+                LOG.info(summary);
+
+                assertThat(selected.isEmpty()).as("only one side wins the race").isNotEqualTo(created.isEmpty());
+                if (!selected.isEmpty()) {
+                    assertThat(race.selections()).allSatisfy(response ->
+                            assertThat(response.statusCode()).as(response.body()).isEqualTo(201));
+                    assertThat(race.selections().stream().map(response -> selectionIdOf(response)).distinct())
+                            .hasSize(1);
+                    assertThat(race.versions()).allSatisfy(response ->
+                            assertError(response, 409, "QUOTE_ALREADY_SELECTED"));
+                    selection = JSON.readTree(selected.getFirst().body());
+                } else {
+                    assertThat(created).hasSize(1);
+                    assertThat(race.selections()).allSatisfy(response ->
+                            assertError(response, 409, "VERSION_SUPERSEDED"));
+                    assertThat(race.versions().stream().filter(response -> response.statusCode() != 202))
+                            .allSatisfy(response -> assertError(response, 409, "VERSION_CONFLICT"));
+                    current = accepted(created.getFirst());
+                }
+            }
+            if (selection == null) {
+                String offerId = awaitFirstOffer(current, stage.withInsurers(2)).path("items").get(0).path("id")
+                        .asText();
+                HttpResponse<String> selected = select(WRITER, current, newKey(), offerId);
+                assertThat(selected.statusCode()).as(selected.body()).isEqualTo(201);
+                selection = JSON.readTree(selected.body());
+            }
+            Accepted selectedVersion = current;
+
+            HttpResponse<String> blocked = postVersion(selectedVersion.quoteId(), newKey(), JSON.writeValueAsString(
+                    versionRequest(selectedVersion.version(), BETA_NEEDS_INFO, "PERSONAL", DRIVER)));
+            JsonNode terminal = awaitTerminal(selectedVersion, stage.withInsurers(2));
+
+            assertError(blocked, 409, "QUOTE_ALREADY_SELECTED");
+            assertThat(terminal.path("outcome").asText()).isEqualTo("PARTIAL");
+            JsonNode beta = insurerResult(terminal, BETA);
+            assertThat(beta.path("status").asText()).isEqualTo("NEEDS_INFORMATION");
+            assertThat(beta.path("missingFields")).isNotEmpty();
+            assertThat(terminal.path("selection")).isEqualTo(selection);
+            assertThat(terminal.path("allowedActions")).as("no CREATE_VERSION after the selection").isEmpty();
+            Map<String, AttributeValue> meta = item(QUOTES_TABLE, metaKey("QUOTE#" + selectedVersion.quoteId()));
+            assertThat(number(meta, "currentVersion")).isEqualTo(selectedVersion.version());
+            assertThat(string(meta, "selectionId")).isEqualTo(selection.path("selectionId").asText());
+            assertThat(quoteItems(selectedVersion.quoteId(), "V#")).filteredOn(item -> string(item, "sk")
+                    .endsWith("#SELECTION")).singleElement()
+                    .satisfies(item -> assertThat(number(item, "version")).isEqualTo(selectedVersion.version()));
+            Instant selectedAt = Instant.parse(selection.path("selectedAt").asText());
+            Instant betaAt = Instant.parse(beta.path("updatedAt").asText());
+            LOG.info(() -> "T29 quoteId=%s version=%d selectedAt=%s betaNeedsInformationAt=%s (%s the selection)"
+                    .formatted(selectedVersion.quoteId(), selectedVersion.version(), selectedAt, betaAt,
+                            betaAt.isAfter(selectedAt) ? "after" : "before"));
+            assertThat(betaAt).as("the NEEDS_INFORMATION is recorded after the selection, the case of PRD T29")
+                    .isAfter(selectedAt);
+        } finally {
+            executor.shutdownNow();
+            forgetEnrichmentReuse(BETA_NEEDS_INFO, DRIVER);
+        }
+    }
+
+    /**
+     * T30: sem {@code offers:select}, a seleção de uma oferta válida recebe 403; sem {@code operations:reconcile},
+     * a reconciliação de uma consulta da organização também. Nada é gravado, e as ações oferecidas seguem as
+     * permissões do usuário. Sem {@code operations:read}, a listagem de ocorrências recebe 403.
+     */
+    @Test
+    void t30_userWithoutPermissionGets403OnSelectionAndReconciliation() throws Exception {
+        forgetEnrichmentReuse(ALPHA_DOWN, DRIVER_ANA);
+        try {
+            Accepted accepted = create(newKey(), JSON.writeValueAsString(request(ALPHA_DOWN, "PERSONAL", DRIVER_ANA)));
+            JsonNode version = awaitTerminal(accepted, stage.withInsurers(2));
+            JsonNode offer = offersByInsurer(accepted).get(BETA);
+            String queryId = string(insurerQuery(accepted.quoteId(), BETA), "queryId");
+            String selectionKey = newKey();
+            String reconcileKey = newKey();
+
+            HttpResponse<String> selection = select(VIEWER, accepted, selectionKey, offer.path("id").asText());
+            HttpResponse<String> reconciliation = reconcile(VIEWER, queryId, reconcileKey, "e2e: T30 sem permissão");
+            HttpResponse<String> writerReconciliation = reconcile(WRITER, queryId, newKey(), "e2e: T30 sem permissão");
+            HttpResponse<String> writerIssues = call(WRITER, "GET", "/v1/operations/issues", null, null);
+            JsonNode viewerVersion = okJson(VIEWER, accepted.statusUrl());
+
+            assertThat(statusByInsurer(version)).containsEntry(ALPHA, "UNAVAILABLE").containsEntry(BETA, "QUOTED");
+            assertThat(offer.path("selectable").asBoolean()).isTrue();
+            assertThat(texts(version.path("allowedActions"))).containsExactlyInAnyOrder("CREATE_VERSION", "SELECT_OFFER");
+            assertError(selection, 403, "FORBIDDEN");
+            assertError(reconciliation, 403, "FORBIDDEN");
+            assertError(writerReconciliation, 403, "FORBIDDEN");
+            assertError(writerIssues, 403, "FORBIDDEN");
+            assertThat(texts(viewerVersion.path("allowedActions"))).containsExactly("CREATE_VERSION");
+            assertNoSelectionRecorded(accepted.quoteId(),
+                    idempotencyPk(ORGANIZATION, "SELECT_OFFER", accepted.quoteId(), selectionKey));
+            assertThat(item(QUOTES_TABLE, metaKey(idempotencyPk(ORGANIZATION, "RECONCILE", queryId, reconcileKey))))
+                    .isEmpty();
+            assertThat(operationsOfQuery(queryId)).as("no OPERATION# for the query").isEmpty();
+        } finally {
+            forgetEnrichmentReuse(ALPHA_DOWN, DRIVER_ANA);
+        }
+    }
+
+    /**
+     * Reconciliação manual ponta a ponta (§8 do desenho): uma {@code UNKNOWN_QUERY} publicada pelo e2e em nome da
+     * provider torna conhecida uma consulta concluída. O {@code reconcile} vai à provider pelo
+     * {@code QueryReconcileRequested} e volta pelo {@code QueryReconciled} e pelo {@code issue-projector} até o
+     * {@code GET /v1/operations/{operationId}}; a listagem mostra só ocorrências da organização, sem dado bruto.
+     */
+    @Test
+    void m5_manualReconciliationOfAConcludedQueryRoundTripsThroughTheProviderAndTheIssueProjector()
+            throws Exception {
+        forgetEnrichmentReuse(FLAKY, DRIVER_ANA);
+        String issueId = "is_" + UUID.randomUUID().toString().replace("-", "");
+        String issueEventId = uuidV5(issueId + "|1");
+        String queryId = null;
+        try {
+            Accepted quote = create(newKey(), JSON.writeValueAsString(request(FLAKY, "PERSONAL", DRIVER_ANA)));
+            awaitTerminal(quote, stage.withInsurers(2));
+            queryId = string(insurerQuery(quote.quoteId(), ALPHA), "queryId");
+            String knownQuery = queryId;
+            publishProviderIssue(issueEventId, issueId, knownQuery, quote.quoteId());
+            await().atMost(RECONCILE_BUDGET).pollInterval(Duration.ofSeconds(1))
+                    .until(() -> item(QUOTES_TABLE, metaKey("QUERYREF#" + knownQuery)), found -> !found.isEmpty());
+            String openUnknown = "/v1/operations/issues?type=UNKNOWN_QUERY&status=OPEN&limit=10";
+            JsonNode listed = issueOf(allItems(OPERATOR, openUnknown), issueId);
+            JsonNode listedToViewer = issueOf(allItems(VIEWER, openUnknown), issueId);
+            List<JsonNode> acmeIssues = itemsOf(okJson(OPERATOR, "/v1/operations/issues?limit=25"));
+            List<JsonNode> globexIssues = allItems(GLOBEX, "/v1/operations/issues");
+            String reason = "e2e: conferir na provider a consulta concluída";
+            String key = newKey();
+
+            HttpResponse<String> requested = reconcile(OPERATOR, knownQuery, key, reason);
+            HttpResponse<String> replayed = reconcile(OPERATOR, knownQuery, key, reason);
+            HttpResponse<String> reusedKey = reconcile(OPERATOR, knownQuery, key, "e2e: outro motivo");
+            HttpResponse<String> ofAnotherOrganization = reconcile(GLOBEX, knownQuery, newKey(), reason);
+            assertThat(requested.statusCode()).as(requested.body()).isEqualTo(202);
+            JsonNode reconcileAccepted = JSON.readTree(requested.body());
+            String operationId = reconcileAccepted.path("operationId").asText();
+            String statusUrl = reconcileAccepted.path("statusUrl").asText();
+            JsonNode first = okJson(OPERATOR, statusUrl);
+            HttpResponse<String> readByAnotherOrganization = call(GLOBEX, "GET", statusUrl, null, null);
+            JsonNode finished = await().atMost(RECONCILE_BUDGET).pollInterval(Duration.ofSeconds(1))
+                    .until(() -> okJson(OPERATOR, statusUrl),
+                            operation -> Set.of("SUCCEEDED", "FAILED").contains(operation.path("status").asText()));
+
+            assertThat(listed.path("queryId").asText()).isEqualTo(knownQuery);
+            assertThat(listed.path("quoteId").asText()).isEqualTo(quote.quoteId());
+            assertThat(listed.path("status").asText()).isEqualTo("OPEN");
+            assertThat(texts(listed.path("allowedActions"))).containsExactly("RECONCILE");
+            assertThat(listedToViewer.path("allowedActions")).as("without operations:reconcile").isEmpty();
+            assertThat(acmeIssues).isNotEmpty().allSatisfy(issue -> assertThat(string(
+                    item(QUOTES_TABLE, metaKey("ISSUE#" + issue.path("id").asText())), "organizationId"))
+                    .isEqualTo(ORGANIZATION));
+            assertThat(globexIssues).noneMatch(issue -> issue.path("id").asText().equals(issueId)
+                    || issue.path("quoteId").asText().equals(quote.quoteId()));
+            assertThat(reconcileAccepted.path("status").asText()).isEqualTo("QUEUED");
+            assertThat(statusUrl).isEqualTo("/v1/operations/" + operationId);
+            assertThat(requested.headers().firstValue("Location")).contains(statusUrl);
+            assertThat(replayed.statusCode()).as(replayed.body()).isEqualTo(202);
+            assertThat(JSON.readTree(replayed.body()).path("operationId").asText()).isEqualTo(operationId);
+            assertError(reusedKey, 409, "IDEMPOTENCY_CONFLICT");
+            assertError(ofAnotherOrganization, 404, "NOT_FOUND");
+            assertError(readByAnotherOrganization, 404, "NOT_FOUND");
+            assertThat(first.path("queryId").asText()).isEqualTo(knownQuery);
+            assertThat(finished.path("status").asText()).as("the query was already concluded").isEqualTo("SUCCEEDED");
+            assertThat(finished.path("safeSummary").asText()).isNotBlank();
+            assertThat(Instant.parse(finished.path("updatedAt").asText()))
+                    .isAfterOrEqualTo(Instant.parse(first.path("updatedAt").asText()));
+            Map<String, AttributeValue> operation = item(QUOTES_TABLE, metaKey("OPERATION#" + operationId));
+            assertThat(string(operation, "reason")).isEqualTo(reason);
+            assertThat(string(operation, "requestedBy")).isNotBlank();
+            assertThat(number(operation, "revision")).isEqualTo(2);
+            assertThat(outboxOf("QueryReconcileRequested", "operationId", operationId)).singleElement()
+                    .satisfies(outbox -> assertThat(outbox).containsKey("publishedAt"));
+            assertThat(string(item(QUERIES_TABLE, metaKey("OPERATION#" + operationId)), "status"))
+                    .isEqualTo("SUCCEEDED");
+            String reconciledEventId = uuidV5(operationId + "|2");
+            assertThat(JSON.readTree(string(outbox(QUERIES_TABLE, reconciledEventId), "detail")).path("status")
+                    .asText()).isEqualTo("SUCCEEDED");
+            assertThat(item(QUOTES_TABLE, metaKey("CONSUMED#" + reconciledEventId))).as("projected by the quote")
+                    .isNotEmpty();
+        } finally {
+            deleteQuoteItem("ISSUE#" + issueId);
+            deleteQuoteItem("CONSUMED#" + issueEventId);
+            if (queryId != null) {
+                deleteQuoteItem("QUERYREF#" + queryId);
+            }
+            forgetEnrichmentReuse(FLAKY, DRIVER_ANA);
+        }
+    }
+
+    /**
+     * Catálogo e listagem (§11): cada rota do catálogo, paginada pelo cursor, devolve o {@code catalog.json} da
+     * organização, com busca sem acento nem maiúscula; a listagem de cotações vai da mais nova para a mais antiga,
+     * filtra por fase, resultado e janela de criação e não mistura organizações.
+     */
+    @Test
+    void m5_catalogAndQuoteListingPageWithCursorAndFilters() throws Exception {
+        JsonNode catalog = JSON.readTree(CATALOG.toFile());
+        JsonNode acme = organizationOf(catalog, ORGANIZATION);
+        for (String kind : List.of("customers", "vehicles", "drivers")) {
+            assertThat(allItems(OPERATOR, "/v1/catalog/" + kind + "?limit=4")).as(kind)
+                    .containsExactlyElementsOf(idsAndLabels(acme.path(kind)));
+        }
+        List<JsonNode> profiles = new ArrayList<>();
+        catalog.path("coverageProfiles").forEach(profiles::add);
+        assertThat(allItems(OPERATOR, "/v1/catalog/coverage-profiles?limit=2")).containsExactlyElementsOf(profiles);
+        assertThat(ids(allItems(GLOBEX, "/v1/catalog/vehicles")))
+                .containsExactlyElementsOf(ids(idsAndLabels(organizationOf(catalog, GLOBEX_ORGANIZATION)
+                        .path("vehicles"))));
+        assertThat(ids(allItems(OPERATOR, "/v1/catalog/vehicles?search=SEDA&limit=2")))
+                .containsExactlyElementsOf(matching(acme.path("vehicles"), "Sedã"));
+        assertThat(ids(allItems(OPERATOR, "/v1/catalog/drivers?search=davi"))).containsExactly(DRIVER_NOT_FOUND);
+        assertError(call(OPERATOR, "GET", "/v1/catalog/vehicles?limit=0", null, null), 400, "VALIDATION_ERROR");
+
+        Instant from = Instant.now();
+        Accepted oldest = create(newKey(), JSON.writeValueAsString(request(SALVAGE, "PERSONAL", DRIVER)));
+        Accepted middle = create(newKey(),
+                JSON.writeValueAsString(request(VAN, "COMMERCIAL", DRIVER_WITHOUT_LICENSE_DATE)));
+        Accepted newest = create(newKey(), JSON.writeValueAsString(request(SALVAGE, "PERSONAL", DRIVER)));
+        Instant to = Instant.now();
+        for (Accepted accepted : List.of(oldest, middle, newest)) {
+            awaitTerminal(accepted, stage.withoutExternalWaits());
+        }
+        String window = "createdFrom=" + from + "&createdTo=" + to;
+        List<String> created = List.of(newest.quoteId(), middle.quoteId(), oldest.quoteId());
+
+        await().atMost(Duration.ofSeconds(30)).pollInterval(Duration.ofSeconds(1)).untilAsserted(() -> {
+            List<JsonNode> listed = allItems(WRITER, "/v1/quotes?limit=1&" + window);
+            assertThat(ids(listed)).containsExactlyElementsOf(created);
+            assertThat(listed).allSatisfy(summary -> {
+                assertThat(summary.path("phase").asText()).isEqualTo("TERMINAL");
+                assertThat(summary.path("currentVersion").asInt()).isEqualTo(1);
+                assertThat(summary.path("offerCount").asInt()).isZero();
+                assertThat(Instant.parse(summary.path("createdAt").asText())).isBetween(from, to);
+            });
+        });
+        assertThat(ids(allItems(WRITER, "/v1/quotes?limit=1&outcome=INELIGIBLE&" + window)))
+                .containsExactly(newest.quoteId(), oldest.quoteId());
+        assertThat(ids(allItems(WRITER, "/v1/quotes?outcome=NEEDS_INFORMATION&phase=TERMINAL&" + window)))
+                .containsExactly(middle.quoteId());
+        assertThat(allItems(WRITER, "/v1/quotes?phase=QUOTING&" + window)).isEmpty();
+        assertThat(allItems(GLOBEX, "/v1/quotes?" + window)).as("other organization").isEmpty();
+        String newestCreatedAt = itemsOf(okJson(WRITER, "/v1/quotes?limit=1&" + window)).getFirst()
+                .path("createdAt").asText();
+        assertThat(ids(allItems(WRITER, "/v1/quotes?createdFrom=" + newestCreatedAt + "&createdTo=" + newestCreatedAt)))
+                .as("inclusive bounds").containsExactly(newest.quoteId());
+        assertError(call(WRITER, "GET", "/v1/quotes?phase=DONE", null, null), 400, "VALIDATION_ERROR");
+        assertError(call(WRITER, "GET", "/v1/quotes?createdFrom=" + to + "&createdTo=" + from, null, null), 400,
+                "VALIDATION_ERROR");
+        assertError(call(WRITER, "GET", "/v1/quotes?cursor=bm90LWEtY3Vyc29y", null, null), 400, "VALIDATION_ERROR");
     }
 
     /** Evidência usada do enriquecimento na quote, com a consulta e a evidência correspondentes na provider. */
@@ -1937,16 +2475,8 @@ class QuoteFlowE2E {
         return request;
     }
 
-    private static HttpResponse<String> postVersion(String quoteId, String idempotencyKey, String body)
-            throws Exception {
-        return HTTP.send(HttpRequest.newBuilder(URI.create(apiBase + "/v1/quotes/" + quoteId + "/versions"))
-                        .header("Authorization", "Bearer " + accessToken)
-                        .header("Content-Type", "application/json")
-                        .header("Idempotency-Key", idempotencyKey)
-                        .POST(HttpRequest.BodyPublishers.ofString(body))
-                        .timeout(Duration.ofMinutes(1))
-                        .build(),
-                HttpResponse.BodyHandlers.ofString());
+    private static HttpResponse<String> postVersion(String quoteId, String idempotencyKey, String body) {
+        return call(WRITER, "POST", "/v1/quotes/" + quoteId + "/versions", idempotencyKey, body);
     }
 
     private static Accepted create(String idempotencyKey, String body) throws Exception {
@@ -1963,26 +2493,264 @@ class QuoteFlowE2E {
                 accepted.path("statusUrl").asText());
     }
 
-    private static HttpResponse<String> post(String idempotencyKey, String body) throws Exception {
-        return HTTP.send(HttpRequest.newBuilder(URI.create(apiBase + "/v1/quotes"))
-                        .header("Authorization", "Bearer " + accessToken)
-                        .header("Content-Type", "application/json")
-                        .header("Idempotency-Key", idempotencyKey)
-                        .POST(HttpRequest.BodyPublishers.ofString(body))
-                        .timeout(Duration.ofMinutes(1))
-                        .build(),
-                HttpResponse.BodyHandlers.ofString());
+    private static HttpResponse<String> post(String idempotencyKey, String body) {
+        return call(WRITER, "POST", "/v1/quotes", idempotencyKey, body);
     }
 
     private static JsonNode getOk(String path) throws Exception {
-        HttpResponse<String> response = HTTP.send(HttpRequest.newBuilder(URI.create(apiBase + path))
-                        .header("Authorization", "Bearer " + accessToken)
-                        .GET()
-                        .timeout(Duration.ofMinutes(1))
-                        .build(),
-                HttpResponse.BodyHandlers.ofString());
+        return okJson(WRITER, path);
+    }
+
+    /** Troca com a API da quote como {@code user}, conferida contra o contrato pelo {@link ContractClient}. */
+    private static HttpResponse<String> call(User user, String method, String path, String idempotencyKey,
+            String body) {
+        Map<String, String> headers = new LinkedHashMap<>();
+        if (body != null) {
+            headers.put("Content-Type", "application/json");
+        }
+        if (idempotencyKey != null) {
+            headers.put("Idempotency-Key", idempotencyKey);
+        }
+        return api.send(TOKENS.get(user), method, path, headers, body);
+    }
+
+    private static JsonNode okJson(User user, String path) throws Exception {
+        HttpResponse<String> response = call(user, "GET", path, null, null);
         assertThat(response.statusCode()).as(response.body()).isEqualTo(200);
+        assertNoRawData(response.body());
         return JSON.readTree(response.body());
+    }
+
+    /** Nenhuma resposta traz token, payload bruto ou atributo interno do item (§12 do PRD). */
+    private static void assertNoRawData(String body) {
+        assertThat(RAW_FIELDS).allSatisfy(field -> assertThat(body).doesNotContain("\"" + field + "\":"));
+    }
+
+    private static HttpResponse<String> select(User user, Accepted accepted, String idempotencyKey, String offerId)
+            throws Exception {
+        return call(user, "POST", accepted.statusUrl() + "/selection", idempotencyKey,
+                JSON.writeValueAsString(Map.of("offerId", offerId)));
+    }
+
+    private static HttpResponse<String> reconcile(User user, String queryId, String idempotencyKey, String reason)
+            throws Exception {
+        return call(user, "POST", "/v1/operations/queries/" + queryId + "/reconcile", idempotencyKey,
+                JSON.writeValueAsString(Map.of("reason", reason)));
+    }
+
+    /** Erro padrão do contrato: o código, uma mensagem e o {@code correlationId}. */
+    private static JsonNode assertError(HttpResponse<String> response, int status, String code) throws Exception {
+        assertThat(response.statusCode()).as(response.body()).isEqualTo(status);
+        JsonNode error = JSON.readTree(response.body());
+        assertThat(error.path("code").asText()).as(response.body()).isEqualTo(code);
+        assertThat(error.path("message").asText()).isNotBlank();
+        assertThat(error.path("correlationId").asText()).isNotBlank();
+        return error;
+    }
+
+    /** Primeira página de ofertas não vazia da versão, lida a cada 250 ms para medir o tempo até a oferta (§15). */
+    private static JsonNode awaitFirstOffer(Accepted accepted, Duration budget) {
+        return await().atMost(budget).pollInterval(Duration.ofMillis(250))
+                .until(() -> getOk(accepted.statusUrl() + "/offers"), page -> !page.path("items").isEmpty());
+    }
+
+    /** Itens de todas as páginas, seguindo o {@code nextCursor} com os mesmos filtros. */
+    private static List<JsonNode> allItems(User user, String path) throws Exception {
+        List<JsonNode> items = new ArrayList<>();
+        String cursor = null;
+        for (int page = 0; page < 200; page++) {
+            String separator = path.contains("?") ? "&" : "?";
+            JsonNode body = okJson(user, cursor == null ? path : path + separator + "cursor=" + cursor);
+            items.addAll(itemsOf(body));
+            if (body.path("nextCursor").isNull()) {
+                return items;
+            }
+            cursor = body.path("nextCursor").asText();
+        }
+        throw new IllegalStateException("more than 200 pages at " + path);
+    }
+
+    private static List<JsonNode> itemsOf(JsonNode page) {
+        List<JsonNode> items = new ArrayList<>();
+        page.path("items").forEach(items::add);
+        return items;
+    }
+
+    private static List<String> ids(List<JsonNode> items) {
+        return items.stream().map(item -> item.path("id").asText()).toList();
+    }
+
+    private static JsonNode fixture(String name) throws Exception {
+        return JSON.readTree(FIXTURES.resolve(name).toFile());
+    }
+
+    private static JsonNode organizationOf(JsonNode catalog, String organizationId) {
+        for (JsonNode organization : catalog.path("organizations")) {
+            if (organization.path("id").asText().equals(organizationId)) {
+                return organization;
+            }
+        }
+        throw new IllegalStateException("organization " + organizationId + " is not in catalog.json");
+    }
+
+    /** {@code id} e {@code label} das entradas do {@code catalog.json}, na ordem do arquivo. */
+    private static List<JsonNode> idsAndLabels(JsonNode entries) {
+        List<JsonNode> projected = new ArrayList<>();
+        entries.forEach(entry -> projected.add(JSON.createObjectNode()
+                .put("id", entry.path("id").asText()).put("label", entry.path("label").asText())));
+        return projected;
+    }
+
+    /** Entradas cujo rótulo ou id contém o termo, sem acento nem maiúscula, como a busca do catálogo (§11). */
+    private static List<String> matching(JsonNode entries, String search) {
+        String term = folded(search);
+        List<String> found = new ArrayList<>();
+        entries.forEach(entry -> {
+            if (folded(entry.path("label").asText()).contains(term) || folded(entry.path("id").asText()).contains(term)) {
+                found.add(entry.path("id").asText());
+            }
+        });
+        return found;
+    }
+
+    private static String folded(String text) {
+        return Normalizer.normalize(text, Normalizer.Form.NFD).replaceAll("\\p{M}", "").toLowerCase(Locale.ROOT);
+    }
+
+    private static JsonNode coverageProfile(String code) throws Exception {
+        for (JsonNode profile : JSON.readTree(CATALOG.toFile()).path("coverageProfiles")) {
+            if (profile.path("code").asText().equals(code)) {
+                return profile;
+            }
+        }
+        throw new IllegalStateException("coverage profile " + code + " is not in catalog.json");
+    }
+
+    /** T18: troca o {@code validUntil} da oferta; o {@code finally} devolve o original. */
+    private static void setValidUntil(Map<String, AttributeValue> offerKey, String validUntil) {
+        DYNAMO_DB.updateItem(builder -> builder.tableName(QUOTES_TABLE).key(offerKey)
+                .updateExpression("SET validUntil = :validUntil")
+                .conditionExpression("attribute_exists(pk)")
+                .expressionAttributeValues(Map.of(":validUntil", AttributeValue.fromS(validUntil))));
+    }
+
+    /** Chave do registro de idempotência da quote (§4): organização, operação, escopo e a chave do cliente. */
+    private static String idempotencyPk(String organizationId, String operation, String scope, String key) {
+        return "IDEMPOTENCY#" + organizationId + "#" + operation + "#" + scope + "#" + key;
+    }
+
+    /** Nenhuma intenção de proposta: sem {@code SELECTION}, {@code selectionId}, idempotência nem outbox. */
+    private static void assertNoSelectionRecorded(String quoteId, String... idempotencyPks) {
+        assertThat(queryByPrefix(QUOTES_TABLE, "QUOTE#" + quoteId, "V#")).as("SELECTION items")
+                .noneMatch(item -> string(item, "sk").endsWith("#SELECTION"));
+        assertThat(item(QUOTES_TABLE, metaKey("QUOTE#" + quoteId))).doesNotContainKey("selectionId");
+        for (String pk : idempotencyPks) {
+            assertThat(item(QUOTES_TABLE, metaKey(pk))).as(pk).isEmpty();
+        }
+        assertThat(outboxOf("OfferSelected", "quoteId", quoteId)).as("OfferSelected outbox").isEmpty();
+    }
+
+    /** Outbox da quote com o {@code detailType} e o atributo pedidos. */
+    private static List<Map<String, AttributeValue>> outboxOf(String detailType, String attribute, String value) {
+        return DYNAMO_DB.scanPaginator(builder -> builder.tableName(QUOTES_TABLE).consistentRead(true)
+                        .filterExpression("begins_with(pk, :outbox) AND detailType = :type AND #attribute = :value")
+                        .expressionAttributeNames(Map.of("#attribute", attribute))
+                        .expressionAttributeValues(Map.of(":outbox", AttributeValue.fromS("OUTBOX#"),
+                                ":type", AttributeValue.fromS(detailType), ":value", AttributeValue.fromS(value))))
+                .items().stream().toList();
+    }
+
+    private static List<Map<String, AttributeValue>> operationsOfQuery(String queryId) {
+        return DYNAMO_DB.scanPaginator(builder -> builder.tableName(QUOTES_TABLE).consistentRead(true)
+                        .filterExpression("begins_with(pk, :operation) AND queryId = :queryId")
+                        .expressionAttributeValues(Map.of(":operation", AttributeValue.fromS("OPERATION#"),
+                                ":queryId", AttributeValue.fromS(queryId))))
+                .items().stream().toList();
+    }
+
+    private record Race(List<HttpResponse<String>> selections, List<HttpResponse<String>> versions) {
+    }
+
+    /** T29: {@link #T29_CONTENDERS} seleções da mesma oferta e o mesmo número de novas versões, soltos juntos. */
+    private static Race race(ExecutorService executor, Accepted current, String offerId) throws Exception {
+        CountDownLatch start = new CountDownLatch(1);
+        String versionBody = JSON.writeValueAsString(
+                versionRequest(current.version(), BETA_NEEDS_INFO, "PERSONAL", DRIVER));
+        List<Future<HttpResponse<String>>> selections = new ArrayList<>();
+        List<Future<HttpResponse<String>>> versions = new ArrayList<>();
+        for (int contender = 0; contender < T29_CONTENDERS; contender++) {
+            String selectionKey = newKey();
+            String versionKey = newKey();
+            Callable<HttpResponse<String>> selection = () -> {
+                start.await();
+                return select(WRITER, current, selectionKey, offerId);
+            };
+            Callable<HttpResponse<String>> version = () -> {
+                start.await();
+                return postVersion(current.quoteId(), versionKey, versionBody);
+            };
+            selections.add(executor.submit(selection));
+            versions.add(executor.submit(version));
+        }
+        start.countDown();
+        List<HttpResponse<String>> selected = new ArrayList<>();
+        for (Future<HttpResponse<String>> future : selections) {
+            selected.add(future.get());
+        }
+        List<HttpResponse<String>> created = new ArrayList<>();
+        for (Future<HttpResponse<String>> future : versions) {
+            created.add(future.get());
+        }
+        return new Race(selected, created);
+    }
+
+    private static List<Integer> statuses(List<HttpResponse<String>> responses) {
+        return responses.stream().map(HttpResponse::statusCode).toList();
+    }
+
+    private static String selectionIdOf(HttpResponse<String> response) {
+        try {
+            return JSON.readTree(response.body()).path("selectionId").asText();
+        } catch (Exception unreadable) {
+            throw new IllegalStateException(response.body(), unreadable);
+        }
+    }
+
+    /**
+     * {@code OperationIssueRaised} de uma {@code UNKNOWN_QUERY} no contrato da provider (AsyncAPI), publicado no
+     * barramento como a provider publica; é o estado fabricado da reconciliação manual.
+     */
+    private static void publishProviderIssue(String eventId, String issueId, String queryId, String quoteId)
+            throws Exception {
+        String now = PROVIDER_TIMESTAMP.format(Instant.now());
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("eventId", eventId);
+        detail.put("occurredAt", now);
+        detail.put("schemaVersion", "1");
+        detail.put("issueId", issueId);
+        detail.put("organizationId", ORGANIZATION);
+        detail.put("type", "UNKNOWN_QUERY");
+        detail.put("status", "OPEN");
+        detail.put("queryId", queryId);
+        detail.put("quoteId", quoteId);
+        detail.put("firstSeenAt", now);
+        detail.put("lastSeenAt", now);
+        detail.put("safeSummary", "Consulta sem resposta conhecida (ocorrência publicada pelo e2e)");
+        detail.put("reconcilable", true);
+        detail.put("revision", 1);
+        String json = JSON.writeValueAsString(detail);
+        PutEventsResponse response = EVENT_BRIDGE.putEvents(builder -> builder.entries(entry -> entry
+                .eventBusName(EVENT_BUS).source("mmda.provider").detailType("OperationIssueRaised").detail(json)));
+        assertThat(response.failedEntryCount()).as(response.toString()).isZero();
+    }
+
+    private static JsonNode issueOf(List<JsonNode> issues, String issueId) {
+        return issues.stream().filter(issue -> issue.path("id").asText().equals(issueId)).findFirst()
+                .orElseThrow(() -> new AssertionError("issue " + issueId + " not listed"));
+    }
+
+    private static void deleteQuoteItem(String pk) {
+        DYNAMO_DB.deleteItem(builder -> builder.tableName(QUOTES_TABLE).key(metaKey(pk)));
     }
 
     private static String newKey() {
@@ -2000,10 +2768,10 @@ class QuoteFlowE2E {
     }
 
     /**
-     * Garante o usuário de teste nos grupos da organização e das permissões (APIs administrativas do Cognito) e
-     * devolve um access token obtido com {@code USER_PASSWORD_AUTH}, que só a Lambda da API valida.
+     * Garante cada usuário de teste exatamente nos grupos da organização e das permissões dele (APIs administrativas
+     * do Cognito) e guarda o access token obtido com {@code USER_PASSWORD_AUTH}, que só a Lambda da API valida.
      */
-    private static String signIn() {
+    private static void signIn() {
         try (CognitoIdentityProviderClient cognito = CognitoIdentityProviderClient.create()) {
             String poolId = cognito.listUserPoolsPaginator(builder -> builder.maxResults(60)).userPools().stream()
                     .filter(pool -> pool.name().equals(QUOTE_PREFIX + "-users"))
@@ -2019,22 +2787,45 @@ class QuoteFlowE2E {
             Set<String> groups = cognito.listGroups(builder -> builder.userPoolId(poolId).limit(60)).groups().stream()
                     .map(GroupType::groupName)
                     .collect(Collectors.toSet());
-            GROUPS.stream().filter(group -> !groups.contains(group))
+            USERS.stream().flatMap(user -> user.groups().stream()).distinct()
+                    .filter(group -> !groups.contains(group))
                     .forEach(group -> cognito.createGroup(builder -> builder.userPoolId(poolId).groupName(group)));
-            try {
-                cognito.adminGetUser(builder -> builder.userPoolId(poolId).username(USERNAME));
-            } catch (UserNotFoundException missing) {
-                cognito.adminCreateUser(builder -> builder.userPoolId(poolId).username(USERNAME)
-                        .messageAction(MessageActionType.SUPPRESS));
+            for (User user : USERS) {
+                try {
+                    cognito.adminGetUser(builder -> builder.userPoolId(poolId).username(user.username()));
+                } catch (UserNotFoundException missing) {
+                    cognito.adminCreateUser(builder -> builder.userPoolId(poolId).username(user.username())
+                            .messageAction(MessageActionType.SUPPRESS));
+                }
+                cognito.adminSetUserPassword(builder -> builder.userPoolId(poolId).username(user.username())
+                        .password(PASSWORD).permanent(true));
+                AdminListGroupsForUserResponse current = cognito.adminListGroupsForUser(builder -> builder
+                        .userPoolId(poolId).username(user.username()).limit(60));
+                current.groups().stream().map(GroupType::groupName).filter(group -> !user.groups().contains(group))
+                        .forEach(group -> cognito.adminRemoveUserFromGroup(builder -> builder.userPoolId(poolId)
+                                .username(user.username()).groupName(group)));
+                user.groups().forEach(group -> cognito.adminAddUserToGroup(builder -> builder.userPoolId(poolId)
+                        .username(user.username()).groupName(group)));
+                TOKENS.put(user, cognito.initiateAuth(builder -> builder.clientId(clientId)
+                                .authFlow(AuthFlowType.USER_PASSWORD_AUTH)
+                                .authParameters(Map.of("USERNAME", user.username(), "PASSWORD", PASSWORD)))
+                        .authenticationResult().accessToken());
             }
-            cognito.adminSetUserPassword(builder -> builder.userPoolId(poolId).username(USERNAME)
-                    .password(PASSWORD).permanent(true));
-            GROUPS.forEach(group -> cognito.adminAddUserToGroup(builder -> builder.userPoolId(poolId)
-                    .username(USERNAME).groupName(group)));
-            return cognito.initiateAuth(builder -> builder.clientId(clientId)
-                            .authFlow(AuthFlowType.USER_PASSWORD_AUTH)
-                            .authParameters(Map.of("USERNAME", USERNAME, "PASSWORD", PASSWORD)))
-                    .authenticationResult().accessToken();
+        }
+    }
+
+    /** Usuário de teste; a organização vem do primeiro grupo, {@code org_<organizationId>}. */
+    private record User(String username, List<String> groups) {
+
+        /** Permissões do contrato concedidas pelos grupos {@code perm_*} (§11 do desenho). */
+        List<String> permissions() {
+            return groups.stream().filter(group -> group.startsWith("perm_"))
+                    .map(group -> group.substring("perm_".length()))
+                    .map(permission -> {
+                        int split = permission.indexOf('_');
+                        return permission.substring(0, split) + ":" + permission.substring(split + 1);
+                    })
+                    .toList();
         }
     }
 

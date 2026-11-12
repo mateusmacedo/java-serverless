@@ -6,9 +6,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mmda.serverless.quote.domain.Hashes;
 import com.mmda.serverless.quote.domain.Insurers;
+import com.mmda.serverless.quote.domain.Operations;
 import com.mmda.serverless.quote.domain.Outcome;
 import com.mmda.serverless.quote.domain.OutcomeReason;
 import com.mmda.serverless.quote.domain.QuoteEvents;
+import com.mmda.serverless.quote.domain.QuoteKeys;
 import com.mmda.serverless.quote.domain.Usage;
 import com.mmda.serverless.quote.domain.WorkRef;
 import java.io.IOException;
@@ -20,15 +22,15 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.yaml.snakeyaml.Yaml;
 
 /**
- * Cada evento que a quote produz confere com o schema do {@code detail} em
- * {@code docs/events/quote-solution.asyncapi.yaml}, e os exemplos do documento também. Uma regra no
- * barramento com filtro errado entregaria evento a quem não deveria (ADR 0013); o contrato é o que os
- * consumidores leem.
+ * Cada evento que a quote produz e os exemplos conferem com {@code docs/events/quote-solution.asyncapi.yaml}, que
+ * declara o que ela consome. Uma regra com filtro errado entregaria evento a quem não deveria (ADR 0013); o
+ * contrato é o que os consumidores leem.
  */
 class QuoteEventsContractTest {
 
@@ -83,6 +85,16 @@ class QuoteEventsContractTest {
     }
 
     @Test
+    void offerSelectedAndQueryReconcileRequestedOfTheApiFollowTheContract() {
+        String selectionId = QuoteKeys.selectionId(QUOTE_ID, 1);
+        assertValid("OfferSelectedDetail", QuoteEvents.offerSelected(NOW, QUOTE_ID, 1,
+                "of_0f1e2d3c4b5a69788796a5b4c3d2e1f0", selectionId));
+        assertValid("QueryReconcileRequestedDetail", QuoteEvents.queryReconcileRequested(
+                "0b9f6a52-3c1e-4d7a-9f2b-6e8d4c1a7b35", NOW, Operations.newOperationId(), "org-acme",
+                "q_099d4987d3e2f2e6656e9285ac76a83e", "Consulta UNKNOWN; conferir com o fornecedor.", "olga"));
+    }
+
+    @Test
     void documentedExamplesFollowTheirOwnSchemas() {
         Map<String, String> schemaByMessage = Map.of(
                 "QuoteAccepted", "QuoteAcceptedDetail",
@@ -101,6 +113,38 @@ class QuoteEventsContractTest {
             }
         }
         assertThat(examples).isEqualTo(5);
+    }
+
+    /**
+     * O que a quote consome está declarado no documento dela: operações {@code receive} nas filas {@code results} e
+     * {@code issues}, com mensagens que existem no AsyncAPI da provider. São os eventos que o {@code resume} e o
+     * {@code issue-projector} tratam.
+     */
+    @Test
+    void consumedProviderEventsAreReceiveOperationsWithTheProviderMessages() throws IOException {
+        JsonNode provider = MAPPER.valueToTree(new Yaml().load(
+                Files.readString(Path.of("../../docs/events/provider-solution.asyncapi.yaml"))));
+        Map<String, String> queueByEvent = new TreeMap<>();
+        for (JsonNode operation : asyncApi.path("operations")) {
+            if (!"receive".equals(operation.path("action").asText())) {
+                continue;
+            }
+            JsonNode channel = asyncApi.at(operation.at("/channel/$ref").asText().substring(1));
+            for (JsonNode message : operation.path("messages")) {
+                String reference = asyncApi.at(message.path("$ref").asText().substring(1)).path("$ref").asText();
+                assertThat(reference).startsWith("./provider-solution.asyncapi.yaml#/components/messages/");
+                JsonNode providerMessage = provider.at(reference.substring(reference.indexOf('#') + 1));
+                assertThat(providerMessage.path("name").isTextual()).as(reference).isTrue();
+                queueByEvent.put(providerMessage.path("name").asText(), channel.path("address").asText());
+            }
+        }
+
+        assertThat(queueByEvent).containsExactlyInAnyOrderEntriesOf(Map.of(
+                QuoteEvents.ENRICHMENT_RESOLVED, "quote-solution-{stage}-results",
+                QuoteEvents.INSURER_RESULT_RECORDED, "quote-solution-{stage}-results",
+                QuoteEvents.QUERY_RECONCILED, "quote-solution-{stage}-issues",
+                QuoteEvents.OPERATION_ISSUE_RAISED, "quote-solution-{stage}-issues",
+                QuoteEvents.OPERATION_ISSUE_UPDATED, "quote-solution-{stage}-issues"));
     }
 
     @Test

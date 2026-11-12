@@ -20,10 +20,20 @@ public final class QuoteIssues {
         /** {@code ACTIVE_VERSION} além de {@code deadlineAt} + {@code stuckVersionMarginSeconds}. */
         STUCK_VERSION,
         /**
-         * Mensagem descartada da {@code results-dlq} no limite de tentativas ou sem identificar a cotação
-         * (ADR 0007).
+         * Mensagem descartada da {@code results-dlq} ou, desde o M5, da {@code issues-dlq}, no limite de tentativas
+         * ou sem identificar o recurso (ADR 0007).
          */
-        DEAD_LETTER
+        DEAD_LETTER;
+
+        /**
+         * Só a versão parada deixa de existir sozinha: ela sai do {@code ACTIVE_VERSION} quando termina. WHY: as
+         * demais registram um fato já ocorrido (execução encerrada sem consolidar, resultado não entregue, mensagem
+         * descartada), que nenhuma mudança posterior desfaz; ficam abertas para análise, como o {@code DEAD_LETTER}
+         * da provider, e o alarme de cada uma já as conta.
+         */
+        public boolean resolvesItself() {
+            return this == STUCK_VERSION;
+        }
     }
 
     public enum Status {

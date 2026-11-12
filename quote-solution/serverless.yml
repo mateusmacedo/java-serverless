@@ -31,6 +31,10 @@ params:
     reconcilerTimeoutSeconds: 60
     resultsVisibilityTimeoutSeconds: 90
     resultsMaxReceiveCount: 5
+    # Fila issues do issue-projector (M5, §12): mesmos valores da results
+    issueProjectorTimeoutSeconds: 15
+    issuesVisibilityTimeoutSeconds: 90
+    issuesMaxReceiveCount: 5
     # Reconciliação do M4 (§9): tentativas da DLQ contando a entrega original (ADR 0007), margem do
     # STUCK_VERSION e idade do RESUMING que o reconciler retoma, maior que o timeout do resume
     dlqMaxAttempts: 3
@@ -48,6 +52,8 @@ custom:
     table: ${self:service}-${sls:stage}-quotes
     resultsQueue: ${self:service}-${sls:stage}-results
     resultsDeadLetterQueue: ${self:service}-${sls:stage}-results-dlq
+    issuesQueue: ${self:service}-${sls:stage}-issues
+    issuesDeadLetterQueue: ${self:service}-${sls:stage}-issues-dlq
     streamFailuresQueue: ${self:service}-${sls:stage}-stream-failures
     stateMachine: ${self:service}-${sls:stage}-quote-flow
     tokenKeySecret: ${self:service}/${sls:stage}/token-key
@@ -93,6 +99,8 @@ provider:
     # Usados só pelo reconciler; ficam aqui porque o zip das functions valida a configuração ao subir
     RESULTS_QUEUE_URL: !Ref ResultsQueue
     RESULTS_DLQ_URL: !Ref ResultsDeadLetterQueue
+    ISSUES_QUEUE_URL: !Ref IssuesQueue
+    ISSUES_DLQ_URL: !Ref IssuesDeadLetterQueue
     DLQ_MAX_ATTEMPTS: "${param:dlqMaxAttempts}"
     STUCK_VERSION_MARGIN_SECONDS: "${param:stuckVersionMarginSeconds}"
     RESUMING_RETRY_AFTER_SECONDS: "${param:resumingRetryAfterSeconds}"
@@ -147,6 +155,20 @@ functions:
     events:
       - sqs:
           arn: !GetAtt ResultsQueue.Arn
+          batchSize: 1
+          functionResponseType: ReportBatchItemFailures
+
+  issueProjector:
+    handler: ${self:custom.quarkusHandler}
+    timeout: ${param:issueProjectorTimeoutSeconds}
+    role: IssueProjectorRole
+    package:
+      artifact: ${self:custom.functionsPackage}
+    environment:
+      QUARKUS_LAMBDA_HANDLER: issue-projector
+    events:
+      - sqs:
+          arn: !GetAtt IssuesQueue.Arn
           batchSize: 1
           functionResponseType: ReportBatchItemFailures
 
@@ -504,6 +526,38 @@ resources:
                 ArnEquals:
                   aws:SourceArn: !GetAtt ProviderResultsRule.Arn
 
+    IssuesDeadLetterQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.names.issuesDeadLetterQueue}
+        MessageRetentionPeriod: 1209600
+
+    IssuesQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.names.issuesQueue}
+        VisibilityTimeout: ${param:issuesVisibilityTimeoutSeconds}
+        RedrivePolicy:
+          deadLetterTargetArn: !GetAtt IssuesDeadLetterQueue.Arn
+          maxReceiveCount: ${param:issuesMaxReceiveCount}
+
+    IssuesQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref IssuesQueue
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: events.amazonaws.com
+              Action: sqs:SendMessage
+              Resource: !GetAtt IssuesQueue.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !GetAtt ProviderIssuesRule.Arn
+
     # Destino onFailure do stream: só aponta shard e faixa de sequência, para o alarme (M4); sem consumidor
     StreamFailuresQueue:
       Type: AWS::SQS::Queue
@@ -540,6 +594,40 @@ resources:
         Dimensions:
           - Name: QueueName
             Value: ${self:custom.names.resultsDeadLetterQueue}
+        Statistic: Maximum
+        Period: ${param:alarmPeriodSeconds}
+        EvaluationPeriods: 1
+        Threshold: ${param:dlqAlarmAgeSeconds}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
+    IssuesDeadLetterQueueMessagesAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${sls:stage}-issues-dlq-messages
+        AlarmDescription: Mensagens na issues-dlq, à espera do reprocessamento pelo reconciler
+        Namespace: AWS/SQS
+        MetricName: ApproximateNumberOfMessagesVisible
+        Dimensions:
+          - Name: QueueName
+            Value: ${self:custom.names.issuesDeadLetterQueue}
+        Statistic: Maximum
+        Period: ${param:alarmPeriodSeconds}
+        EvaluationPeriods: 1
+        Threshold: ${param:dlqAlarmMessages}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
+    IssuesDeadLetterQueueAgeAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${sls:stage}-issues-dlq-age
+        AlarmDescription: Mensagem parada na issues-dlq além do limiar de idade
+        Namespace: AWS/SQS
+        MetricName: ApproximateAgeOfOldestMessage
+        Dimensions:
+          - Name: QueueName
+            Value: ${self:custom.names.issuesDeadLetterQueue}
         Statistic: Maximum
         Period: ${param:alarmPeriodSeconds}
         EvaluationPeriods: 1
@@ -629,6 +717,22 @@ resources:
         Targets:
           - Id: quote-results-queue
             Arn: !GetAtt ResultsQueue.Arn
+
+    # Ocorrências e reconciliações da provider, projetadas pelo issue-projector (M5, §7)
+    ProviderIssuesRule:
+      Type: AWS::Events::Rule
+      Properties:
+        EventBusName: ${self:custom.names.platformEventBus}
+        EventPattern:
+          source:
+            - mmda.provider
+          detail-type:
+            - QueryReconciled
+            - OperationIssueRaised
+            - OperationIssueUpdated
+        Targets:
+          - Id: quote-issues-queue
+            Arn: !GetAtt IssuesQueue.Arn
 
     TokenKeySecret:
       Type: AWS::SecretsManager::Secret
@@ -721,14 +825,20 @@ resources:
             PolicyDocument:
               Version: "2012-10-17"
               Statement:
-                # UpdateItem: a nova versão atualiza o META e a versão substituída na transação (§8)
+                # UpdateItem: a nova versão e a seleção atualizam o META na transação (§8); ConditionCheckItem: a
+                # seleção confere a validade da oferta na mesma transação (M5)
                 - Effect: Allow
                   Action:
                     - dynamodb:GetItem
                     - dynamodb:PutItem
                     - dynamodb:UpdateItem
+                    - dynamodb:ConditionCheckItem
                     - dynamodb:Query
                   Resource: !GetAtt QuotesTable.Arn
+                # Listagens de cotações e de ocorrências da organização (M5, §11)
+                - Effect: Allow
+                  Action: dynamodb:Query
+                  Resource: !Join ["", [!GetAtt QuotesTable.Arn, "/index/gsi1"]]
 
     WorkflowStepsRole:
       Type: AWS::IAM::Role
@@ -804,6 +914,32 @@ resources:
                 - Effect: Allow
                   Action: states:SendTaskSuccess
                   Resource: ${self:custom.stateMachineArn}
+
+    IssueProjectorRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument: *lambdaTrust
+        ManagedPolicyArns:
+          - ${self:custom.lambdaBasicExecution}
+        Policies:
+          - PolicyName: quote-issue-projector
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                # ISSUE#, OPERATION#, QUERYREF# e CONSUMED# numa transação (M5, §7); o GetItem lê a organização
+                # do OPERATION# antes de projetar um QueryReconciled
+                - Effect: Allow
+                  Action:
+                    - dynamodb:GetItem
+                    - dynamodb:PutItem
+                    - dynamodb:UpdateItem
+                  Resource: !GetAtt QuotesTable.Arn
+                - Effect: Allow
+                  Action:
+                    - sqs:ReceiveMessage
+                    - sqs:DeleteMessage
+                    - sqs:GetQueueAttributes
+                  Resource: !GetAtt IssuesQueue.Arn
 
     OutboxRelayRole:
       Type: AWS::IAM::Role
@@ -890,6 +1026,16 @@ resources:
                 - Effect: Allow
                   Action: sqs:SendMessage
                   Resource: !GetAtt ResultsQueue.Arn
+                # Reprocessamento da issues-dlq (M5), no mesmo padrão
+                - Effect: Allow
+                  Action:
+                    - sqs:ReceiveMessage
+                    - sqs:DeleteMessage
+                    - sqs:GetQueueAttributes
+                  Resource: !GetAtt IssuesDeadLetterQueue.Arn
+                - Effect: Allow
+                  Action: sqs:SendMessage
+                  Resource: !GetAtt IssuesQueue.Arn
 
   Outputs:
     QuotesTableName:
@@ -900,3 +1046,5 @@ resources:
       Value: !Ref QuoteUserPoolClient
     ResultsQueueUrl:
       Value: !Ref ResultsQueue
+    IssuesQueueUrl:
+      Value: !Ref IssuesQueue

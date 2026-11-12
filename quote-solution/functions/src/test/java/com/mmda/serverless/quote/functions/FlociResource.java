@@ -102,8 +102,12 @@ public class FlociResource implements QuarkusTestResourceLifecycleManager {
                     QueueAttributeName.REDRIVE_POLICY, "{\"deadLetterTargetArn\":\"" + queueArn(sqs, deadLetterQueueUrl)
                             + "\",\"maxReceiveCount\":\"1\"}"))).queueUrl();
 
+            String issuesDeadLetterQueueUrl = queue(sqs, "it-quote-issues-dlq");
+            String issuesQueueUrl = queue(sqs, "it-quote-issues");
             return Map.ofEntries(
                     Map.entry("quote.table-name", TABLE),
+                    Map.entry("reconciler.issues-queue-url", issuesQueueUrl),
+                    Map.entry("reconciler.issues-dead-letter-queue-url", issuesDeadLetterQueueUrl),
                     Map.entry("quote.event-bus-name", EVENT_BUS),
                     Map.entry("quote.state-machine-arn", flowMachineArn),
                     Map.entry("quote.token-key-secret-id", SECRET),

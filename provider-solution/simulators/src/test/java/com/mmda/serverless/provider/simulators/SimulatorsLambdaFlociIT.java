@@ -91,6 +91,18 @@ class SimulatorsLambdaFlociIT {
     }
 
     @Test
+    void handlerProfilesACatalogVehicleFromTheCatalogOnItsClasspath() throws IOException {
+        JsonNode response = invoke("/sim/enrichment/profiles",
+                "{\"clientReference\":\"q_it_catalog\",\"vehicleRef\":\"vehicle-van-2022\",\"principalDriverRef\":\"driver-acme-bruno\"}");
+
+        assertThat(response.path("statusCode").asInt()).isEqualTo(200);
+        JsonNode vehicle = JSON.readTree(response.path("body").asString()).path("vehicle");
+        assertThat(vehicle.path("make").asString()).isEqualTo("Renault");
+        assertThat(vehicle.path("model").asString()).isEqualTo("Master");
+        assertThat(vehicle.path("modelYear").asInt()).isEqualTo(2022);
+    }
+
+    @Test
     void alphaRouteAnswersThroughTheProxyEvent() throws IOException {
         JsonNode response = invoke("/sim/insurers/alpha/quotes",
                 "{\"clientReference\":\"q_it\",\"risk\":{\"vehicle\":{\"ref\":\"vehicle-hatch-2019\"}},\"enrichment\":{}}");

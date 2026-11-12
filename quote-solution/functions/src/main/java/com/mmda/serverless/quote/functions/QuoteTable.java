@@ -225,17 +225,24 @@ public class QuoteTable {
             Instant now) {
         String outcome = Attr.string(versionItem, "outcome");
         String phase = Attr.string(versionItem, "phase");
+        if (phase == null) {
+            return false;
+        }
         Map<String, AttributeValue> values = new HashMap<>(Map.of(
                 ":phase", s(phase),
                 ":offerCount", n(offerCount),
                 ":now", s(now.toString()),
                 ":v", n(version)));
-        String condition = "currentVersion = :v";
-        if (!Phase.TERMINAL.name().equals(phase)) {
-            // INVARIANT: TERMINAL é final; uma leitura anterior à consolidação não rebaixa o resumo
-            values.put(":terminal", s(Phase.TERMINAL.name()));
-            condition += " AND (attribute_not_exists(phase) OR phase <> :terminal)";
+        // INVARIANT: fase e número de ofertas só crescem dentro de uma versão; uma leitura velha do V#n não grava
+        // uma fase anterior (VALIDATING sobre QUOTING, ou qualquer uma sobre TERMINAL) nem menos ofertas (M5)
+        List<String> allowed = new ArrayList<>();
+        for (Phase earlier : Phase.valueOf(phase).atOrBefore()) {
+            String name = ":phase" + earlier.ordinal();
+            values.put(name, s(earlier.name()));
+            allowed.add(name);
         }
+        String condition = "currentVersion = :v AND (attribute_not_exists(phase) OR phase IN ("
+                + String.join(", ", allowed) + ")) AND (attribute_not_exists(offerCount) OR offerCount <= :offerCount)";
         String expression = "SET phase = :phase, offerCount = :offerCount, updatedAt = :now";
         if (outcome != null) {
             values.put(":outcome", s(outcome));
@@ -291,7 +298,62 @@ public class QuoteTable {
             values.put(":queryId", s(issue.queryId()));
             expression.append(", queryId = :queryId");
         }
+        if (issue.type().resolvesItself()) {
+            values.put(":issueOpen", s(QuoteKeys.ISSUE_OPEN));
+            expression.append(", ").append(QuoteKeys.GSI2_PK).append(" = :issueOpen, ").append(QuoteKeys.GSI2_SK)
+                    .append(" = :now");
+        }
+        expression.append(" REMOVE resolvedAt");
         return update(QuoteKeys.issuePk(issue.issueId()), QuoteKeys.META, expression.toString(), null, names, values);
+    }
+
+    /**
+     * Resolve a ocorrência que se resolve sozinha quando a situação some (M5). A condição pela {@code revision}
+     * lida evita resolver uma ocorrência observada de novo no meio da revisão; devolve {@code false} nesse caso.
+     */
+    boolean resolveIssue(Map<String, AttributeValue> issue, String safeSummary, Instant now) {
+        String issueId = Attr.string(issue, "issueId");
+        Map<String, AttributeValue> values = new HashMap<>(Map.of(
+                ":open", s(QuoteIssues.Status.OPEN.name()),
+                ":resolved", s(QuoteIssues.Status.RESOLVED.name()),
+                ":summary", s(safeSummary),
+                ":now", s(now.toString()),
+                ":revision", n(Attr.number(issue, "revision", 0)),
+                ":one", n(1)));
+        String expression = "SET #status = :resolved, safeSummary = :summary, lastSeenAt = :now, resolvedAt = :now, "
+                + "revision = revision + :one";
+        if (Attr.string(issue, QuoteKeys.GSI1_PK) != null) {
+            values.put(":gsi1sk", s(now + "#" + issueId));
+            expression += ", " + QuoteKeys.GSI1_SK + " = :gsi1sk";
+        }
+        return updateIf(update(QuoteKeys.issuePk(issueId), QuoteKeys.META)
+                .updateExpression(expression + " REMOVE " + QuoteKeys.GSI2_PK + ", " + QuoteKeys.GSI2_SK)
+                .conditionExpression("#status = :open AND revision = :revision")
+                .expressionAttributeNames(Map.of("#status", "status"))
+                .expressionAttributeValues(values)
+                .build());
+    }
+
+    /** Itens de um valor do índice esparso {@code gsi2}, os de {@code gsi2sk} mais antigo primeiro, até {@code limit}. */
+    List<Map<String, AttributeValue>> indexed(String index, int limit) {
+        List<Map<String, AttributeValue>> items = new ArrayList<>();
+        Map<String, AttributeValue> startKey = null;
+        int remaining = limit;
+        do {
+            QueryResponse page = dynamoDb.query(QueryRequest.builder()
+                    .tableName(name())
+                    .indexName(QuoteKeys.GSI2)
+                    .keyConditionExpression("#pk = :index")
+                    .expressionAttributeNames(Map.of("#pk", QuoteKeys.GSI2_PK))
+                    .expressionAttributeValues(Map.of(":index", s(index)))
+                    .limit(remaining)
+                    .exclusiveStartKey(startKey)
+                    .build());
+            items.addAll(page.items());
+            remaining -= page.items().size();
+            startKey = page.hasLastEvaluatedKey() && !page.lastEvaluatedKey().isEmpty() ? page.lastEvaluatedKey() : null;
+        } while (startKey != null && remaining > 0);
+        return items;
     }
 
     void writeIssue(QuoteIssue issue, Instant now) {

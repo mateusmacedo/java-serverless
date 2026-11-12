@@ -45,6 +45,13 @@
             <artifactId>snakeyaml</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- WHY: o T22 confere cada troca do e2e contra o contracts/openapi.yaml, o mesmo arquivo do frontend -->
+        <dependency>
+            <groupId>com.atlassian.oai</groupId>
+            <artifactId>openapi-request-validator-core</artifactId>
+            <version>${openapi-request-validator.version}</version>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>apigateway</artifactId>

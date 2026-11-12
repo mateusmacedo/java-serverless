@@ -1,0 +1,406 @@
+{
+  "description": "Pendência antes das consultas: a versão termina NEEDS_INFORMATION com missingFields da própria versão (entrada incompleta ou enriquecimento NOT_FOUND) e oferece CREATE_VERSION. A complementação cria a versão 2 com expectedVersion; a versão 1 continua consultável, substituída e sem ações. Pendência só de seguradora, sem oferta, fica em insurerResults[].missingFields.",
+  "exchanges": [
+    {
+      "name": "habilitação ausente no cadastro",
+      "request": {
+        "method": "GET",
+        "path": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/1"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "quoteId": "5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11",
+          "version": 1,
+          "currentVersion": 1,
+          "snapshot": {
+            "product": "AUTO",
+            "applicantRef": "customer-acme-ana",
+            "applicant": {
+              "id": "customer-acme-ana",
+              "label": "Ana Lima (sintética)"
+            },
+            "risk": {
+              "vehicleRef": "vehicle-hatch-2021",
+              "usage": "PERSONAL",
+              "principalDriverRef": "driver-no-license",
+              "vehicle": {
+                "id": "vehicle-hatch-2021",
+                "label": "Hatch 1.0 2021",
+                "make": "Fiat",
+                "model": "Argo",
+                "year": 2021,
+                "salvage": false
+              },
+              "principalDriver": {
+                "id": "driver-no-license",
+                "label": "Caio Nunes (sem data de habilitação no cadastro)",
+                "licenseDate": null
+              }
+            },
+            "coverageProfile": "COMPREHENSIVE",
+            "coverage": {
+              "code": "COMPREHENSIVE",
+              "label": "Completa",
+              "summary": "Colisão, incêndio, roubo e furto e danos a terceiros",
+              "coverages": [
+                {
+                  "code": "COLLISION",
+                  "label": "Colisão",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "FIRE_THEFT",
+                  "label": "Incêndio, roubo e furto",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_PROPERTY",
+                  "label": "Danos materiais a terceiros",
+                  "insuredAmount": "100000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_BODILY",
+                  "label": "Danos corporais a terceiros",
+                  "insuredAmount": "100000.00"
+                }
+              ]
+            },
+            "desiredStartDate": "2026-12-01"
+          },
+          "phase": "TERMINAL",
+          "outcome": "NEEDS_INFORMATION",
+          "outcomeReason": "MISSING_LICENSE_DATE",
+          "supersededAt": null,
+          "revision": 3,
+          "updatedAt": "2026-11-12T10:00:04.000Z",
+          "serverTime": "2026-11-12T10:00:05.000Z",
+          "retryAfterSeconds": null,
+          "missingFields": [
+            {
+              "path": "risk.principalDriver.licenseDate",
+              "label": "Data da primeira habilitação do condutor principal",
+              "reasonCode": "MISSING_LICENSE_DATE"
+            }
+          ],
+          "insurerResults": [],
+          "selection": null,
+          "allowedActions": [
+            "CREATE_VERSION"
+          ]
+        }
+      }
+    },
+    {
+      "name": "veículo desconhecido do provedor",
+      "request": {
+        "method": "GET",
+        "path": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/1"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "quoteId": "5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11",
+          "version": 1,
+          "currentVersion": 1,
+          "snapshot": {
+            "product": "AUTO",
+            "applicantRef": "customer-acme-ana",
+            "applicant": {
+              "id": "customer-acme-ana",
+              "label": "Ana Lima (sintética)"
+            },
+            "risk": {
+              "vehicleRef": "vehicle-not-found",
+              "usage": "PERSONAL",
+              "principalDriverRef": "driver-acme-ana",
+              "vehicle": {
+                "id": "vehicle-not-found",
+                "label": "Hatch 2020 (desconhecido do provedor)",
+                "make": "Hyundai",
+                "model": "HB20",
+                "year": 2020,
+                "salvage": false
+              },
+              "principalDriver": {
+                "id": "driver-acme-ana",
+                "label": "Ana Lima",
+                "licenseDate": "2012-03-15"
+              }
+            },
+            "coverageProfile": "COMPREHENSIVE",
+            "coverage": {
+              "code": "COMPREHENSIVE",
+              "label": "Completa",
+              "summary": "Colisão, incêndio, roubo e furto e danos a terceiros",
+              "coverages": [
+                {
+                  "code": "COLLISION",
+                  "label": "Colisão",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "FIRE_THEFT",
+                  "label": "Incêndio, roubo e furto",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_PROPERTY",
+                  "label": "Danos materiais a terceiros",
+                  "insuredAmount": "100000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_BODILY",
+                  "label": "Danos corporais a terceiros",
+                  "insuredAmount": "100000.00"
+                }
+              ]
+            },
+            "desiredStartDate": "2026-12-01"
+          },
+          "phase": "TERMINAL",
+          "outcome": "NEEDS_INFORMATION",
+          "outcomeReason": "ENRICHMENT_NOT_FOUND",
+          "supersededAt": null,
+          "revision": 4,
+          "updatedAt": "2026-11-12T10:00:04.000Z",
+          "serverTime": "2026-11-12T10:00:05.000Z",
+          "retryAfterSeconds": null,
+          "missingFields": [
+            {
+              "path": "risk.vehicleRef",
+              "label": "Veículo",
+              "reasonCode": "ENRICHMENT_NOT_FOUND"
+            }
+          ],
+          "insurerResults": [],
+          "selection": null,
+          "allowedActions": [
+            "CREATE_VERSION"
+          ]
+        }
+      }
+    },
+    {
+      "name": "pendência só da seguradora, sem oferta",
+      "request": {
+        "method": "GET",
+        "path": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/1"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "quoteId": "5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11",
+          "version": 1,
+          "currentVersion": 1,
+          "snapshot": {
+            "product": "AUTO",
+            "applicantRef": "customer-acme-ana",
+            "applicant": {
+              "id": "customer-acme-ana",
+              "label": "Ana Lima (sintética)"
+            },
+            "risk": {
+              "vehicleRef": "vehicle-beta-needs-info",
+              "usage": "PERSONAL",
+              "principalDriverRef": "driver-acme-ana",
+              "vehicle": {
+                "id": "vehicle-beta-needs-info",
+                "label": "Sedã 2020 (beta pede dados)",
+                "make": "Honda",
+                "model": "Civic",
+                "year": 2020,
+                "salvage": false
+              },
+              "principalDriver": {
+                "id": "driver-acme-ana",
+                "label": "Ana Lima",
+                "licenseDate": "2012-03-15"
+              }
+            },
+            "coverageProfile": "COMPREHENSIVE",
+            "coverage": {
+              "code": "COMPREHENSIVE",
+              "label": "Completa",
+              "summary": "Colisão, incêndio, roubo e furto e danos a terceiros",
+              "coverages": [
+                {
+                  "code": "COLLISION",
+                  "label": "Colisão",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "FIRE_THEFT",
+                  "label": "Incêndio, roubo e furto",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_PROPERTY",
+                  "label": "Danos materiais a terceiros",
+                  "insuredAmount": "100000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_BODILY",
+                  "label": "Danos corporais a terceiros",
+                  "insuredAmount": "100000.00"
+                }
+              ]
+            },
+            "desiredStartDate": "2026-12-01"
+          },
+          "phase": "TERMINAL",
+          "outcome": "NEEDS_INFORMATION",
+          "outcomeReason": "INSURER_NEEDS_INFORMATION",
+          "supersededAt": null,
+          "revision": 9,
+          "updatedAt": "2026-11-12T10:00:04.000Z",
+          "serverTime": "2026-11-12T10:00:05.000Z",
+          "retryAfterSeconds": null,
+          "missingFields": [],
+          "insurerResults": [
+            {
+              "insurerId": "beta",
+              "insurerName": "Beta Seguros",
+              "status": "NEEDS_INFORMATION",
+              "reasonCode": "INSURER_NEEDS_INFORMATION",
+              "missingFields": [
+                {
+                  "path": "risk.principalDriver.licenseDate",
+                  "label": "Data da primeira habilitação do condutor principal",
+                  "reasonCode": "MISSING_LICENSE_DATE"
+                }
+              ],
+              "updatedAt": "2026-11-12T10:00:04.000Z"
+            }
+          ],
+          "selection": null,
+          "allowedActions": [
+            "CREATE_VERSION"
+          ]
+        }
+      }
+    },
+    {
+      "name": "complementação cria a versão 2",
+      "request": {
+        "method": "POST",
+        "path": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions",
+        "headers": {
+          "Idempotency-Key": "complement-1"
+        },
+        "body": {
+          "product": "AUTO",
+          "applicantRef": "customer-acme-ana",
+          "risk": {
+            "vehicleRef": "vehicle-hatch-2021",
+            "usage": "PERSONAL",
+            "principalDriverRef": "driver-acme-bruno"
+          },
+          "coverageProfile": "COMPREHENSIVE",
+          "desiredStartDate": "2026-12-01",
+          "expectedVersion": 1
+        }
+      },
+      "response": {
+        "status": 202,
+        "body": {
+          "quoteId": "5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11",
+          "version": 2,
+          "phase": "RECEIVED",
+          "statusUrl": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/2"
+        },
+        "headers": {
+          "Location": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/2"
+        }
+      }
+    },
+    {
+      "name": "versão 1 substituída",
+      "request": {
+        "method": "GET",
+        "path": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/1"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "quoteId": "5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11",
+          "version": 1,
+          "currentVersion": 2,
+          "snapshot": {
+            "product": "AUTO",
+            "applicantRef": "customer-acme-ana",
+            "applicant": {
+              "id": "customer-acme-ana",
+              "label": "Ana Lima (sintética)"
+            },
+            "risk": {
+              "vehicleRef": "vehicle-hatch-2021",
+              "usage": "PERSONAL",
+              "principalDriverRef": "driver-no-license",
+              "vehicle": {
+                "id": "vehicle-hatch-2021",
+                "label": "Hatch 1.0 2021",
+                "make": "Fiat",
+                "model": "Argo",
+                "year": 2021,
+                "salvage": false
+              },
+              "principalDriver": {
+                "id": "driver-no-license",
+                "label": "Caio Nunes (sem data de habilitação no cadastro)",
+                "licenseDate": null
+              }
+            },
+            "coverageProfile": "COMPREHENSIVE",
+            "coverage": {
+              "code": "COMPREHENSIVE",
+              "label": "Completa",
+              "summary": "Colisão, incêndio, roubo e furto e danos a terceiros",
+              "coverages": [
+                {
+                  "code": "COLLISION",
+                  "label": "Colisão",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "FIRE_THEFT",
+                  "label": "Incêndio, roubo e furto",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_PROPERTY",
+                  "label": "Danos materiais a terceiros",
+                  "insuredAmount": "100000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_BODILY",
+                  "label": "Danos corporais a terceiros",
+                  "insuredAmount": "100000.00"
+                }
+              ]
+            },
+            "desiredStartDate": "2026-12-01"
+          },
+          "phase": "TERMINAL",
+          "outcome": "NEEDS_INFORMATION",
+          "outcomeReason": "MISSING_LICENSE_DATE",
+          "supersededAt": "2026-11-12T10:05:00.000Z",
+          "revision": 4,
+          "updatedAt": "2026-11-12T10:05:00.000Z",
+          "serverTime": "2026-11-12T10:05:01.000Z",
+          "retryAfterSeconds": null,
+          "missingFields": [
+            {
+              "path": "risk.principalDriver.licenseDate",
+              "label": "Data da primeira habilitação do condutor principal",
+              "reasonCode": "MISSING_LICENSE_DATE"
+            }
+          ],
+          "insurerResults": [],
+          "selection": null,
+          "allowedActions": []
+        }
+      }
+    }
+  ]
+}

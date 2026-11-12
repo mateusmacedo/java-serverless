@@ -1,6 +1,7 @@
 package com.mmda.serverless.provider.simulators;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.InstanceOfAssertFactories.LIST;
 import static org.hamcrest.Matchers.startsWith;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -71,6 +72,49 @@ class BetaInsurerSimulatorControllerTest {
         assertThat(saved.scenario()).isEqualTo("OFFER");
         assertThat(saved.readyAt()).isEqualTo(saved.receivedAt().plusSeconds(3));
         assertThat(saved.result()).isEqualTo(order.result());
+    }
+
+    @Test
+    void offerCarriesTheCoveragesOfTheRequestedProfileInTheCatalog() throws Exception {
+        mockMvc.perform(post("/sim/insurers/beta/quotes").contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"clientReference":"%s","risk":{"usage":"PERSONAL","vehicle":{"id":"vehicle-sedan-2019"},\
+                                "coverageProfile":{"code":"THEFT_AND_THIRD_PARTY"}},"enrichment":{}}"""
+                                .formatted(CLIENT_REFERENCE)))
+                .andExpect(status().isAccepted());
+
+        Map<String, Object> offer = scheduled(1).getFirst().order().result();
+        assertThat(offer).containsEntry("outcome", "OFFER")
+                .containsEntry("coverages", List.of(
+                        Map.of("code", "FIRE_THEFT", "description", "Incêndio, roubo e furto", "limit", "90000.00"),
+                        Map.of("code", "THIRD_PARTY_PROPERTY", "description", "Danos materiais a terceiros",
+                                "limit", "50000.00"),
+                        Map.of("code", "THIRD_PARTY_BODILY", "description", "Danos corporais a terceiros",
+                                "limit", "50000.00")))
+                .containsEntry("deductibles", List.of());
+        assertThat(saved().result()).isEqualTo(offer);
+    }
+
+    @Test
+    void defaultProfileOfTheCatalogPutsTheDeductibleOnCollision() throws Exception {
+        quote("vehicle-hatch-2021").andExpect(status().isAccepted());
+
+        Map<String, Object> offer = scheduled(1).getFirst().order().result();
+        assertThat(offer.get("coverages")).asInstanceOf(LIST).hasSize(4);
+        assertThat(offer).containsEntry("deductibles", List.of(Map.of("coverage", "COLLISION", "amount", "3600.00")));
+    }
+
+    @Test
+    void coverageProfileOutsideTheCatalogIsRejectedWithoutSchedulingAnything() throws Exception {
+        mockMvc.perform(post("/sim/insurers/beta/quotes").contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"clientReference":"%s","risk":{"vehicle":{"ref":"vehicle-hatch-2021"},\
+                                "coverageProfile":"PLATINUM"}}""".formatted(CLIENT_REFERENCE)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+
+        verify(callbacks, never()).schedule(any(), anyInt());
+        verify(quotes, never()).save(any());
     }
 
     @Test

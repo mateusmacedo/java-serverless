@@ -1,24 +1,42 @@
 openapi: 3.1.0
 info:
   title: Plataforma de cotação — API de produto
-  version: 0.2.0
+  version: 1.0.0
   description: |
     API de produto da `quote-solution`, conforme o contrato compartilhado dos PRDs de backend e de
-    frontend (versão 2.0) e o desenho técnico (`docs/quotation-platform.md`).
+    frontend (versão 2.0) e o desenho técnico (`docs/quotation-platform.md`). O frontend e os testes do
+    backend usam estes schemas e as fixtures de `contracts/fixtures`, validadas contra este documento.
 
-    Versão parcial: identidade (`GET /v1/me`), criação de cotação, nova versão (marco M4) e leitura de
-    uma versão e das suas ofertas. Catálogo, listagem, seleção e operações entram nos marcos seguintes,
-    sem mudança incompatível nos schemas abaixo.
+    Versão 1.0.0 (marco M5): identidade, catálogo do laboratório, cotações (criação, listagem, versões,
+    ofertas e seleção definitiva) e operações restritas (ocorrências e reconciliação manual).
 
     Autenticação: access token do user pool Cognito da stack (`Authorization: Bearer <token>`). ID
-    tokens e tokens de outro app client são rejeitados com `401`. A organização vem do grupo
-    `org_<organizationId>` e as permissões dos grupos `perm_*`; o servidor é a autoridade de
-    organização em todos os endpoints. Cotação de outra organização responde `404`.
+    tokens, tokens de outro app client e tokens com assinatura inválida são rejeitados com `401`. A
+    organização vem do grupo `org_<organizationId>` e as permissões dos grupos `perm_*`; o servidor é a
+    autoridade de organização em todos os endpoints, e esconder um botão não autoriza o recurso. Recurso
+    de outra organização responde `404`, como o inexistente.
+
+    Permissões por rota: a extensão `x-permissions` de cada operação lista a permissão que ela exige.
+    Sem ela, a resposta é `403` antes de qualquer leitura. `GET /v1/me` só exige o token e a organização.
+
+    Mutações: `Idempotency-Key` obrigatório, uma chave por intenção. Depois de um timeout, reenvie o mesmo
+    body com a mesma chave; o mesmo body devolve o mesmo resultado, e outro body com a mesma chave
+    responde `409` `IDEMPOTENCY_CONFLICT`.
+
+    Listagens: paginação por cursor. `nextCursor` nulo encerra a lista; uma página pode vir com menos
+    itens que `limit` mesmo havendo mais, e o cliente segue enquanto `nextCursor` não for nulo. Ao mudar os
+    filtros, o cliente recomeça sem cursor; o cursor de outra combinação de filtros pode responder `400`.
 
     Datas com hora são ISO 8601 em UTC; `desiredStartDate` e `licenseDate` são datas civis
     (`YYYY-MM-DD`, fuso `America/Sao_Paulo`). Valores monetários são strings decimais com moeda
     explícita. IDs são opacos. `revision` é monotônica por recurso: a da versão e a da lista de ofertas
-    não se comparam.
+    não se comparam, e uma resposta com `revision` menor não substitui a já exibida.
+
+    Erros: `code`, `message`, `correlationId` e `fieldErrors` opcionais (`path` e `message`). `400`
+    validação; `401` sessão inválida; `403` sem permissão; `404` recurso não acessível; `409` conflito
+    com os códigos de `ConflictError`; `429` quota com `Retry-After`; `503` indisponibilidade antes da
+    aceitação durável. Erros de infraestrutura depois da aceitação aparecem no recurso, não como erro da
+    requisição.
 servers:
   - url: http://localhost:4566/restapis/{apiId}/local/_user_request_
     description: API Gateway no Floci, stage local
@@ -33,8 +51,12 @@ security:
 tags:
   - name: identity
     description: Usuário autenticado
+  - name: catalog
+    description: Fixtures autorizadas do laboratório, usadas no formulário da cotação
   - name: quotes
-    description: Cotações, versões e ofertas
+    description: Cotações, versões, ofertas e seleção
+  - name: operations
+    description: Ocorrências operacionais e reconciliação manual, restritas a operadores
 paths:
   /v1/me:
     get:
@@ -42,6 +64,7 @@ paths:
         - identity
       operationId: getMe
       summary: Usuário, organização e permissões
+      x-permissions: []
       responses:
         '200':
           description: Identidade derivada do access token.
@@ -53,7 +76,169 @@ paths:
           $ref: '#/components/responses/Unauthenticated'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/catalog/customers:
+    get:
+      tags:
+        - catalog
+      operationId: listCatalogCustomers
+      summary: Clientes sintéticos da organização
+      description: |
+        Clientes do catálogo do laboratório na organização de quem chama, na ordem do catálogo. `search`
+        filtra pelo rótulo ou pelo id, sem diferença de maiúsculas e acentos. Exige `quotes:write`.
+      x-permissions:
+        - quotes:write
+      parameters:
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          $ref: '#/components/responses/CatalogPage'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/catalog/vehicles:
+    get:
+      tags:
+        - catalog
+      operationId: listCatalogVehicles
+      summary: Veículos sintéticos da organização
+      description: |
+        Veículos do catálogo do laboratório na organização de quem chama, na ordem do catálogo. `search`
+        filtra pelo rótulo ou pelo id, sem diferença de maiúsculas e acentos. Exige `quotes:write`.
+      x-permissions:
+        - quotes:write
+      parameters:
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          $ref: '#/components/responses/CatalogPage'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/catalog/drivers:
+    get:
+      tags:
+        - catalog
+      operationId: listCatalogDrivers
+      summary: Condutores sintéticos da organização
+      description: |
+        Condutores do catálogo do laboratório na organização de quem chama, na ordem do catálogo. `search`
+        filtra pelo rótulo ou pelo id, sem diferença de maiúsculas e acentos. Exige `quotes:write`.
+      x-permissions:
+        - quotes:write
+      parameters:
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          $ref: '#/components/responses/CatalogPage'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/catalog/coverage-profiles:
+    get:
+      tags:
+        - catalog
+      operationId: listCatalogCoverageProfiles
+      summary: Perfis de cobertura simulados, com o resumo das coberturas
+      description: |
+        Perfis de cobertura do laboratório, comuns a todas as organizações, com código, rótulo, resumo e
+        coberturas. `search` filtra pelo rótulo ou pelo código. Exige `quotes:write`.
+      x-permissions:
+        - quotes:write
+      parameters:
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Página de perfis de cobertura.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CoverageProfilesPage'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v1/quotes:
+    get:
+      tags:
+        - quotes
+      operationId: listQuotes
+      summary: Cotações da organização, das mais novas para as mais antigas
+      description: |
+        Resumo da versão atual de cada cotação da organização: fase, resultado e número de ofertas. Os
+        filtros se combinam; `createdFrom` e `createdTo` incluem os dois extremos. Exige `quotes:read`.
+      x-permissions:
+        - quotes:read
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - name: phase
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Phase'
+        - name: outcome
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Outcome'
+        - name: createdFrom
+          in: query
+          required: false
+          description: Instante mínimo de criação, inclusivo.
+          schema:
+            type: string
+            format: date-time
+        - name: createdTo
+          in: query
+          required: false
+          description: Instante máximo de criação, inclusivo; não pode ser anterior a `createdFrom`.
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Página de cotações.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuotesPage'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
     post:
       tags:
         - quotes
@@ -67,6 +252,8 @@ paths:
         Reenviar a mesma `Idempotency-Key` com o mesmo body (comparado em JSON canônico, RFC 8785)
         devolve a mesma identidade, sem nova execução. A mesma chave com outro body responde `409`
         `IDEMPOTENCY_CONFLICT`, sem alterar a cotação existente. Exige `quotes:write`.
+      x-permissions:
+        - quotes:write
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -109,6 +296,8 @@ paths:
           $ref: '#/components/responses/Conflict'
         '415':
           $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/Unavailable'
   /v1/quotes/{quoteId}/versions:
@@ -131,6 +320,8 @@ paths:
         Reenviar a mesma `Idempotency-Key` com o mesmo body devolve a mesma versão, sem nova execução; a
         mesma chave com outro body responde `409` `IDEMPOTENCY_CONFLICT`. Cotação de outra organização
         responde `404`. Exige `quotes:write`.
+      x-permissions:
+        - quotes:write
       parameters:
         - $ref: '#/components/parameters/QuoteId'
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -202,6 +393,8 @@ paths:
                     correlationId: 7d1c2a9e-1f6b-4c3a-9e8d-0a1b2c3d4e60
         '415':
           $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/Unavailable'
   /v1/quotes/{quoteId}/versions/{version}:
@@ -214,7 +407,11 @@ paths:
         `outcome` e `outcomeReason` ficam nulos até `phase = TERMINAL`. `retryAfterSeconds` orienta o
         polling enquanto a versão não é terminal e é nulo depois. `allowedActions` é derivado no
         servidor: `CREATE_VERSION` e `SELECT_OFFER` só na versão atual sem seleção e com a permissão
-        correspondente; `SELECT_OFFER` exige ao menos uma oferta selecionável. Exige `quotes:read`.
+        correspondente; `SELECT_OFFER` exige ao menos uma oferta selecionável, inclusive durante
+        `QUOTING`. Depois da seleção, nenhuma ação é oferecida, nem `CREATE_VERSION` diante de um
+        `NEEDS_INFORMATION` posterior de outra seguradora, que fica só informativo. Exige `quotes:read`.
+      x-permissions:
+        - quotes:read
       parameters:
         - $ref: '#/components/parameters/QuoteId'
         - $ref: '#/components/parameters/Version'
@@ -231,6 +428,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v1/quotes/{quoteId}/versions/{version}/offers:
     get:
       tags:
@@ -241,23 +440,13 @@ paths:
         Uma oferta é selecionável quando a versão é a atual, não há seleção e `validUntil` é posterior
         ao `serverTime`. `unavailabilityReason` segue a precedência `VERSION_SUPERSEDED`,
         `SELECTION_ALREADY_EXISTS`, `OFFER_EXPIRED` e é nulo quando `selectable`. Exige `quotes:read`.
+      x-permissions:
+        - quotes:read
       parameters:
         - $ref: '#/components/parameters/QuoteId'
         - $ref: '#/components/parameters/Version'
-        - name: cursor
-          in: query
-          required: false
-          description: Valor de `nextCursor` da página anterior.
-          schema:
-            type: string
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 20
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
       responses:
         '200':
           description: Página de ofertas.
@@ -273,6 +462,223 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/quotes/{quoteId}/versions/{version}/selection:
+    post:
+      tags:
+        - quotes
+      operationId: selectOffer
+      summary: Registra a seleção definitiva de uma oferta, sem emitir proposta
+      description: |
+        Registra a intenção de proposta (`status = INTENT_RECORDED`); nenhuma proposta é emitida. A seleção
+        é definitiva no MVP: uma por versão, e depois dela a cotação não aceita nova versão.
+
+        Permitida também durante `QUOTING`, com a oferta válida e a versão atual; as outras consultas
+        continuam. Antes de confirmar, leia as ofertas de novo: a oferta pode expirar entre a leitura e o
+        envio, e o servidor decide.
+
+        - Mesma oferta já selecionada: `201` com a seleção existente, mesmo com outra chave.
+        - Outra oferta depois da seleção: `409` `SELECTION_ALREADY_EXISTS`.
+        - Versão substituída: `409` `VERSION_SUPERSEDED`.
+        - Oferta com `validUntil` vencido no relógio do servidor: `409` `OFFER_EXPIRED`.
+        - Oferta que não pertence à versão, versão inexistente ou cotação de outra organização: `404`.
+
+        Nenhum desses casos grava intenção. Seleção e nova versão escrevem o mesmo registro da cotação, e
+        só uma das duas vence; a outra recebe `409`. O sucesso só existe com a resposta: depois de um
+        timeout, reenvie o mesmo body com a mesma chave. Exige `offers:select`.
+      x-permissions:
+        - offers:select
+      parameters:
+        - $ref: '#/components/parameters/QuoteId'
+        - $ref: '#/components/parameters/Version'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SelectionRequest'
+            examples:
+              alpha:
+                summary: Oferta da alpha
+                value:
+                  offerId: of_0f1e2d3c4b5a69788796a5b4c3d2e1f0
+      responses:
+        '201':
+          description: Intenção registrada agora, ou a seleção existente da mesma oferta.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Selection'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Chave já usada com outro body, outra oferta já selecionada, versão substituída ou oferta expirada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConflictError'
+              examples:
+                selectionAlreadyExists:
+                  summary: A cotação já tem outra oferta selecionada
+                  value:
+                    code: SELECTION_ALREADY_EXISTS
+                    message: A cotação já tem outra oferta selecionada; a seleção é definitiva.
+                    correlationId: 3f6c1b2a-9d8e-4f7a-8b6c-5d4e3f2a1b0c
+                offerExpired:
+                  summary: A oferta venceu antes do envio
+                  value:
+                    code: OFFER_EXPIRED
+                    message: A oferta expirou; atualize as ofertas da versão.
+                    correlationId: 3f6c1b2a-9d8e-4f7a-8b6c-5d4e3f2a1b0d
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /v1/operations/issues:
+    get:
+      tags:
+        - operations
+      operationId: listOperationIssues
+      summary: Ocorrências operacionais da organização
+      description: |
+        Projeção das ocorrências da quote e da provider, das vistas por último para as mais antigas, sem
+        token nem payload bruto. `RECONCILE` só aparece na ocorrência aberta, com consulta, reconciliável e
+        para quem tem `operations:reconcile`. Um callback sem correlação não tem organização e não aparece
+        aqui. Como a ordem segue `lastSeenAt`, uma ocorrência vista de novo durante a paginação pode mudar de
+        página. Várias ocorrências ficam `OPEN` para sempre no MVP (veja `IssueStatus`). Exige `operations:read`.
+      x-permissions:
+        - operations:read
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - name: type
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/IssueType'
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/IssueStatus'
+      responses:
+        '200':
+          description: Página de ocorrências.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IssuesPage'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/operations/queries/{queryId}/reconcile:
+    post:
+      tags:
+        - operations
+      operationId: reconcileQuery
+      summary: Pede a reconciliação manual de uma consulta da organização
+      description: |
+        Registra a operação com o motivo e quem pediu, para auditoria, e o pedido à provider, numa
+        transação. Aceita só consulta conhecida da organização, isto é, uma que apareceu numa ocorrência
+        dela; outra consulta responde `404`. O `202` não significa consulta recuperada: acompanhe pelo
+        `statusUrl`, sem repetir o comando. Reenviar a mesma `Idempotency-Key` com o mesmo body devolve a
+        mesma operação. Exige `operations:reconcile`.
+      x-permissions:
+        - operations:reconcile
+      parameters:
+        - name: queryId
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReconcileRequest'
+            examples:
+              unknownQuery:
+                summary: Consulta sem resposta do fornecedor
+                value:
+                  reason: Consulta UNKNOWN há mais de 10 minutos; conferir com o fornecedor.
+      responses:
+        '202':
+          description: Reconciliação registrada, ou a mesma operação de um reenvio idêntico.
+          headers:
+            Location:
+              description: Mesmo valor de `statusUrl`.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReconcileAccepted'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /v1/operations/{operationId}:
+    get:
+      tags:
+        - operations
+      operationId: getOperation
+      summary: Situação de uma reconciliação manual
+      description: |
+        `QUEUED` até a provider concluir; depois, `SUCCEEDED` (a consulta já estava concluída ou foi
+        concluída agora) ou `FAILED` (continua sem resultado, segue em voo ou não existe). A provider não
+        publica o `RUNNING` no MVP. Operação de outra organização responde `404`. Exige `operations:read`.
+      x-permissions:
+        - operations:read
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Situação da operação.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Operation'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
 components:
   securitySchemes:
     bearerAuth:
@@ -305,21 +711,45 @@ components:
         type: integer
         minimum: 1
         maximum: 9999
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Valor de `nextCursor` da página anterior, com os mesmos filtros.
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    Search:
+      name: search
+      in: query
+      required: false
+      description: Trecho do rótulo ou do id, sem diferença de maiúsculas e acentos.
+      schema:
+        type: string
+        maxLength: 100
   responses:
     ValidationError:
-      description: Estrutura, formato ou referência inválida.
+      description: Estrutura, formato, parâmetro ou referência inválida.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
     Unauthenticated:
-      description: Token ausente, inválido, expirado, ID token ou de outro app client.
+      description: Token ausente, inválido, expirado, com assinatura inválida, ID token ou de outro app client.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
     Forbidden:
-      description: Usuário sem organização ou sem a permissão do endpoint.
+      description: Usuário sem organização ou sem a permissão do endpoint (`x-permissions`).
       content:
         application/json:
           schema:
@@ -342,12 +772,32 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+    TooManyRequests:
+      description: |
+        Quota do produto excedida; aguarde o `Retry-After` antes de tentar de novo. No MVP não há quota de
+        produto configurada; a resposta fica reservada à camada de entrada.
+      headers:
+        Retry-After:
+          description: Segundos de espera.
+          schema:
+            type: integer
+            minimum: 1
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
     Unavailable:
       description: Não foi possível aceitar duravelmente; reenvie com a mesma `Idempotency-Key`.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+    CatalogPage:
+      description: Página do catálogo.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CatalogPage'
   schemas:
     Permission:
       type: string
@@ -376,6 +826,48 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Permission'
+    CatalogItem:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - label
+      properties:
+        id:
+          type: string
+          description: Referência usada no pedido (`applicantRef`, `risk.vehicleRef` ou `risk.principalDriverRef`).
+        label:
+          type: string
+    CatalogPage:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - nextCursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CatalogItem'
+        nextCursor:
+          type:
+            - string
+            - 'null'
+    CoverageProfilesPage:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - nextCursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CoverageProfile'
+        nextCursor:
+          type:
+            - string
+            - 'null'
     Usage:
       type: string
       enum:
@@ -531,6 +1023,50 @@ components:
           type: string
           examples:
             - /v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/1
+    QuoteSummary:
+      type: object
+      additionalProperties: false
+      description: Resumo da versão atual da cotação; `outcome` é nulo até `phase = TERMINAL`.
+      required:
+        - id
+        - currentVersion
+        - phase
+        - outcome
+        - createdAt
+        - offerCount
+      properties:
+        id:
+          type: string
+        currentVersion:
+          type: integer
+          minimum: 1
+        phase:
+          $ref: '#/components/schemas/Phase'
+        outcome:
+          oneOf:
+            - $ref: '#/components/schemas/Outcome'
+            - type: 'null'
+        createdAt:
+          type: string
+          format: date-time
+        offerCount:
+          type: integer
+          minimum: 0
+    QuotesPage:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - nextCursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/QuoteSummary'
+        nextCursor:
+          type:
+            - string
+            - 'null'
     MissingField:
       type: object
       additionalProperties: false
@@ -544,6 +1080,7 @@ components:
           description: Caminho relativo ao snapshot, como `risk.principalDriverRef`.
         label:
           type: string
+          description: Rótulo do campo para exibição, em português.
         reasonCode:
           type: string
           description: Código seguro, como `MISSING_LICENSE_DATE` ou `ENRICHMENT_NOT_FOUND`.
@@ -692,11 +1229,23 @@ components:
             - 'null'
         missingFields:
           type: array
+          description: Dados que esta seguradora pediu, quando `status = NEEDS_INFORMATION`; vazio nos demais.
           items:
             $ref: '#/components/schemas/MissingField'
         updatedAt:
           type: string
           format: date-time
+    SelectionRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - offerId
+      properties:
+        offerId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Id de uma oferta da própria versão, como devolvido em `GET .../offers`.
     Selection:
       type: object
       additionalProperties: false
@@ -778,6 +1327,13 @@ components:
           minimum: 1
         missingFields:
           type: array
+          description: |
+            Pendências da própria versão, encontradas antes das consultas às seguradoras: entrada incompleta
+            (`MISSING_LICENSE_DATE`) ou enriquecimento obrigatório que respondeu `NOT_FOUND`
+            (`ENRICHMENT_NOT_FOUND`), sempre com `outcome = NEEDS_INFORMATION`. Fica vazio quando as pendências
+            vêm das seguradoras: elas ficam em `insurerResults[].missingFields`, inclusive em `PARTIAL` e no
+            `NEEDS_INFORMATION` sem oferta (`outcomeReason = INSURER_NEEDS_INFORMATION`). Para montar a tela de
+            complementação, leia os dois lugares.
           items:
             $ref: '#/components/schemas/MissingField'
         insurerResults:
@@ -900,6 +1456,149 @@ components:
           type:
             - string
             - 'null'
+    IssueType:
+      type: string
+      description: |
+        `UNKNOWN_QUERY`, `UNMATCHED_CALLBACK` e `STALE_OUTBOX` vêm da provider; `WORKFLOW_FAILED`,
+        `TASK_EXPIRED` e `STUCK_VERSION`, da quote; `DEAD_LETTER`, das duas.
+      enum:
+        - UNKNOWN_QUERY
+        - UNMATCHED_CALLBACK
+        - DEAD_LETTER
+        - STALE_OUTBOX
+        - WORKFLOW_FAILED
+        - TASK_EXPIRED
+        - STUCK_VERSION
+    IssueStatus:
+      type: string
+      description: |
+        Limite conhecido do MVP: das ocorrências da quote, só a `STUCK_VERSION` vai a `RESOLVED`, quando a versão
+        deixa de estar em andamento. `WORKFLOW_FAILED`, `TASK_EXPIRED` e o `DEAD_LETTER` da quote registram um fato
+        e ficam `OPEN`, como o `DEAD_LETTER` da provider; não há reconhecimento manual. As outras ocorrências da
+        provider seguem o `status` que ela publica.
+      enum:
+        - OPEN
+        - RESOLVED
+    IssueAction:
+      type: string
+      enum:
+        - RECONCILE
+    Issue:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - queryId
+        - quoteId
+        - type
+        - status
+        - firstSeenAt
+        - lastSeenAt
+        - safeSummary
+        - allowedActions
+      properties:
+        id:
+          type: string
+        queryId:
+          type:
+            - string
+            - 'null'
+          description: Consulta da provider; nula quando a ocorrência não tem consulta.
+        quoteId:
+          type:
+            - string
+            - 'null'
+        type:
+          $ref: '#/components/schemas/IssueType'
+        status:
+          $ref: '#/components/schemas/IssueStatus'
+        firstSeenAt:
+          type: string
+          format: date-time
+        lastSeenAt:
+          type: string
+          format: date-time
+        safeSummary:
+          type: string
+          description: Resumo seguro, sem token, credencial nem payload do fornecedor.
+        allowedActions:
+          type: array
+          items:
+            $ref: '#/components/schemas/IssueAction'
+    IssuesPage:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - nextCursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Issue'
+        nextCursor:
+          type:
+            - string
+            - 'null'
+    ReconcileRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Motivo do operador, guardado na auditoria da operação; não inclua dado pessoal.
+    OperationStatus:
+      type: string
+      enum:
+        - QUEUED
+        - RUNNING
+        - SUCCEEDED
+        - FAILED
+    ReconcileAccepted:
+      type: object
+      additionalProperties: false
+      description: |
+        `status` é sempre `QUEUED`, também num reenvio idêntico; a situação atual da operação é a do
+        `statusUrl`.
+      required:
+        - operationId
+        - status
+        - statusUrl
+      properties:
+        operationId:
+          type: string
+        status:
+          type: string
+          const: QUEUED
+        statusUrl:
+          type: string
+          examples:
+            - /v1/operations/op_6c0d3f1e2a4b5c6d7e8f901a2b3c4d5e
+    Operation:
+      type: object
+      additionalProperties: false
+      required:
+        - operationId
+        - queryId
+        - status
+        - safeSummary
+        - updatedAt
+      properties:
+        operationId:
+          type: string
+        queryId:
+          type: string
+        status:
+          $ref: '#/components/schemas/OperationStatus'
+        safeSummary:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
     FieldError:
       type: object
       additionalProperties: false
@@ -923,7 +1622,7 @@ components:
           type: string
           description: >-
             Código seguro, como `VALIDATION_ERROR`, `UNAUTHENTICATED`, `FORBIDDEN`, `NOT_FOUND`,
-            `UNSUPPORTED_MEDIA_TYPE` ou `SERVICE_UNAVAILABLE`.
+            `UNSUPPORTED_MEDIA_TYPE`, `RATE_LIMITED` ou `SERVICE_UNAVAILABLE`.
         message:
           type: string
         correlationId:

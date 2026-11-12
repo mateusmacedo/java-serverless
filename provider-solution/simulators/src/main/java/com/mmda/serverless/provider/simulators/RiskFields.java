@@ -28,4 +28,16 @@ final class RiskFields {
     static String usage(Map<String, Object> risk) {
         return risk != null && risk.get("usage") instanceof String value ? value : "PERSONAL";
     }
+
+    /**
+     * Código do perfil de cobertura: {@code risk.coverageProfile.code}, como o snapshot da quote o envia, ou
+     * {@code risk.coverageProfile} só com o código. Sem perfil, o padrão do catálogo.
+     */
+    static String coverageProfile(Map<String, Object> risk) {
+        Object profile = risk == null ? null : risk.get("coverageProfile");
+        if (profile instanceof Map<?, ?> resolved && resolved.get("code") instanceof String code) {
+            return code;
+        }
+        return profile instanceof String code ? code : LabCatalog.DEFAULT_COVERAGE_PROFILE;
+    }
 }

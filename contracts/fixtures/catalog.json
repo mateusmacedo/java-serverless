@@ -46,7 +46,9 @@
         { "id": "driver-acme-ana", "label": "Ana Lima", "licenseDate": "2012-03-15" },
         { "id": "driver-acme-bruno", "label": "Bruno Rocha", "licenseDate": "2018-07-02" },
         { "id": "driver-no-license", "label": "Caio Nunes (sem data de habilitação no cadastro)", "licenseDate": null,
-          "scenario": "elig-1 devolve NEEDS_INFORMATION com MISSING_LICENSE_DATE (T24)" }
+          "scenario": "elig-1 devolve NEEDS_INFORMATION com MISSING_LICENSE_DATE (T24)" },
+        { "id": "driver-not-found", "label": "Davi Souza (desconhecido do provedor)", "licenseDate": "2016-05-10",
+          "scenario": "Enriquecimento responde 404 NOT_FOUND com notFoundRefs [principalDriverRef]; com o vehicle-not-found, as duas referências" }
       ],
       "vehicles": [
         { "id": "vehicle-hatch-2021", "label": "Hatch 1.0 2021", "make": "Fiat", "model": "Argo", "year": 2021, "salvage": false,

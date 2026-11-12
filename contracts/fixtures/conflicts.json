@@ -1,0 +1,222 @@
+{
+  "description": "Conflitos 409 do contrato: chave reutilizada com outro body, expectedVersion desatualizado, nova versão depois da seleção, troca de oferta, seleção em versão substituída, cujas ofertas ficam VERSION_SUPERSEDED, e oferta expirada.",
+  "exchanges": [
+    {
+      "name": "mesma chave com outro body",
+      "request": {
+        "method": "POST",
+        "path": "/v1/quotes",
+        "headers": {
+          "Idempotency-Key": "intent-1"
+        },
+        "body": {
+          "product": "AUTO",
+          "applicantRef": "customer-acme-ana",
+          "risk": {
+            "vehicleRef": "vehicle-hatch-2021",
+            "usage": "PERSONAL",
+            "principalDriverRef": "driver-acme-ana"
+          },
+          "coverageProfile": "THIRD_PARTY",
+          "desiredStartDate": "2026-12-01"
+        }
+      },
+      "response": {
+        "status": 409,
+        "body": {
+          "code": "IDEMPOTENCY_CONFLICT",
+          "message": "A Idempotency-Key já foi usada com outro conteúdo.",
+          "correlationId": "7d1c2a9e-1f6b-4c3a-9e8d-0a1b2c3d4e5f"
+        }
+      }
+    },
+    {
+      "name": "expectedVersion desatualizado",
+      "request": {
+        "method": "POST",
+        "path": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions",
+        "headers": {
+          "Idempotency-Key": "complement-2"
+        },
+        "body": {
+          "product": "AUTO",
+          "applicantRef": "customer-acme-ana",
+          "risk": {
+            "vehicleRef": "vehicle-hatch-2021",
+            "usage": "PERSONAL",
+            "principalDriverRef": "driver-acme-bruno"
+          },
+          "coverageProfile": "COMPREHENSIVE",
+          "desiredStartDate": "2026-12-01",
+          "expectedVersion": 1
+        }
+      },
+      "response": {
+        "status": 409,
+        "body": {
+          "code": "VERSION_CONFLICT",
+          "message": "A versão informada em expectedVersion não é mais a atual; leia a cotação e tente de novo.",
+          "correlationId": "7d1c2a9e-1f6b-4c3a-9e8d-0a1b2c3d4e5f"
+        }
+      }
+    },
+    {
+      "name": "nova versão depois da seleção",
+      "request": {
+        "method": "POST",
+        "path": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions",
+        "headers": {
+          "Idempotency-Key": "complement-3"
+        },
+        "body": {
+          "product": "AUTO",
+          "applicantRef": "customer-acme-ana",
+          "risk": {
+            "vehicleRef": "vehicle-hatch-2021",
+            "usage": "PERSONAL",
+            "principalDriverRef": "driver-acme-bruno"
+          },
+          "coverageProfile": "COMPREHENSIVE",
+          "desiredStartDate": "2026-12-01",
+          "expectedVersion": 1
+        }
+      },
+      "response": {
+        "status": 409,
+        "body": {
+          "code": "QUOTE_ALREADY_SELECTED",
+          "message": "A cotação já tem uma oferta selecionada e não aceita nova versão.",
+          "correlationId": "7d1c2a9e-1f6b-4c3a-9e8d-0a1b2c3d4e5f"
+        }
+      }
+    },
+    {
+      "name": "troca de oferta",
+      "request": {
+        "method": "POST",
+        "path": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/1/selection",
+        "headers": {
+          "Idempotency-Key": "select-3"
+        },
+        "body": {
+          "offerId": "of_a1b2c3d4e5f60718293a4b5c6d7e8f90"
+        }
+      },
+      "response": {
+        "status": 409,
+        "body": {
+          "code": "SELECTION_ALREADY_EXISTS",
+          "message": "A cotação já tem outra oferta selecionada; a seleção é definitiva.",
+          "correlationId": "7d1c2a9e-1f6b-4c3a-9e8d-0a1b2c3d4e5f"
+        }
+      }
+    },
+    {
+      "name": "ofertas da versão substituída",
+      "request": {
+        "method": "GET",
+        "path": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/1/offers"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "revision": 4,
+          "serverTime": "2026-11-12T10:06:00.000Z",
+          "items": [
+            {
+              "id": "of_0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+              "insurerId": "alpha",
+              "insurerName": "Alpha Seguros",
+              "premiumTotal": "2450.90",
+              "currency": "BRL",
+              "installments": [
+                {
+                  "count": 1,
+                  "amount": "2450.90"
+                },
+                {
+                  "count": 10,
+                  "amount": "245.09"
+                }
+              ],
+              "coverages": [
+                {
+                  "code": "COLLISION",
+                  "label": "Colisão",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "FIRE_THEFT",
+                  "label": "Incêndio, roubo e furto",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_PROPERTY",
+                  "label": "Danos materiais a terceiros",
+                  "insuredAmount": "100000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_BODILY",
+                  "label": "Danos corporais a terceiros",
+                  "insuredAmount": "100000.00"
+                }
+              ],
+              "deductibles": [
+                {
+                  "coverageCode": "COLLISION",
+                  "amount": "3500.00"
+                }
+              ],
+              "validUntil": "2026-11-12T10:30:04.000Z",
+              "selectable": false,
+              "unavailabilityReason": "VERSION_SUPERSEDED"
+            }
+          ],
+          "nextCursor": null
+        }
+      }
+    },
+    {
+      "name": "seleção na versão substituída",
+      "request": {
+        "method": "POST",
+        "path": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/1/selection",
+        "headers": {
+          "Idempotency-Key": "select-4"
+        },
+        "body": {
+          "offerId": "of_0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+        }
+      },
+      "response": {
+        "status": 409,
+        "body": {
+          "code": "VERSION_SUPERSEDED",
+          "message": "A versão foi substituída por uma mais nova; leia a versão atual da cotação.",
+          "correlationId": "7d1c2a9e-1f6b-4c3a-9e8d-0a1b2c3d4e5f"
+        }
+      }
+    },
+    {
+      "name": "oferta expirada",
+      "request": {
+        "method": "POST",
+        "path": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/1/selection",
+        "headers": {
+          "Idempotency-Key": "select-5"
+        },
+        "body": {
+          "offerId": "of_0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+        }
+      },
+      "response": {
+        "status": 409,
+        "body": {
+          "code": "OFFER_EXPIRED",
+          "message": "A oferta expirou; atualize as ofertas da versão.",
+          "correlationId": "7d1c2a9e-1f6b-4c3a-9e8d-0a1b2c3d4e5f"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,339 @@
+{
+  "description": "Oferta parcial: a alpha já ofertou enquanto a beta segue em consulta. A oferta é selecionável durante QUOTING, e SELECT_OFFER aparece nas ações; mais resultados podem chegar. Depois, a beta excede o prazo e a versão termina PARTIAL, com a oferta preservada.",
+  "exchanges": [
+    {
+      "name": "oferta da alpha em QUOTING",
+      "request": {
+        "method": "GET",
+        "path": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/1"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "quoteId": "5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11",
+          "version": 1,
+          "currentVersion": 1,
+          "snapshot": {
+            "product": "AUTO",
+            "applicantRef": "customer-acme-ana",
+            "applicant": {
+              "id": "customer-acme-ana",
+              "label": "Ana Lima (sintética)"
+            },
+            "risk": {
+              "vehicleRef": "vehicle-hatch-2021",
+              "usage": "PERSONAL",
+              "principalDriverRef": "driver-acme-ana",
+              "vehicle": {
+                "id": "vehicle-hatch-2021",
+                "label": "Hatch 1.0 2021",
+                "make": "Fiat",
+                "model": "Argo",
+                "year": 2021,
+                "salvage": false
+              },
+              "principalDriver": {
+                "id": "driver-acme-ana",
+                "label": "Ana Lima",
+                "licenseDate": "2012-03-15"
+              }
+            },
+            "coverageProfile": "COMPREHENSIVE",
+            "coverage": {
+              "code": "COMPREHENSIVE",
+              "label": "Completa",
+              "summary": "Colisão, incêndio, roubo e furto e danos a terceiros",
+              "coverages": [
+                {
+                  "code": "COLLISION",
+                  "label": "Colisão",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "FIRE_THEFT",
+                  "label": "Incêndio, roubo e furto",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_PROPERTY",
+                  "label": "Danos materiais a terceiros",
+                  "insuredAmount": "100000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_BODILY",
+                  "label": "Danos corporais a terceiros",
+                  "insuredAmount": "100000.00"
+                }
+              ]
+            },
+            "desiredStartDate": "2026-12-01"
+          },
+          "phase": "QUOTING",
+          "outcome": null,
+          "outcomeReason": null,
+          "supersededAt": null,
+          "revision": 10,
+          "updatedAt": "2026-11-12T10:00:04.000Z",
+          "serverTime": "2026-11-12T10:00:05.000Z",
+          "retryAfterSeconds": 3,
+          "missingFields": [],
+          "insurerResults": [
+            {
+              "insurerId": "alpha",
+              "insurerName": "Alpha Seguros",
+              "status": "QUOTED",
+              "reasonCode": null,
+              "missingFields": [],
+              "updatedAt": "2026-11-12T10:00:04.000Z"
+            },
+            {
+              "insurerId": "beta",
+              "insurerName": "Beta Seguros",
+              "status": "PROCESSING",
+              "reasonCode": null,
+              "missingFields": [],
+              "updatedAt": "2026-11-12T10:00:02.000Z"
+            }
+          ],
+          "selection": null,
+          "allowedActions": [
+            "CREATE_VERSION",
+            "SELECT_OFFER"
+          ]
+        }
+      }
+    },
+    {
+      "name": "ofertas parciais",
+      "request": {
+        "method": "GET",
+        "path": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/1/offers"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "revision": 2,
+          "serverTime": "2026-11-12T10:00:05.000Z",
+          "items": [
+            {
+              "id": "of_0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+              "insurerId": "alpha",
+              "insurerName": "Alpha Seguros",
+              "premiumTotal": "2450.90",
+              "currency": "BRL",
+              "installments": [
+                {
+                  "count": 1,
+                  "amount": "2450.90"
+                },
+                {
+                  "count": 10,
+                  "amount": "245.09"
+                }
+              ],
+              "coverages": [
+                {
+                  "code": "COLLISION",
+                  "label": "Colisão",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "FIRE_THEFT",
+                  "label": "Incêndio, roubo e furto",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_PROPERTY",
+                  "label": "Danos materiais a terceiros",
+                  "insuredAmount": "100000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_BODILY",
+                  "label": "Danos corporais a terceiros",
+                  "insuredAmount": "100000.00"
+                }
+              ],
+              "deductibles": [
+                {
+                  "coverageCode": "COLLISION",
+                  "amount": "3500.00"
+                }
+              ],
+              "validUntil": "2026-11-12T10:30:04.000Z",
+              "selectable": true,
+              "unavailabilityReason": null
+            }
+          ],
+          "nextCursor": null
+        }
+      }
+    },
+    {
+      "name": "PARTIAL com a beta fora do prazo",
+      "request": {
+        "method": "GET",
+        "path": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/1"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "quoteId": "5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11",
+          "version": 1,
+          "currentVersion": 1,
+          "snapshot": {
+            "product": "AUTO",
+            "applicantRef": "customer-acme-ana",
+            "applicant": {
+              "id": "customer-acme-ana",
+              "label": "Ana Lima (sintética)"
+            },
+            "risk": {
+              "vehicleRef": "vehicle-hatch-2021",
+              "usage": "PERSONAL",
+              "principalDriverRef": "driver-acme-ana",
+              "vehicle": {
+                "id": "vehicle-hatch-2021",
+                "label": "Hatch 1.0 2021",
+                "make": "Fiat",
+                "model": "Argo",
+                "year": 2021,
+                "salvage": false
+              },
+              "principalDriver": {
+                "id": "driver-acme-ana",
+                "label": "Ana Lima",
+                "licenseDate": "2012-03-15"
+              }
+            },
+            "coverageProfile": "COMPREHENSIVE",
+            "coverage": {
+              "code": "COMPREHENSIVE",
+              "label": "Completa",
+              "summary": "Colisão, incêndio, roubo e furto e danos a terceiros",
+              "coverages": [
+                {
+                  "code": "COLLISION",
+                  "label": "Colisão",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "FIRE_THEFT",
+                  "label": "Incêndio, roubo e furto",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_PROPERTY",
+                  "label": "Danos materiais a terceiros",
+                  "insuredAmount": "100000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_BODILY",
+                  "label": "Danos corporais a terceiros",
+                  "insuredAmount": "100000.00"
+                }
+              ]
+            },
+            "desiredStartDate": "2026-12-01"
+          },
+          "phase": "TERMINAL",
+          "outcome": "PARTIAL",
+          "outcomeReason": null,
+          "supersededAt": null,
+          "revision": 13,
+          "updatedAt": "2026-11-12T10:00:22.000Z",
+          "serverTime": "2026-11-12T10:00:23.000Z",
+          "retryAfterSeconds": null,
+          "missingFields": [],
+          "insurerResults": [
+            {
+              "insurerId": "alpha",
+              "insurerName": "Alpha Seguros",
+              "status": "QUOTED",
+              "reasonCode": null,
+              "missingFields": [],
+              "updatedAt": "2026-11-12T10:00:04.000Z"
+            },
+            {
+              "insurerId": "beta",
+              "insurerName": "Beta Seguros",
+              "status": "TIMED_OUT",
+              "reasonCode": "STEP_TIMEOUT",
+              "missingFields": [],
+              "updatedAt": "2026-11-12T10:00:22.000Z"
+            }
+          ],
+          "selection": null,
+          "allowedActions": [
+            "CREATE_VERSION",
+            "SELECT_OFFER"
+          ]
+        }
+      }
+    },
+    {
+      "name": "oferta preservada",
+      "request": {
+        "method": "GET",
+        "path": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/1/offers"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "revision": 3,
+          "serverTime": "2026-11-12T10:00:23.000Z",
+          "items": [
+            {
+              "id": "of_0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+              "insurerId": "alpha",
+              "insurerName": "Alpha Seguros",
+              "premiumTotal": "2450.90",
+              "currency": "BRL",
+              "installments": [
+                {
+                  "count": 1,
+                  "amount": "2450.90"
+                },
+                {
+                  "count": 10,
+                  "amount": "245.09"
+                }
+              ],
+              "coverages": [
+                {
+                  "code": "COLLISION",
+                  "label": "Colisão",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "FIRE_THEFT",
+                  "label": "Incêndio, roubo e furto",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_PROPERTY",
+                  "label": "Danos materiais a terceiros",
+                  "insuredAmount": "100000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_BODILY",
+                  "label": "Danos corporais a terceiros",
+                  "insuredAmount": "100000.00"
+                }
+              ],
+              "deductibles": [
+                {
+                  "coverageCode": "COLLISION",
+                  "amount": "3500.00"
+                }
+              ],
+              "validUntil": "2026-11-12T10:30:04.000Z",
+              "selectable": true,
+              "unavailabilityReason": null
+            }
+          ],
+          "nextCursor": null
+        }
+      }
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 asyncapi: 3.1.0
 info:
   title: provider-solution eventos
-  version: 0.4.0
+  version: 0.5.0
   description: |
     Eventos que a `provider-solution`, em Spring, publica no barramento da plataforma
     `platform-{stage}-events` ([ADR 0013](../decisions/0013-barramento-da-plataforma.md)), com
@@ -45,6 +45,12 @@ info:
     determinístico e `revision` monotônico, mantido no item de origem da provider (`OPERATION#` e `ISSUE#`); a quote
     descarta revisões antigas. O `safeSummary` é um resumo em português, sem dado do risco, token ou resposta bruta.
 
+    No M5, a quote projeta esses três eventos pela fila `quote-solution-{stage}-issues` (`issue-projector`): o
+    `QueryReconciled` no `OPERATION#<operationId>` e as ocorrências no `ISSUE#<issueId>`, com o `type` do evento no
+    `issueType`. O par `queryId` e `organizationId` de uma ocorrência é o que a quote grava no `QUERYREF#<queryId>`,
+    que autoriza a reconciliação manual da consulta. A provider só põe nesse par a organização da própria consulta, lida
+    da `QUERY` ou do pedido que a originou, nunca a de quem pediu a reconciliação.
+
     Os exemplos foram capturados no Floci, stage `local`, com pedidos publicados à mão no barramento. Nos do M4, a
     consulta `UNKNOWN` da alpha foi gravada à mão na tabela, para uma cotação inexistente, porque o simulador da alpha
     sempre responde; o `reconciler` e o `reconcileWorker` implantados produziram os eventos. Os
@@ -52,6 +58,12 @@ info:
     identificadores calculados pelas regras acima. Nos exemplos da beta, o callback foi capturado no Floci
     (simulador, `simCallbackSender` e API de callbacks) para uma cotação calculada pelas regras acima, e o evento
     foi derivado dele pela classificação, sem publicar no barramento pedidos de cotações inexistentes.
+
+    Os exemplos de `InsurerResultRecorded` com oferta são anteriores ao M5: trazem as coberturas que os simuladores
+    montavam antes de ler o catálogo (três coberturas, com a `COLLISION` pelo valor de mercado e a franquia sobre
+    ele). Desde o M5, as coberturas da oferta são as do perfil pedido no `contracts/fixtures/catalog.json` (o
+    `COMPREHENSIVE` quando o pedido não traz perfil), e a franquia é de 5% (alpha) ou 4% (beta) do valor segurado da
+    `COLLISION`; o formato do evento é o mesmo.
 channels:
   platformEvents:
     address: platform-{stage}-events
@@ -59,7 +71,8 @@ channels:
     description: |
       Criado pela stack `platform/events`. A quote-solution assina `EnrichmentResolved` e
       `InsurerResultRecorded` com a regra `source` `mmda.provider` e alvo na fila
-      `quote-solution-{stage}-results`; a partir do M5, também os eventos de operação.
+      `quote-solution-{stage}-results`; a partir do M5, assina `QueryReconciled`, `OperationIssueRaised` e
+      `OperationIssueUpdated` com outra regra, de alvo na fila `quote-solution-{stage}-issues`.
     parameters:
       stage:
         $ref: '#/components/parameters/stage'
@@ -922,7 +935,11 @@ components:
       allOf:
         - $ref: '#/components/schemas/DetailHeader'
         - type: object
-          description: Publicado pelo `reconcileWorker` (M4). `revision` é monotônico por `operationId`.
+          description: |
+            Publicado pelo `reconcileWorker` (M4). `revision` é monotônico por `operationId`. `organizationId` e
+            `queryId` são os do pedido, então o par não prova que a consulta é da organização; a de outra organização é
+            tratada como inexistente (`FAILED`), sem revelar que existe. A quote projeta o resultado no
+            `OPERATION#<operationId>` (M5).
           required:
             - operationId
             - organizationId
@@ -970,7 +987,9 @@ components:
               pattern: '^is_[0-9a-f]{32}$'
             organizationId:
               type: string
+              description: Organização da consulta ou do pedido descartado; a quote indexa a ocorrência por ela.
             type:
+              description: Tipo da ocorrência. No item `ISSUE#` das duas tabelas, fica no atributo `issueType`.
               enum:
                 - UNKNOWN_QUERY
                 - UNMATCHED_CALLBACK
@@ -982,8 +1001,15 @@ components:
                 - RESOLVED
             queryId:
               type: string
+              description: |
+                Consulta a que a ocorrência se refere, acompanhada do `organizationId` da própria consulta quando ele é
+                conhecido (não é, por exemplo, no `STALE_OUTBOX` de evento cuja consulta não existe na provider). No
+                `DEAD_LETTER` de um pedido de reconciliação, só aparece a consulta que existe e é da organização do pedido.
             quoteId:
               type: string
+              description: |
+                Cotação da consulta, quando conhecida; na consulta compartilhada de enriquecimento, a do líder. No
+                `DEAD_LETTER` de um pedido de reconciliação, que não traz a cotação, ela vem da consulta da organização.
             firstSeenAt:
               type: string
               format: date-time

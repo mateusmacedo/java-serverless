@@ -1,0 +1,350 @@
+{
+  "description": "Seleção definitiva durante QUOTING: 201 com INTENT_RECORDED, reenvio com a mesma chave e o mesmo body devolve a mesma seleção, e a mesma oferta com outra chave também. Depois dela, nenhuma ação é oferecida, as ofertas ficam SELECTION_ALREADY_EXISTS e um NEEDS_INFORMATION posterior da beta é só informativo, sem CREATE_VERSION.",
+  "exchanges": [
+    {
+      "name": "seleção registrada",
+      "request": {
+        "method": "POST",
+        "path": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/1/selection",
+        "headers": {
+          "Idempotency-Key": "select-1"
+        },
+        "body": {
+          "offerId": "of_0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "selectionId": "sel_4d2c1b0a9f8e7d6c5b4a39281706f5e4",
+          "offerId": "of_0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+          "selectedAt": "2026-11-12T10:00:06.000Z",
+          "status": "INTENT_RECORDED"
+        }
+      }
+    },
+    {
+      "name": "reenvio com a mesma chave",
+      "request": {
+        "method": "POST",
+        "path": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/1/selection",
+        "headers": {
+          "Idempotency-Key": "select-1"
+        },
+        "body": {
+          "offerId": "of_0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "selectionId": "sel_4d2c1b0a9f8e7d6c5b4a39281706f5e4",
+          "offerId": "of_0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+          "selectedAt": "2026-11-12T10:00:06.000Z",
+          "status": "INTENT_RECORDED"
+        }
+      }
+    },
+    {
+      "name": "mesma oferta com outra chave",
+      "request": {
+        "method": "POST",
+        "path": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/1/selection",
+        "headers": {
+          "Idempotency-Key": "select-2"
+        },
+        "body": {
+          "offerId": "of_0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "selectionId": "sel_4d2c1b0a9f8e7d6c5b4a39281706f5e4",
+          "offerId": "of_0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+          "selectedAt": "2026-11-12T10:00:06.000Z",
+          "status": "INTENT_RECORDED"
+        }
+      }
+    },
+    {
+      "name": "versão com seleção",
+      "request": {
+        "method": "GET",
+        "path": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/1"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "quoteId": "5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11",
+          "version": 1,
+          "currentVersion": 1,
+          "snapshot": {
+            "product": "AUTO",
+            "applicantRef": "customer-acme-ana",
+            "applicant": {
+              "id": "customer-acme-ana",
+              "label": "Ana Lima (sintética)"
+            },
+            "risk": {
+              "vehicleRef": "vehicle-hatch-2021",
+              "usage": "PERSONAL",
+              "principalDriverRef": "driver-acme-ana",
+              "vehicle": {
+                "id": "vehicle-hatch-2021",
+                "label": "Hatch 1.0 2021",
+                "make": "Fiat",
+                "model": "Argo",
+                "year": 2021,
+                "salvage": false
+              },
+              "principalDriver": {
+                "id": "driver-acme-ana",
+                "label": "Ana Lima",
+                "licenseDate": "2012-03-15"
+              }
+            },
+            "coverageProfile": "COMPREHENSIVE",
+            "coverage": {
+              "code": "COMPREHENSIVE",
+              "label": "Completa",
+              "summary": "Colisão, incêndio, roubo e furto e danos a terceiros",
+              "coverages": [
+                {
+                  "code": "COLLISION",
+                  "label": "Colisão",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "FIRE_THEFT",
+                  "label": "Incêndio, roubo e furto",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_PROPERTY",
+                  "label": "Danos materiais a terceiros",
+                  "insuredAmount": "100000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_BODILY",
+                  "label": "Danos corporais a terceiros",
+                  "insuredAmount": "100000.00"
+                }
+              ]
+            },
+            "desiredStartDate": "2026-12-01"
+          },
+          "phase": "QUOTING",
+          "outcome": null,
+          "outcomeReason": null,
+          "supersededAt": null,
+          "revision": 11,
+          "updatedAt": "2026-11-12T10:00:04.000Z",
+          "serverTime": "2026-11-12T10:00:07.000Z",
+          "retryAfterSeconds": 3,
+          "missingFields": [],
+          "insurerResults": [
+            {
+              "insurerId": "alpha",
+              "insurerName": "Alpha Seguros",
+              "status": "QUOTED",
+              "reasonCode": null,
+              "missingFields": [],
+              "updatedAt": "2026-11-12T10:00:04.000Z"
+            },
+            {
+              "insurerId": "beta",
+              "insurerName": "Beta Seguros",
+              "status": "PROCESSING",
+              "reasonCode": null,
+              "missingFields": [],
+              "updatedAt": "2026-11-12T10:00:02.000Z"
+            }
+          ],
+          "selection": {
+            "selectionId": "sel_4d2c1b0a9f8e7d6c5b4a39281706f5e4",
+            "offerId": "of_0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+            "selectedAt": "2026-11-12T10:00:06.000Z",
+            "status": "INTENT_RECORDED"
+          },
+          "allowedActions": []
+        }
+      }
+    },
+    {
+      "name": "ofertas depois da seleção",
+      "request": {
+        "method": "GET",
+        "path": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/1/offers"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "revision": 3,
+          "serverTime": "2026-11-12T10:00:07.000Z",
+          "items": [
+            {
+              "id": "of_0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+              "insurerId": "alpha",
+              "insurerName": "Alpha Seguros",
+              "premiumTotal": "2450.90",
+              "currency": "BRL",
+              "installments": [
+                {
+                  "count": 1,
+                  "amount": "2450.90"
+                },
+                {
+                  "count": 10,
+                  "amount": "245.09"
+                }
+              ],
+              "coverages": [
+                {
+                  "code": "COLLISION",
+                  "label": "Colisão",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "FIRE_THEFT",
+                  "label": "Incêndio, roubo e furto",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_PROPERTY",
+                  "label": "Danos materiais a terceiros",
+                  "insuredAmount": "100000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_BODILY",
+                  "label": "Danos corporais a terceiros",
+                  "insuredAmount": "100000.00"
+                }
+              ],
+              "deductibles": [
+                {
+                  "coverageCode": "COLLISION",
+                  "amount": "3500.00"
+                }
+              ],
+              "validUntil": "2026-11-12T10:30:04.000Z",
+              "selectable": false,
+              "unavailabilityReason": "SELECTION_ALREADY_EXISTS"
+            }
+          ],
+          "nextCursor": null
+        }
+      }
+    },
+    {
+      "name": "pendência posterior sem CREATE_VERSION",
+      "request": {
+        "method": "GET",
+        "path": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/1"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "quoteId": "5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11",
+          "version": 1,
+          "currentVersion": 1,
+          "snapshot": {
+            "product": "AUTO",
+            "applicantRef": "customer-acme-ana",
+            "applicant": {
+              "id": "customer-acme-ana",
+              "label": "Ana Lima (sintética)"
+            },
+            "risk": {
+              "vehicleRef": "vehicle-beta-needs-info",
+              "usage": "PERSONAL",
+              "principalDriverRef": "driver-acme-ana",
+              "vehicle": {
+                "id": "vehicle-beta-needs-info",
+                "label": "Sedã 2020 (beta pede dados)",
+                "make": "Honda",
+                "model": "Civic",
+                "year": 2020,
+                "salvage": false
+              },
+              "principalDriver": {
+                "id": "driver-acme-ana",
+                "label": "Ana Lima",
+                "licenseDate": "2012-03-15"
+              }
+            },
+            "coverageProfile": "COMPREHENSIVE",
+            "coverage": {
+              "code": "COMPREHENSIVE",
+              "label": "Completa",
+              "summary": "Colisão, incêndio, roubo e furto e danos a terceiros",
+              "coverages": [
+                {
+                  "code": "COLLISION",
+                  "label": "Colisão",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "FIRE_THEFT",
+                  "label": "Incêndio, roubo e furto",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_PROPERTY",
+                  "label": "Danos materiais a terceiros",
+                  "insuredAmount": "100000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_BODILY",
+                  "label": "Danos corporais a terceiros",
+                  "insuredAmount": "100000.00"
+                }
+              ]
+            },
+            "desiredStartDate": "2026-12-01"
+          },
+          "phase": "TERMINAL",
+          "outcome": "PARTIAL",
+          "outcomeReason": null,
+          "supersededAt": null,
+          "revision": 14,
+          "updatedAt": "2026-11-12T10:00:09.000Z",
+          "serverTime": "2026-11-12T10:00:10.000Z",
+          "retryAfterSeconds": null,
+          "missingFields": [],
+          "insurerResults": [
+            {
+              "insurerId": "alpha",
+              "insurerName": "Alpha Seguros",
+              "status": "QUOTED",
+              "reasonCode": null,
+              "missingFields": [],
+              "updatedAt": "2026-11-12T10:00:04.000Z"
+            },
+            {
+              "insurerId": "beta",
+              "insurerName": "Beta Seguros",
+              "status": "NEEDS_INFORMATION",
+              "reasonCode": "INSURER_NEEDS_INFORMATION",
+              "missingFields": [
+                {
+                  "path": "risk.principalDriver.licenseDate",
+                  "label": "Data da primeira habilitação do condutor principal",
+                  "reasonCode": "MISSING_LICENSE_DATE"
+                }
+              ],
+              "updatedAt": "2026-11-12T10:00:09.000Z"
+            }
+          ],
+          "selection": {
+            "selectionId": "sel_4d2c1b0a9f8e7d6c5b4a39281706f5e4",
+            "offerId": "of_0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+            "selectedAt": "2026-11-12T10:00:06.000Z",
+            "status": "INTENT_RECORDED"
+          },
+          "allowedActions": []
+        }
+      }
+    }
+  ]
+}

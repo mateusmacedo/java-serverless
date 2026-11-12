@@ -1,0 +1,368 @@
+{
+  "description": "Recusas: recusa de uma seguradora com oferta da outra (COMPLETED), recusa de todas (NO_OFFER com ALL_INSURERS_DECLINED), nenhuma seguradora aplicável (NO_OFFER com NO_APPLICABLE_INSURER) e risco recusado pela regra própria (INELIGIBLE). Recusa comercial nunca é apresentada como falha técnica.",
+  "exchanges": [
+    {
+      "name": "uma oferta e uma recusa",
+      "request": {
+        "method": "GET",
+        "path": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/1"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "quoteId": "5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11",
+          "version": 1,
+          "currentVersion": 1,
+          "snapshot": {
+            "product": "AUTO",
+            "applicantRef": "customer-acme-ana",
+            "applicant": {
+              "id": "customer-acme-ana",
+              "label": "Ana Lima (sintética)"
+            },
+            "risk": {
+              "vehicleRef": "vehicle-hatch-2021",
+              "usage": "PERSONAL",
+              "principalDriverRef": "driver-acme-ana",
+              "vehicle": {
+                "id": "vehicle-hatch-2021",
+                "label": "Hatch 1.0 2021",
+                "make": "Fiat",
+                "model": "Argo",
+                "year": 2021,
+                "salvage": false
+              },
+              "principalDriver": {
+                "id": "driver-acme-ana",
+                "label": "Ana Lima",
+                "licenseDate": "2012-03-15"
+              }
+            },
+            "coverageProfile": "COMPREHENSIVE",
+            "coverage": {
+              "code": "COMPREHENSIVE",
+              "label": "Completa",
+              "summary": "Colisão, incêndio, roubo e furto e danos a terceiros",
+              "coverages": [
+                {
+                  "code": "COLLISION",
+                  "label": "Colisão",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "FIRE_THEFT",
+                  "label": "Incêndio, roubo e furto",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_PROPERTY",
+                  "label": "Danos materiais a terceiros",
+                  "insuredAmount": "100000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_BODILY",
+                  "label": "Danos corporais a terceiros",
+                  "insuredAmount": "100000.00"
+                }
+              ]
+            },
+            "desiredStartDate": "2026-12-01"
+          },
+          "phase": "TERMINAL",
+          "outcome": "COMPLETED",
+          "outcomeReason": null,
+          "supersededAt": null,
+          "revision": 13,
+          "updatedAt": "2026-11-12T10:00:08.000Z",
+          "serverTime": "2026-11-12T10:00:05.000Z",
+          "retryAfterSeconds": null,
+          "missingFields": [],
+          "insurerResults": [
+            {
+              "insurerId": "alpha",
+              "insurerName": "Alpha Seguros",
+              "status": "QUOTED",
+              "reasonCode": null,
+              "missingFields": [],
+              "updatedAt": "2026-11-12T10:00:04.000Z"
+            },
+            {
+              "insurerId": "beta",
+              "insurerName": "Beta Seguros",
+              "status": "DECLINED",
+              "reasonCode": "RISK_NOT_ACCEPTED",
+              "missingFields": [],
+              "updatedAt": "2026-11-12T10:00:08.000Z"
+            }
+          ],
+          "selection": null,
+          "allowedActions": [
+            "CREATE_VERSION",
+            "SELECT_OFFER"
+          ]
+        }
+      }
+    },
+    {
+      "name": "todas recusaram",
+      "request": {
+        "method": "GET",
+        "path": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/1"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "quoteId": "5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11",
+          "version": 1,
+          "currentVersion": 1,
+          "snapshot": {
+            "product": "AUTO",
+            "applicantRef": "customer-acme-ana",
+            "applicant": {
+              "id": "customer-acme-ana",
+              "label": "Ana Lima (sintética)"
+            },
+            "risk": {
+              "vehicleRef": "vehicle-alpha-declines",
+              "usage": "COMMERCIAL",
+              "principalDriverRef": "driver-acme-ana",
+              "vehicle": {
+                "id": "vehicle-alpha-declines",
+                "label": "SUV 2021 (alpha recusa)",
+                "make": "Jeep",
+                "model": "Renegade",
+                "year": 2021,
+                "salvage": false
+              },
+              "principalDriver": {
+                "id": "driver-acme-ana",
+                "label": "Ana Lima",
+                "licenseDate": "2012-03-15"
+              }
+            },
+            "coverageProfile": "COMPREHENSIVE",
+            "coverage": {
+              "code": "COMPREHENSIVE",
+              "label": "Completa",
+              "summary": "Colisão, incêndio, roubo e furto e danos a terceiros",
+              "coverages": [
+                {
+                  "code": "COLLISION",
+                  "label": "Colisão",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "FIRE_THEFT",
+                  "label": "Incêndio, roubo e furto",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_PROPERTY",
+                  "label": "Danos materiais a terceiros",
+                  "insuredAmount": "100000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_BODILY",
+                  "label": "Danos corporais a terceiros",
+                  "insuredAmount": "100000.00"
+                }
+              ]
+            },
+            "desiredStartDate": "2026-12-01"
+          },
+          "phase": "TERMINAL",
+          "outcome": "NO_OFFER",
+          "outcomeReason": "ALL_INSURERS_DECLINED",
+          "supersededAt": null,
+          "revision": 9,
+          "updatedAt": "2026-11-12T10:00:04.000Z",
+          "serverTime": "2026-11-12T10:00:05.000Z",
+          "retryAfterSeconds": null,
+          "missingFields": [],
+          "insurerResults": [
+            {
+              "insurerId": "alpha",
+              "insurerName": "Alpha Seguros",
+              "status": "DECLINED",
+              "reasonCode": "RISK_NOT_ACCEPTED",
+              "missingFields": [],
+              "updatedAt": "2026-11-12T10:00:04.000Z"
+            }
+          ],
+          "selection": null,
+          "allowedActions": [
+            "CREATE_VERSION"
+          ]
+        }
+      }
+    },
+    {
+      "name": "nenhuma seguradora aplicável",
+      "request": {
+        "method": "GET",
+        "path": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/1"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "quoteId": "5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11",
+          "version": 1,
+          "currentVersion": 1,
+          "snapshot": {
+            "product": "AUTO",
+            "applicantRef": "customer-acme-ana",
+            "applicant": {
+              "id": "customer-acme-ana",
+              "label": "Ana Lima (sintética)"
+            },
+            "risk": {
+              "vehicleRef": "vehicle-classic-1998",
+              "usage": "PERSONAL",
+              "principalDriverRef": "driver-acme-ana",
+              "vehicle": {
+                "id": "vehicle-classic-1998",
+                "label": "Sedã 1998",
+                "make": "Chevrolet",
+                "model": "Vectra",
+                "year": 1998,
+                "salvage": false
+              },
+              "principalDriver": {
+                "id": "driver-acme-ana",
+                "label": "Ana Lima",
+                "licenseDate": "2012-03-15"
+              }
+            },
+            "coverageProfile": "COMPREHENSIVE",
+            "coverage": {
+              "code": "COMPREHENSIVE",
+              "label": "Completa",
+              "summary": "Colisão, incêndio, roubo e furto e danos a terceiros",
+              "coverages": [
+                {
+                  "code": "COLLISION",
+                  "label": "Colisão",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "FIRE_THEFT",
+                  "label": "Incêndio, roubo e furto",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_PROPERTY",
+                  "label": "Danos materiais a terceiros",
+                  "insuredAmount": "100000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_BODILY",
+                  "label": "Danos corporais a terceiros",
+                  "insuredAmount": "100000.00"
+                }
+              ]
+            },
+            "desiredStartDate": "2026-12-01"
+          },
+          "phase": "TERMINAL",
+          "outcome": "NO_OFFER",
+          "outcomeReason": "NO_APPLICABLE_INSURER",
+          "supersededAt": null,
+          "revision": 5,
+          "updatedAt": "2026-11-12T10:00:04.000Z",
+          "serverTime": "2026-11-12T10:00:05.000Z",
+          "retryAfterSeconds": null,
+          "missingFields": [],
+          "insurerResults": [],
+          "selection": null,
+          "allowedActions": [
+            "CREATE_VERSION"
+          ]
+        }
+      }
+    },
+    {
+      "name": "risco inelegível",
+      "request": {
+        "method": "GET",
+        "path": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/1"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "quoteId": "5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11",
+          "version": 1,
+          "currentVersion": 1,
+          "snapshot": {
+            "product": "AUTO",
+            "applicantRef": "customer-acme-ana",
+            "applicant": {
+              "id": "customer-acme-ana",
+              "label": "Ana Lima (sintética)"
+            },
+            "risk": {
+              "vehicleRef": "vehicle-salvage",
+              "usage": "PERSONAL",
+              "principalDriverRef": "driver-acme-ana",
+              "vehicle": {
+                "id": "vehicle-salvage",
+                "label": "Hatch 2017 (recuperado de sinistro)",
+                "make": "Volkswagen",
+                "model": "Gol",
+                "year": 2017,
+                "salvage": true
+              },
+              "principalDriver": {
+                "id": "driver-acme-ana",
+                "label": "Ana Lima",
+                "licenseDate": "2012-03-15"
+              }
+            },
+            "coverageProfile": "COMPREHENSIVE",
+            "coverage": {
+              "code": "COMPREHENSIVE",
+              "label": "Completa",
+              "summary": "Colisão, incêndio, roubo e furto e danos a terceiros",
+              "coverages": [
+                {
+                  "code": "COLLISION",
+                  "label": "Colisão",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "FIRE_THEFT",
+                  "label": "Incêndio, roubo e furto",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_PROPERTY",
+                  "label": "Danos materiais a terceiros",
+                  "insuredAmount": "100000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_BODILY",
+                  "label": "Danos corporais a terceiros",
+                  "insuredAmount": "100000.00"
+                }
+              ]
+            },
+            "desiredStartDate": "2026-12-01"
+          },
+          "phase": "TERMINAL",
+          "outcome": "INELIGIBLE",
+          "outcomeReason": "SALVAGE_VEHICLE",
+          "supersededAt": null,
+          "revision": 3,
+          "updatedAt": "2026-11-12T10:00:04.000Z",
+          "serverTime": "2026-11-12T10:00:05.000Z",
+          "retryAfterSeconds": null,
+          "missingFields": [],
+          "insurerResults": [],
+          "selection": null,
+          "allowedActions": [
+            "CREATE_VERSION"
+          ]
+        }
+      }
+    }
+  ]
+}

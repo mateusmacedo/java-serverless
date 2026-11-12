@@ -1,6 +1,10 @@
 package com.mmda.serverless.quote.functions;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -17,7 +21,9 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashSet;
@@ -27,8 +33,16 @@ import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.yaml.snakeyaml.Yaml;
+import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
+import software.amazon.awssdk.services.dynamodb.model.TransactWriteItem;
+import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsRequest;
+import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsResponse;
+import software.amazon.awssdk.services.dynamodb.model.Update;
 
 /**
  * A quote consome os eventos da provider-solution como o {@code docs/events/provider-solution.asyncapi.yaml}
@@ -180,6 +194,59 @@ class ProviderEventsConsumptionTest {
             assertThat(probe.resumePayload().get("offerId").asText()).isEqualTo(QuoteKeys.offerId(workRef));
         }
         assertThat(insurers).as("alpha and beta publish the same contract").containsExactlyInAnyOrderElementsOf(Insurers.all());
+    }
+
+    /**
+     * Os eventos operacionais da provider chegam pela fila {@code issues}: cada exemplo passa pelo
+     * {@code issue-projector}, com a tabela simulada, até o {@code ISSUE#} ou o {@code OPERATION#}, com o
+     * {@code CONSUMED#} na mesma transação. Só o par de uma ocorrência grava o {@code QUERYREF#}; o do
+     * {@code QueryReconciled} é o do pedido e não prova que a consulta é da organização.
+     */
+    @Test
+    void operationalExamplesBecomeTheirIssueOrOperationAndOnlyAnIssueMakesItsQueryKnown() {
+        int projected = 0;
+        for (String detailType : List.of(QuoteEvents.QUERY_RECONCILED, QuoteEvents.OPERATION_ISSUE_RAISED,
+                QuoteEvents.OPERATION_ISSUE_UPDATED)) {
+            for (JsonNode example : asyncApi.at("/components/messages/" + detailType + "/examples")) {
+                JsonNode detail = example.at("/payload/detail");
+                String name = detailType + " " + example.path("name").asText();
+                DynamoDbClient dynamoDb = mock(DynamoDbClient.class);
+                when(dynamoDb.getItem(any(GetItemRequest.class))).thenReturn(GetItemResponse.builder().build());
+                when(dynamoDb.transactWriteItems(any(TransactWriteItemsRequest.class)))
+                        .thenReturn(TransactWriteItemsResponse.builder().build());
+                IssueProjector projector = new IssueProjector(
+                        new QuoteTable(dynamoDb, new OutboxPublishingTest.TestConfig(), MAPPER), MAPPER,
+                        Clock.fixed(ResumeProbe.NOW, ZoneOffset.UTC));
+
+                assertThat(projector.handle(example.path("payload").toString())).as(name)
+                        .isEqualTo(IssueProjector.Disposition.PROJECTED);
+
+                ArgumentCaptor<TransactWriteItemsRequest> transaction =
+                        ArgumentCaptor.forClass(TransactWriteItemsRequest.class);
+                verify(dynamoDb).transactWriteItems(transaction.capture());
+                List<TransactWriteItem> writes = transaction.getValue().transactItems();
+                boolean operation = QuoteEvents.QUERY_RECONCILED.equals(detailType);
+                Update projection = writes.getFirst().update();
+                assertThat(projection.key().get(QuoteKeys.PK).s()).as(name).isEqualTo(operation
+                        ? QuoteKeys.operationPk(detail.path("operationId").asText())
+                        : QuoteKeys.issuePk(detail.path("issueId").asText()));
+                assertThat(projection.expressionAttributeValues().get(":status").s()).isEqualTo(
+                        detail.path("status").asText());
+                if (!operation) {
+                    assertThat(projection.expressionAttributeValues().get(":issueType").s()).as("the event type")
+                            .isEqualTo(detail.path("type").asText());
+                }
+                assertThat(writes.get(1).put().item().get(QuoteKeys.PK).s())
+                        .isEqualTo(QuoteKeys.consumedPk(detail.path("eventId").asText()));
+                List<String> queryRefs = writes.stream().filter(write -> write.update() != null)
+                        .map(write -> write.update().key().get(QuoteKeys.PK).s())
+                        .filter(pk -> pk.equals(QuoteKeys.queryRefPk(detail.path("queryId").asText())))
+                        .toList();
+                assertThat(queryRefs).as(name).hasSize(operation ? 0 : 1);
+                projected++;
+            }
+        }
+        assertThat(projected).isGreaterThanOrEqualTo(3);
     }
 
     private static List<MissingField> readMissingFields(String json) {

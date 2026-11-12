@@ -1,0 +1,96 @@
+{
+  "description": "Listagem por cursor com filtros: primeira página com nextCursor, página seguinte, filtro por outcome e lista vazia, que não é erro.",
+  "exchanges": [
+    {
+      "name": "primeira página",
+      "request": {
+        "method": "GET",
+        "path": "/v1/quotes?limit=2"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "items": [
+            {
+              "id": "8e2a7d3c-41b6-4f0e-9c5a-1d2e3f4a5b6c",
+              "currentVersion": 1,
+              "phase": "QUOTING",
+              "outcome": null,
+              "createdAt": "2026-11-12T10:10:00.000Z",
+              "offerCount": 1
+            },
+            {
+              "id": "5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11",
+              "currentVersion": 2,
+              "phase": "TERMINAL",
+              "outcome": "COMPLETED",
+              "createdAt": "2026-11-12T10:00:00Z",
+              "offerCount": 2
+            }
+          ],
+          "nextCursor": "MjAyNi0xMS0xMlQxMDowMDowMFojNWIwYjZjMWUtNWYxZC00YThlLTlhMzktMmYxZjVkNmU3YzEx"
+        }
+      }
+    },
+    {
+      "name": "última página",
+      "request": {
+        "method": "GET",
+        "path": "/v1/quotes?limit=2&cursor=MjAyNi0xMS0xMlQxMDowMDowMFojNWIwYjZjMWUtNWYxZC00YThlLTlhMzktMmYxZjVkNmU3YzEx"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "items": [
+            {
+              "id": "c3d4e5f6-0718-4293-a4b5-c6d7e8f90a1b",
+              "currentVersion": 1,
+              "phase": "TERMINAL",
+              "outcome": "NO_OFFER",
+              "createdAt": "2026-11-11T18:00:00.000Z",
+              "offerCount": 0
+            }
+          ],
+          "nextCursor": null
+        }
+      }
+    },
+    {
+      "name": "filtro por resultado e período",
+      "request": {
+        "method": "GET",
+        "path": "/v1/quotes?outcome=COMPLETED&createdFrom=2026-11-12T00:00:00Z&createdTo=2026-11-12T23:59:59Z"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "items": [
+            {
+              "id": "5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11",
+              "currentVersion": 2,
+              "phase": "TERMINAL",
+              "outcome": "COMPLETED",
+              "createdAt": "2026-11-12T10:00:00Z",
+              "offerCount": 2
+            }
+          ],
+          "nextCursor": null
+        }
+      }
+    },
+    {
+      "name": "lista vazia",
+      "request": {
+        "method": "GET",
+        "path": "/v1/quotes?phase=ENRICHING"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "items": [],
+          "nextCursor": null
+        }
+      }
+    }
+  ]
+}

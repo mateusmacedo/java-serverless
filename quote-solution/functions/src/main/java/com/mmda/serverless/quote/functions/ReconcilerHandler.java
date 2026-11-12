@@ -13,8 +13,9 @@ import org.jboss.logging.Logger;
 
 /**
  * Reconciliação agendada da quote (§9 do desenho): outbox pendente (M1, T19), waiters parados (T13), versões
- * com a execução encerrada (T20), ocorrências, resumo do {@code META} e {@code results-dlq} (T31). WHY: um
- * dever que falha não impede os seguintes; a falha fica no log e o próximo ciclo tenta de novo.
+ * com a execução encerrada (T20), ocorrências e o ciclo de vida delas (M5), resumo do {@code META},
+ * {@code results-dlq} (T31) e {@code issues-dlq} (M5). WHY: um dever que falha não impede os seguintes; a falha
+ * fica no log e o próximo ciclo tenta de novo.
  */
 @Singleton
 @Named("reconciler")
@@ -26,15 +27,17 @@ public class ReconcilerHandler implements RequestHandler<Map<String, Object>, Ma
     private final WaiterReconciler waiters;
     private final VersionReconciler versions;
     private final DeadLetterReprocessor deadLetters;
+    private final IssueReviewer issues;
     private final ReconcilerMetrics metrics;
     private final Clock clock;
 
     ReconcilerHandler(OutboxReconciler outbox, WaiterReconciler waiters, VersionReconciler versions,
-            DeadLetterReprocessor deadLetters, ReconcilerMetrics metrics, Clock clock) {
+            DeadLetterReprocessor deadLetters, IssueReviewer issues, ReconcilerMetrics metrics, Clock clock) {
         this.outbox = outbox;
         this.waiters = waiters;
         this.versions = versions;
         this.deadLetters = deadLetters;
+        this.issues = issues;
         this.metrics = metrics;
         this.clock = clock;
     }
@@ -51,7 +54,9 @@ public class ReconcilerHandler implements RequestHandler<Map<String, Object>, Ma
         report.put("versions", run(report, "versions", () -> versions.reconcile(now)));
         Integer expiredTasks = run(report, "expiredTasks", () -> waiters.reviewExpired(now));
         report.put("expiredTasks", expiredTasks);
+        report.put("issues", run(report, "issues", () -> issues.review(now)));
         report.put("deadLetters", run(report, "deadLetters", () -> deadLetters.reprocess(now)));
+        report.put("issueDeadLetters", run(report, "issueDeadLetters", () -> deadLetters.reprocessIssues(now)));
         Long outboxAge = run(report, "outboxAge", () -> outbox.oldestPendingAgeSeconds(now));
         report.put("outboxPendingAgeSeconds", outboxAge);
         metrics.emit(now, expiredTasks == null ? 0 : expiredTasks, outboxAge == null ? 0 : outboxAge);
