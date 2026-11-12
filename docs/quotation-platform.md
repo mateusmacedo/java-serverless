@@ -93,7 +93,7 @@ monetários são strings decimais; datas com hora em UTC.
 | `QuoteCompleted` | mmda.quote | `quoteId`, `version`, `outcome`, `outcomeReason`, `offerCount` |
 | `OfferSelected` | mmda.quote | `quoteId`, `version`, `offerId`, `selectionId` |
 | `QueryReconcileRequested` | mmda.quote | `operationId`, `organizationId`, `queryId`, `reason`, `requestedBy` (consumido pela provider no M4; publicado pela API da quote a partir do M5) |
-| `EnrichmentResolved` | mmda.provider | `workRef`, `quoteId`, `version`, `queryId`, `evidenceId`, `reuseDecision` (`HIT`, `JOIN`, `MISS`), `resultType` (`FOUND`, `NOT_FOUND`, `FAILED`), `result` (perfil normalizado, quando `FOUND`), `notFoundRefs` (quando `NOT_FOUND`: referências que o provedor declarou não encontrar, como `["vehicleRef"]`), `reusableUntil`, `errorClass` (quando `FAILED`) |
+| `EnrichmentResolved` | mmda.provider | `workRef`, `quoteId`, `version`, `queryId`, `evidenceId`, `reuseDecision` (`HIT`, `JOIN`, `MISS`), `policyVersion` (política de reuso que produziu a evidência, no formato `^[A-Za-z0-9][A-Za-z0-9._-]*$`), `resultType` (`FOUND`, `NOT_FOUND`, `FAILED`), `result` (perfil normalizado, quando `FOUND`), `notFoundRefs` (quando `NOT_FOUND`: referências que o provedor declarou não encontrar, só `vehicleRef` e `principalDriverRef`, como `["vehicleRef"]`), `reusableUntil` (só em `FOUND` e `NOT_FOUND`), `errorClass` (quando `FAILED`) |
 | `InsurerResultRecorded` | mmda.provider | `workRef`, `quoteId`, `version`, `insurerId`, `queryId`, `attemptRef`, `status` (`QUOTED`, `DECLINED`, `NEEDS_INFORMATION`, `UNAVAILABLE`), `reasonCode`, `missingFields` (lista de `{path, reasonCode}`, com `path` relativo ao snapshot, como `risk.principalDriver.licenseDate`), `offer` (quando `QUOTED`: `externalOfferId`, `insurerName`, `premiumTotal`, `currency`, `installments`, `coverages` com `code`, `label` e `insuredAmount`, como o `OfferCoverage` do OpenAPI, `deductibles`, `validUntil`, `rawResponseRef`) |
 | `QueryReconciled` | mmda.provider | `operationId`, `organizationId`, `queryId`, `status` (`SUCCEEDED`, `FAILED`), `safeSummary`, `revision` (M4) |
 | `OperationIssueRaised`, `OperationIssueUpdated` | mmda.provider | `issueId`, `organizationId` (ausente em callback sem correlação), `type` (`UNKNOWN_QUERY`, `UNMATCHED_CALLBACK`, `DEAD_LETTER`, `STALE_OUTBOX`), `status` (`OPEN`, `RESOLVED`), `queryId`, `quoteId`, `firstSeenAt`, `lastSeenAt`, `safeSummary`, `reconcilable`, `revision` (M4) |
@@ -103,6 +103,17 @@ Nenhum evento leva token, credencial, CPF ou resposta bruta. O `workRef` é
 (`kind` = `ENRICHMENT` ou `INSURER`; `insurerId` vazio no enriquecimento). O `deadlineAt` de um
 pedido é o instante da `dispatch` mais o `TimeoutSeconds` da etapa, limitado ao `deadlineAt` da
 versão.
+
+No `EnrichmentResolved`, `queryId`, `evidenceId` e `policyVersion` são sempre obrigatórios. O
+`reuseDecision` diz como o pedido foi resolvido: `HIT` usou a evidência válida do índice de reuso,
+`JOIN` esperou a consulta de outro pedido, e `MISS` teve consulta própria. No `HIT` e no `JOIN`, o
+evento leva o `queryId`, o `evidenceId` e o `policyVersion` da evidência do líder. `MISS` também marca
+a conclusão sem chamada, por prazo vencido ou quota esgotada: o pedido grava consulta própria, sem
+liderança. No prazo vencido, isso vale mesmo com evidência válida no índice, porque o prazo é conferido
+antes do `HIT` (§8).
+
+O `InsurerQuoteRequested` não leva `policyVersion`: a seguradora não decide reuso, e a rastreabilidade
+fica pelo `evidenceId` da evidência usada (§4).
 
 O `eventId` é determinístico quando o mesmo fato pode ser gravado mais de uma vez. O outbox é gravado
 com `attribute_not_exists`, então a repetição não cria um segundo evento. Os UUIDv5 das duas soluções
@@ -121,8 +132,14 @@ Consumidores de eventos de resultado (`resume` e `issue-projector`) descartam re
 (`EnrichmentRequested`, `InsurerQuoteRequested` e `QueryReconcileRequested`) são deduplicados pela
 identidade do pedido lógico (`workRef`, `queryId` ou `operationId`). A reentrega de um pedido relê a
 consulta e decide pelo estado dela (§8). O `CONSUMED` que a provider grava junto com o efeito de um
-pedido usa o `eventId` do pedido, que é o UUIDv5 do `workRef`: ele registra a identidade do pedido e
-não substitui a leitura da consulta.
+pedido registra a identidade do pedido e não substitui a leitura da consulta.
+
+No pedido de enriquecimento, a chave do `CONSUMED` é sempre o UUIDv5 do `workRef`, o `eventId` que o
+contrato da quote atribui ao pedido. Isso vale em todos os caminhos: líder, conclusão sem liderança,
+`HIT`, `JOIN`, fan-out e reentrega. O `eventId` com que o pedido chegou nunca é usado, porque o fan-out
+só conhece o `workRef` do seguidor. Assim o pedido é deduplicado pelo `workRef`: uma reentrega com
+outro `eventId` encontra o mesmo `CONSUMED`. Na seguradora, o `CONSUMED` usa o `eventId` recebido, que
+pelo contrato é o mesmo UUIDv5; a deduplicação ali é pela `QUERY` do `queryId`.
 
 O `revision` de `OperationIssueRaised`, `OperationIssueUpdated` e `QueryReconciled` é monotônico por
 `issueId` e por `operationId` e é mantido no item de origem da provider (§5). O `issue-projector` grava
@@ -150,8 +167,8 @@ devolve. Os dois precisam ser iguais: `alpha` é "Alpha Seguros" e `beta`, "Beta
 | Resultado da seguradora | `QUOTE#<quoteId>` | `V#<nnnn>#RESULT#<insurerId>` | `insurerName`, `status` (`PENDING`, `PROCESSING` ou terminal), `reasonCode`, `missingFields`, `queryRef`, `attemptRef`, `revision`, `updatedAt` |
 | Oferta | `QUOTE#<quoteId>` | `V#<nnnn>#OFFER#<offerId>` | `insurerId`, `insurerName`, `externalOfferId`, `premiumTotal`, `currency`, `installments`, `coverages`, `deductibles`, `validUntil`, `rawResponseRef`, `createdAt` |
 | Seleção | `QUOTE#<quoteId>` | `V#<nnnn>#SELECTION` | `selectionId`, `offerId`, `selectedAt`, `selectedBy` |
-| Evidência usada | `QUOTE#<quoteId>` | `V#<nnnn>#EVIDENCE#<workRef>` | `evidenceId`, `queryId`, `reuseDecision`, `resultType`, `policyVersion`, `summary` |
-| Resultado tardio | `QUOTE#<quoteId>` | `V#<nnnn>#LATE#<alvo>#<queryId>` | `alvo` = `insurerId` ou `ENRICHMENT`; `reason` (`LATE`, `DUPLICATE`), `status`, `queryRef`, `attemptRef`, `rawResponseRef`, resumo da oferta, `receivedAt` |
+| Evidência usada | `QUOTE#<quoteId>` | `V#<nnnn>#EVIDENCE#<workRef>` | `evidenceId`, `queryId`, `reuseDecision`, `resultType`, `policyVersion` (sempre presente: evento sem ele é rejeitado, §8), `summary`, `receivedAt` |
+| Resultado tardio | `QUOTE#<quoteId>` | `V#<nnnn>#LATE#<alvo>#<queryId>` | `alvo` = `insurerId` ou `ENRICHMENT`; `reason` (`LATE`, `DUPLICATE`), `status`, `queryRef`, `attemptRef`, `rawResponseRef`, resumo da oferta, `receivedAt`; no enriquecimento, também `evidenceId`, `reuseDecision` e `policyVersion`, que rastreiam a evidência de um resultado tardio ou repetido (RN10, T15) |
 | Idempotência | `IDEMPOTENCY#<orgId>#<operation>#<scope>#<key>` | `META` | `requestHash`, `resourceRef`, `createdAt` |
 | Waiter | `WAITER#<workRef>` | `META` | `tokenCiphertext`, `quoteId`, `version`, `kind`, `insurerId`, `executionArn`, `expiresAt`, `status` (`WAITING`, `RESUMING`, `DONE`, `EXPIRED`), `resultEventId`, `resumePayload`, `updatedAt`, `gsi2pk = WAITER_RESUMING` quando `RESUMING` |
 | Outbox | `OUTBOX#<eventId>` | `META` | `detailType`, `detail`, `createdAt`, `publishedAt`, `attempts`, `lastError`, `gsi2pk = OUTBOX_PENDING` até publicar, `gsi2sk` = `createdAt` até a primeira falha permanente e, depois dela, o instante da última falha permanente (§7) |
@@ -216,10 +233,10 @@ continuam idênticos e o T22 continua válido.
 |---|---|---|---|
 | Consulta | `QUERY#<queryId>` | `META` | `queryKey` (só `ENRICH`), `provider`, `operation` (`ENRICH`, `QUOTE`), `contractVersion`, `organizationId`, `state` (`IN_FLIGHT`, `COMPLETED`, `FAILED`, `UNKNOWN`), `clientReference`, `providerRequestId`, `fencingVersion` (só `ENRICH`), `workRef`, `quoteId`, `version`, `insurerId`, `deadlineAt`, `gsi2pk = QUERY_IN_FLIGHT` em voo e `QUERY_UNKNOWN` quando `UNKNOWN` |
 | Tentativa | `QUERY#<queryId>` | `ATTEMPT#<nnnn>` | `startedAt` (gravado antes do HTTP), `finishedAt`, `outcome`, `errorClass`, `providerRequestId` |
-| Evidência | `QUERY#<queryId>` | `EVIDENCE#<evidenceId>` | `normalizedResult`, `rawResponseRef`, `observedAt`, `receivedAt`, `reusableUntil`, `resultType`, `checksum`, `fencingVersion` |
-| Índice de reuso | `REUSE#<queryKey>` | `META` | `evidenceId`, `queryId`, `reusableUntil`, `resultType`, `revision` |
-| Liderança | `INFLIGHT#<queryKey>` | `META` | `state` (`IN_FLIGHT`, `COMPLETED`), `fencingVersion`, `leaderWorkRef`, `queryId`, `leaseUntil`, `evidenceId`, `resultType`, `ttl` (lápide depois de `COMPLETED`) |
-| Seguidor | `INFLIGHT#<queryKey>` | `FOLLOWER#<fencingVersion>#<workRef>` | `quoteId`, `version`, `registeredAt` |
+| Evidência | `QUERY#<queryId>` | `EVIDENCE#<evidenceId>` | `normalizedResult`, `rawResponseRef`, `observedAt`, `receivedAt`, `reusableUntil`, `resultType`, `checksum`, `fencingVersion` (na evidência de quem liderou), `policyVersion` |
+| Índice de reuso | `REUSE#<queryKey>` | `META` | `evidenceId`, `queryId`, `reusableUntil`, `resultType` (`FOUND` ou `NOT_FOUND`), `revision`, `policyVersion`, `updatedAt` |
+| Liderança | `INFLIGHT#<queryKey>` | `META` | `state` (`IN_FLIGHT`, `COMPLETED`), `fencingVersion`, `firstFencingVersion`, `leaderWorkRef`, `queryId`, `leaseUntil`, `acquiredAt`, `evidenceId`, `resultType` e `completedAt` (só em `COMPLETED`), `ttl` (lápide depois de `COMPLETED`) |
+| Seguidor | `INFLIGHT#<queryKey>` | `FOLLOWER#<fencingVersion com 10 dígitos>#<workRef>` | `workRef`, `quoteId`, `version`, `fencingVersion`, `registeredAt`, `ttl` |
 | Correlação | `CORR#<provider>#<providerRequestId>` | `META` | `queryId` (gravado pelo worker depois do `202`), `pendingEvents` (conjunto de `externalEventId` recebidos antes) |
 | Inbox | `INBOX#<provider>#<externalEventId>` | `META` | `payload`, `providerRequestId`, `clientReference`, `receivedAt`, `processingStatus` (`RECEIVED`, `PROCESSED`, `UNMATCHED`), `gsi2pk = INBOX_RECEIVED` enquanto `RECEIVED` e `INBOX_UNMATCHED` quando `UNMATCHED` |
 | Quota | `QUOTA#<provider>#<credentialRef>#<janela>` | `META` | `used`, `ttl` |
@@ -231,6 +248,28 @@ continuam idênticos e o T22 continua válido.
 A `queryKey` é o HMAC-SHA256, com o segredo `query-key-secret` como chave, de
 `organizationId|provider|operation|contractVersion|vehicleRef|principalDriverRef`. Pedidos de cotação
 (`operation = QUOTE`) não usam reuso nem liderança.
+
+**Reuso e liderança.** `REUSE#` e `EVIDENCE` gravam o `policyVersion`, a versão da política de reuso em
+vigor (parâmetro `reusePolicyVersion`, §12). Um `REUSE#` gravado por outra versão da política não serve
+de `HIT`. `NOT_FOUND` declarado pelo provedor entra no índice de reuso; `FAILED` nunca entra. O
+`revision` do `REUSE#` cresce a cada troca da evidência apontada, e o `updatedAt` registra a troca.
+
+**Validade da evidência.** O `reusableUntil` do `FOUND` é min(`observedAt`, `receivedAt`) +
+`enrichmentValiditySeconds` (§12). A idade da informação conta a partir do `observedAt` (RN05), mas um
+`observedAt` no futuro, de um relógio adiantado do provedor, não prolonga a validade além do parâmetro
+(RN06). A `EVIDENCE` mantém o `observedAt` declarado pelo provedor; sem ele, ou fora do formato, vale o
+`receivedAt`. O `NOT_FOUND` não traz `observedAt` e conta do `receivedAt`. O `REUSE#` e o
+`EnrichmentResolved` levam o mesmo `reusableUntil` da evidência.
+
+O `INFLIGHT#` guarda a cadeia corrente da liderança: `firstFencingVersion` é a primeira versão dela, e
+`fencingVersion`, a atual. Assumir uma lease vencida continua a cadeia; assumir depois de `COMPLETED`
+começa outra, com `firstFencingVersion` igual à nova `fencingVersion` (§8). O `acquiredAt` é o instante
+da aquisição, e o `completedAt`, o da conclusão.
+
+O número da versão no `sk` do `FOLLOWER#` tem zeros à esquerda (`FOLLOWER#%010d#<workRef>`), para o
+fan-out ler só a faixa de `sk` da cadeia corrente (§8). O `ttl` do `FOLLOWER#` é o mesmo da lápide
+(`inflightTombstoneSeconds`). Como o `FOLLOWER#` também tem `quoteId`, uma varredura da tabela por
+`quoteId` precisa filtrar por `type`.
 
 O `queryId` é `q_` + os 32 primeiros caracteres hexadecimais do SHA-256 do `workRef` do pedido que cria
 a consulta: cada pedido de seguradora e o líder do enriquecimento. A `QUERY` é criada com
@@ -247,7 +286,8 @@ enriquecimento, `UNAVAILABLE` na seguradora): toda consulta concluída tem evid�
 
 No M1 não há liderança: a `QUERY` do enriquecimento já grava a `queryKey`, mas não a
 `fencingVersion`. O M2 acrescenta `REUSE#` e `INFLIGHT#` sem migração e trata a `fencingVersion`
-ausente como consulta sem liderança.
+ausente como consulta sem liderança. No M2, só a `QUERY` de quem liderou grava a `fencingVersion`; a
+consulta concluída sem chamada, por prazo ou quota, não a tem e também fica sem liderança.
 
 ## 6. Máquina de estado principal
 
@@ -274,9 +314,11 @@ nova tentativa, relê e devolve o que já gravou. Depois da transação, o passo
    existe, devolve `{resultType: FAILED, errorClass}`, com o nome do erro capturado (`Error`, sem a
    `Cause`), e marca o waiter `EXPIRED` (regra abaixo). Só `FOUND` segue; `NOT_FOUND` e `FAILED` vão
    para `ConsolidateQuote`.
-4. `SelectInsurers` (`step = select-insurers`): `$.selection.insurers`, limitada a `maxInsurers`, e
-   grava o `selectionRuleVersion`. Numa transação, grava a fase `QUOTING` e um `RESULT` `PENDING`, com
-   `insurerName`, para cada seguradora. Lista vazia vai para `ConsolidateQuote`.
+4. `SelectInsurers` (`step = select-insurers`): confere por conta própria a evidência usada do
+   enriquecimento (§4) e, se ela não é `FOUND`, devolve a lista vazia, sem gravar. Com `FOUND`,
+   `$.selection.insurers`, limitada a `maxInsurers`, e grava o `selectionRuleVersion`. Numa transação,
+   grava a fase `QUOTING` e um `RESULT` `PENDING`, com `insurerName`, para cada seguradora. Lista vazia
+   vai para `ConsolidateQuote`.
 5. `QuoteInsurers`: `Map` com `MaxConcurrency = mapConcurrency` (2) e
    `ItemSelector = {quoteId, version, insurerId, executionArn}`. Cada item chama a `dispatch` com
    `kind = INSURER` e `TimeoutSeconds = insurerTimeoutSeconds`. `States.Timeout` chama
@@ -488,7 +530,8 @@ token. No `InsurerQuoteRequested`, o `risk.coverageProfile` vai resolvido no cat
 A `dispatch` não grava o `V#n`: as fases são dos passos do `workflow-steps` (§6). Na seguradora,
 depois da transação, ela atualiza o resumo do `META`, em best-effort (§4).
 
-**Retomada.** O `resume` lê o evento da fila `results`. Se agora ≥ `expiresAt` do waiter (o
+**Retomada.** O `resume` lê o evento da fila `results` e o waiter do `workRef`. No enriquecimento, ele
+confere o contrato do `EnrichmentResolved` antes de tudo (abaixo). Se agora ≥ `expiresAt` do waiter (o
 `deadlineAt` do pedido), grava `LATE` com o `CONSUMED` e para; como o prazo é imutável, a verificação
 fica no código. Nos demais casos, faz uma única transação com:
 
@@ -514,50 +557,130 @@ tentativas, não dizem nada sobre o estado gravado: o `resume` relança o erro, 
 `batchItemFailures`. A gravação do resultado tardio segue a mesma regra: só o `ConditionalCheckFailed`
 do `CONSUMED` descarta o evento.
 
-**Enriquecimento.** O `enrichmentWorker` trata a reentrega (abaixo), confere o `deadlineAt` antes de
-qualquer chamada (§9) e calcula a `queryKey`. Evidência válida no `REUSE` é `HIT`: uma transação grava o outbox `EnrichmentResolved` e o `CONSUMED` do pedido.
+No enriquecimento, a evidência usada tem o mesmo formato em `HIT`, `JOIN` e `MISS`, com o
+`evidenceId`, o `queryId`, o `reuseDecision` e o `policyVersion` do evento. O `resume` confere o
+`EnrichmentResolved` contra o AsyncAPI da provider em toda entrega, antes do ramo de prazo:
 
-Sem evidência válida, o worker tenta a liderança. Uma transação, antes da chamada, grava:
+- `queryId`, `evidenceId`, `policyVersion` e `reuseDecision` obrigatórios, e os três primeiros como
+  texto nos patterns da provider: `^q_[0-9a-f]{32}$`, `^ev_[0-9a-f]{32}$` e
+  `^[A-Za-z0-9][A-Za-z0-9._-]*$`;
+- `FOUND` com `result`;
+- `notFoundRefs`, quando presente, como lista de textos declaráveis (`vehicleRef` e
+  `principalDriverRef`), e não vazio no `NOT_FOUND`;
+- nenhum `HIT` com `resultType` `FAILED`, porque `FAILED` nunca entra no índice de reuso (§5).
 
-- Update do `INFLIGHT`: `state = IN_FLIGHT`, `fencingVersion` incrementada, `leaderWorkRef`, `queryId`
-  e `leaseUntil`, com a condição
-  `attribute_not_exists(pk) OR state = COMPLETED OR leaseUntil < :agora`;
-- Put da `QUERY` (`IN_FLIGHT`, `attribute_not_exists`) e da `ATTEMPT#0001` com `startedAt`;
-- débito da quota (§9).
+Um evento fora do contrato não é gravado. O `resume` relança o erro, a mensagem volta à fila em
+`batchItemFailures` e, depois do `maxReceiveCount`, vai para a DLQ. A conferência vem antes do prazo
+porque a reentrega chega depois da visibilidade de 90 s, já depois do `expiresAt`: conferido só no
+caminho do prazo, o evento fora do contrato viraria evidência tardia (`LATE` ou `DUPLICATE`) e nunca
+chegaria à DLQ. A versão termina `TECHNICAL_FAILURE` com `ENRICHMENT_FAILED` pelo timeout da espera
+(§6, passo 3), sem inventar dado (RN07).
+
+**Enriquecimento.** O `enrichmentWorker` calcula a `queryKey` e decide nesta ordem, com leituras em
+`ConsistentRead`:
+
+1. Reentrega: a própria `QUERY`, depois o `CONSUMED` do pedido, depois o registro como seguidor na
+   cadeia corrente (abaixo).
+2. Prazo: com o `deadlineAt` vencido, conclui sem chamada (§9), com consulta própria e sem liderança, e
+   publica `MISS`, mesmo com evidência válida no índice.
+3. `HIT`: o `REUSE#` aponta evidência reutilizável, ainda válida e gravada pela versão da política
+   de reuso em vigor (`policyVersion`, §5). Uma transação grava o outbox `EnrichmentResolved` e o
+   `CONSUMED` do pedido.
+4. `JOIN`: há liderança `IN_FLIGHT` com lease válida. Uma transação faz `ConditionCheck` no `INFLIGHT`
+   (`state = IN_FLIGHT AND fencingVersion = :v`) e Put do `FOLLOWER#<v>#<workRef>`, com
+   `attribute_not_exists`.
+5. Liderança: não há `INFLIGHT`, ou ele está `COMPLETED` sem evidência válida no índice, ou a lease
+   venceu. Uma transação, antes da chamada, grava:
+   - Update do `INFLIGHT`: `state = IN_FLIGHT`, `fencingVersion` incrementada (1 sem item),
+     `firstFencingVersion`, `leaderWorkRef`, `queryId`, `leaseUntil` (agora +
+     `enrichmentLeaseSeconds`) e `acquiredAt`; remove `evidenceId`, `resultType`, `completedAt` e o
+     `ttl` da lápide. A condição fixa a versão lida: `attribute_not_exists(pk)` sem item e, com item,
+     `fencingVersion = :lida AND (state = COMPLETED OR leaseUntil < :agora)`;
+   - `ConditionCheck` no `REUSE#` com a revisão lida (`revision = :lida`) ou, se ele não existia,
+     `attribute_not_exists(pk)`;
+   - Put da `QUERY` (`IN_FLIGHT`, com a `fencingVersion`, `attribute_not_exists`) e da `ATTEMPT#0001`
+     com `startedAt`;
+   - débito da quota (§9).
+
+A condição do `INFLIGHT` é mais estrita que `state = COMPLETED OR leaseUntil < :agora`, e o
+`ConditionCheck` no `REUSE#` completa a proteção: sem eles, um pedido que lê o índice antes da
+conclusão de outro líder e tenta a liderança depois dela repetiria a chamada externa. Se a transação
+da liderança for cancelada pela condição do `INFLIGHT` ou do `REUSE#`, o worker relê os dois e decide
+de novo, em até 5 rodadas; depois disso, a mensagem volta à fila. Sem quota na reserva da liderança,
+segue o §9; a conclusão sem chamada por quota também publica `MISS`, sem liderança.
 
 O líder chama o provedor sem transação aberta, com `clientReference = queryId`. A conclusão é uma
-transação pequena:
+transação com:
 
-- `EVIDENCE` imutável;
-- `REUSE`, só se o resultado for reutilizável (`FOUND` ou `NOT_FOUND` declarado; `FAILED` nunca);
-- Update do `INFLIGHT` para `COMPLETED`, com `evidenceId` e `resultType`, com a condição
-  `fencingVersion = :minha`; o item fica como lápide, com TTL, em vez de ser apagado;
-- `QUERY` `COMPLETED` e `ATTEMPT` com `finishedAt`;
+- `QUERY` concluída e `ATTEMPT` com `finishedAt`;
+- Update do `INFLIGHT` para `COMPLETED`, com `evidenceId`, `resultType`, `completedAt` e `ttl`
+  (`inflightTombstoneSeconds`), com a condição
+  `fencingVersion = :minha AND queryId = :minha AND state = IN_FLIGHT`; o item fica como lápide, em vez
+  de ser apagado;
+- Put do `REUSE#`, só se o resultado for reutilizável (`FOUND` ou `NOT_FOUND` declarado; `FAILED`
+  nunca), com `revision` incrementada e a condição pela revisão lida logo antes:
+  `attribute_not_exists(pk)` se o índice não existia, `revision = :lida` se existia. Se só o índice
+  mudou entre a leitura e a transação, o líder relê a revisão e tenta de novo, em até 3 rodadas;
+- `EVIDENCE` imutável, com `fencingVersion` e `policyVersion`;
 - outbox próprio (`MISS`) e `CONSUMED` do pedido.
 
-O fan-out `JOIN` fica fora dessa transação, porque uma `TransactWriteItems` aceita até 100 ações. Para
-cada `FOLLOWER#<fencingVersion>#*`, lido com `ConsistentRead`, o líder faz Put do outbox com `eventId`
-UUIDv5 de `queryId|workRef` e `attribute_not_exists`. Quando a reentrega do líder encontra o
-`INFLIGHT` `COMPLETED` com o seu `queryId`, refaz o fan-out, que é idempotente.
+A condição do `INFLIGHT` confere também o `queryId`, porque a `fencingVersion` sozinha não identifica a
+liderança: depois que o TTL apaga a lápide, uma cadeia nova recomeça na versão 1. Sem o `queryId`, a
+consulta de uma cadeia antiga com a mesma versão concluiria a liderança atual.
 
-Quem encontra liderança válida se registra como seguidor numa transação: `ConditionCheck` no
-`INFLIGHT` (`state = IN_FLIGHT AND fencingVersion = :v`) e Put do `FOLLOWER#<v>#<workRef>`. Se a
-transação for cancelada, o worker relê o `INFLIGHT`. Com `COMPLETED`, publica para si o resultado
-gravado, inclusive `NOT_FOUND` e `FAILED`; com outra liderança em voo, repete o registro. Como líder e
-seguidor escrevem ou conferem o mesmo `INFLIGHT`, nenhum seguidor fica sem resposta.
+Se a condição do `INFLIGHT` falha porque a lease foi transferida (T15), o líder antigo conclui só a
+própria consulta. Numa transação sem `REUSE#` nem `INFLIGHT#`, grava a `QUERY` com o estado do
+resultado (`COMPLETED` quando o provedor respondeu com `FOUND` ou `NOT_FOUND`, `FAILED` na falha e
+`UNKNOWN` sem resposta depois do envio), a `ATTEMPT`, a `EVIDENCE` com a sua `fencingVersion`, o
+próprio `EnrichmentResolved` (`MISS`, com a própria evidência) e o `CONSUMED`. Ele não faz fan-out: os
+seguidores da cadeia passam a esperar o novo líder.
 
-**Reentrega do pedido de enriquecimento.** Antes de procurar o `REUSE`, o worker confere o que o
+**Pedido já respondido por outra entrega.** Entre a conferência do `CONSUMED` e a conclusão, outra
+entrega do mesmo pedido pode tê-lo respondido por `HIT` ou `JOIN`, e o `CONSUMED` passa a existir. Se a
+transação de conclusão falhar só no outbox ou no `CONSUMED` próprios, ela é refeita sem os dois:
+
+- O líder conclui mesmo assim a `QUERY`, o `INFLIGHT#`, o `REUSE#`, a `ATTEMPT` e a `EVIDENCE` e faz o
+  fan-out (`SETTLED_ALREADY_ANSWERED`), porque o índice e os seguidores dependem dessa conclusão.
+- A conclusão sem liderança conclui a `QUERY` existente do mesmo jeito. É o caso da lease transferida
+  e o do líder interrompido cuja liderança já não é a sua (reentrega, abaixo).
+- A conclusão sem chamada, que criaria uma consulta nova (§9), não grava nada: o pedido já tem resposta.
+
+O fan-out `JOIN` fica fora da transação de conclusão, porque uma `TransactWriteItems` aceita até 100
+ações. Ele lê com `ConsistentRead` só os `FOLLOWER#` da cadeia corrente, da `firstFencingVersion` à
+`fencingVersion` do líder, como uma faixa de `sk` (§5). Para cada seguidor, exceto o próprio líder,
+uma transação de 2 ações grava o outbox, com `eventId` UUIDv5 de `queryId|workRef` e
+`attribute_not_exists`, e o `CONSUMED` do pedido do seguidor. Assim toda reentrega do seguidor é
+descartada do mesmo jeito, pelo `CONSUMED`, e nenhum seguidor recebe duas respostas. Sem o limite da
+cadeia, uma liderança nova depois de `FAILED` ou de expiração responderia de novo aos seguidores de uma
+cadeia concluída, com outro `queryId` e, portanto, outro `eventId`. Quando a reentrega do líder
+encontra o `INFLIGHT` `COMPLETED` com o seu `queryId`, refaz o fan-out, que é idempotente.
+
+Se o registro como seguidor for cancelado, o worker relê o `INFLIGHT`. Se a cadeia em que tentou entrar
+já concluiu, publica para si o resultado gravado (`JOIN`), inclusive `NOT_FOUND` e `FAILED`, com o
+outbox e o `CONSUMED` numa transação; com outra liderança, decide de novo, no mesmo limite de 5
+rodadas. Como líder e seguidor escrevem ou conferem o mesmo `INFLIGHT`, todo seguidor de uma cadeia
+concluída recebe resposta. O que acontece quando o líder é interrompido está no §9.
+
+**Reentrega do pedido de enriquecimento.** Antes de procurar o `REUSE#`, o worker confere o que o
 mesmo `workRef` já gravou, nesta ordem:
 
-1. A `QUERY` do seu `workRef` existe: ele foi líder e nunca se registra como seguidor de si mesmo. Com
-   `COMPLETED`, refaz o fan-out. Com `IN_FLIGHT`, não repete a chamada. Enquanto outra entrega pode
-   estar viva (regra abaixo), adia o pedido e não toca a `QUERY`. Depois desse limite, passa a `QUERY`
-   para `UNKNOWN` se houver tentativa aberta (`FAILED` se não houver) e conclui a liderança com
-   `FAILED`, se a `fencingVersion` ainda for a sua.
-2. O `CONSUMED` do pedido existe: o `HIT` já foi publicado.
-3. Existe `FOLLOWER#<v>#<workRef>` na liderança atual: com `COMPLETED`, publica para si o resultado
-   gravado, com o mesmo `eventId` do fan-out; com `IN_FLIGHT`, não faz nada, porque o fan-out o
-   alcança.
+1. A `QUERY` do seu `workRef` existe: ele foi líder, ou concluiu sem chamada, e nunca se registra como
+   seguidor de si mesmo. Concluída, refaz o fan-out se liderou. Com `IN_FLIGHT`, não repete a chamada.
+   Enquanto outra entrega pode estar viva (regra abaixo), adia o pedido e não toca a `QUERY`. Depois
+   desse limite, passa a `QUERY` para `UNKNOWN` se houver tentativa aberta (`FAILED` se não houver).
+   Conclui a liderança com `FAILED` e faz o fan-out só se o `INFLIGHT` ainda estiver `IN_FLIGHT` com a
+   sua `fencingVersion` e o seu `queryId`; senão, conclui só a própria consulta, sem tocar a liderança
+   atual. O `queryId` protege contra a versão que recomeça em 1 numa cadeia nova depois do TTL da
+   lápide. A mesma regra vale quando o worker encontra no `INFLIGHT` a liderança do próprio `workRef`,
+   criada por outra entrega do pedido.
+2. O `CONSUMED` do pedido existe: o pedido já foi resolvido, por `HIT`, pelo fan-out ou pelo próprio
+   `JOIN`. A chave é o UUIDv5 do `workRef`, não o `eventId` recebido (§3), então a reentrega com outro
+   `eventId` também para aqui.
+3. Existe `FOLLOWER#<v>#<workRef>` em alguma versão `v` da cadeia corrente, da `firstFencingVersion` à
+   `fencingVersion` do `INFLIGHT`: com `COMPLETED`, publica para si o resultado gravado, com o mesmo
+   `eventId` do fan-out; com `IN_FLIGHT`, não faz nada, porque o fan-out o alcança. A busca cobre a
+   cadeia toda porque um seguidor registrado em `v` continua válido quando outro pedido assume a lease
+   em `v+1`.
 
 **Entrega duplicada ainda viva.** A publicação é pelo menos uma vez, então duas entregas do mesmo
 pedido podem rodar ao mesmo tempo. Uma `QUERY` `IN_FLIGHT` cuja última `ATTEMPT` (o `startedAt` ou o
@@ -568,12 +691,8 @@ mesmo mecanismo da quota (§9), sem gastar `maxReceiveCount`, e não toca a `QUE
 diferença de relógio entre instâncias. A regra vale nos dois workers; o limite se apoia no fato de
 nenhuma invocação passar do timeout da função (§12).
 
-O fan-out lê todos os `FOLLOWER#` da `queryKey`, de qualquer `fencingVersion`: quando uma lease vence
-e outra mensagem assume a liderança (v+1), o novo líder também responde aos seguidores registrados na
-versão superada. O `eventId` determinístico por `queryId` e `workRef` evita respostas duplicadas.
-
-A conclusão do líder e o fan-out sempre conferem a `fencingVersion` (T15). Lease expirada não autoriza
-repetir a chamada sem consultar o estado primeiro (M4).
+A conclusão do líder confere a `fencingVersion`, e o fan-out só sai depois de uma conclusão aceita
+(T15). Lease expirada não autoriza repetir a chamada sem consultar o estado primeiro (M4).
 
 **Seguradora.** O `insurerWorker` confere o `deadlineAt` (§9), deriva o `queryId` do `workRef` e lê a
 `QUERY` antes de qualquer chamada:
@@ -668,7 +787,9 @@ próprio, e a máquina não repete as esperas; o `Retry` do §6 cobre só falhas
 
 **Prazo.** O worker confere o `deadlineAt` do pedido antes de cada chamada, de cada retry e no
 reprocessamento. Com o prazo vencido, grava resultado terminal sem chamar: `UNAVAILABLE` com
-`reasonCode = DEADLINE_EXCEEDED_BEFORE_CALL` na seguradora, `FAILED` no enriquecimento.
+`reasonCode = DEADLINE_EXCEEDED_BEFORE_CALL` na seguradora, `FAILED` no enriquecimento. No
+enriquecimento, o prazo é conferido antes do índice de reuso: o pedido vencido conclui com `MISS` e
+consulta própria, sem liderança, mesmo com evidência válida no índice (§8).
 
 **Quota.** A reserva condicional vale para a seguradora e para o líder do enriquecimento, só no `MISS`;
 `HIT` e `JOIN` não consomem. Sem quota na primeira reserva, o worker reenvia a mensagem com
@@ -685,6 +806,10 @@ regra, com reenvio atrasado do pedido; o enriquecimento conclui na hora com `FAI
   usa esse valor para separar uma entrega duplicada viva de uma interrompida (§8), e o
   `ServerlessConfigurationTest` confere a igualdade.
 - `enrichmentLeaseSeconds` > timeout da função do `enrichmentWorker`.
+- `inflightTombstoneSeconds` ≥ `VisibilityTimeout` × `maxReceiveCount` da `enrichment-requests` e
+  `inflightTombstoneSeconds` > `enrichmentLeaseSeconds`. A reentrega do líder refaz o fan-out pela
+  lápide do `INFLIGHT` (§8), então ela precisa durar mais que todas as entregas de um pedido na fila; o
+  TTL da tabela a expira depois. O `ServerlessConfigurationTest` confere a relação e o TTL da tabela.
 - Toda fila tem `VisibilityTimeout` explícito, maior ou igual ao timeout da função que a consome. A AWS
   valida isso ao criar o ESM e recomenda cerca de 6 vezes. O Floci não valida (§13), então o teste de
   configuração do M1 confere a relação. Cada fila tem `maxReceiveCount` próprio.
@@ -699,6 +824,16 @@ termina em `TIMED_OUT`, e o resultado que chegar depois vira evidência tardia. 
 local), então a tentativa é tratada como interrompida pela tabela do §8. Outra coisa é uma entrega
 duplicada do mesmo pedido que chega enquanto a primeira ainda roda, no HTTP ou no backoff entre
 tentativas: nos dois workers, ela é adiada com `DelaySeconds` até esse limite, sem tocar a `QUERY` (§8).
+
+**`JOIN` e orçamento.** Um seguidor espera o líder dentro da própria espera, de
+`enrichmentTimeoutSeconds`. Se o líder conclui dentro do prazo dele, o seguidor costuma receber o
+resultado antes do seu prazo, porque o pedido do seguidor foi despachado depois. A exceção é a entrega
+fora de ordem, em que o seguidor entra na liderança de um pedido com prazo posterior ao seu. Se o líder
+é interrompido, nem o pedido dele nem os seguidores são respondidos dentro da espera de 20 s: a lease
+só vence em 30 s, e a reentrega do líder só vem depois da visibilidade de 150 s. As versões terminam
+`TECHNICAL_FAILURE` com `ENRICHMENT_FAILED` pelo timeout da espera, sem dado inventado (RN07), e o
+resultado que chegar depois vira evidência tardia. É um limite conhecido, aceito sem mudança de
+parâmetro.
 
 **Conflitos de transação.** `TransactionConflict` é repetido no código, com backoff e jitter, em até 4
 tentativas, porque o SDK não repete esse caso. O Floci não emula o conflito (§13). Esse caminho tem
@@ -732,6 +867,12 @@ vencidas; passa para `UNKNOWN` as consultas `QUERY_IN_FLIGHT` além do `deadline
 ela, abre `UNKNOWN_QUERY`; processa inbox `RECEIVED` parada e marca `UNMATCHED`, com
 `UNMATCHED_CALLBACK`; abre `STALE_OUTBOX` para outbox envelhecida, com a idade medida pelo
 `createdAt` e não pelo `gsi2sk` (§7); e reprocessa as DLQs.
+
+Um caso de borda do M2 fica para o tratamento das leases vencidas: o líder que conclui `FAILED` e cai
+antes do fan-out. Como `FAILED` não entra no índice, o pedido equivalente seguinte começa outra cadeia,
+e se isso acontece antes da reentrega do líder, ela não refaz o fan-out, porque isso exige o
+`INFLIGHT#` concluído com a própria consulta (§8). Os seguidores da cadeia antiga ficam sem resposta
+até o timeout da etapa.
 
 **Alarmes (M4).** Declarados como `AWS::CloudWatch::Alarm` nas stacks das soluções, com os limiares
 do §12. Workers e reconcilers publicam as métricas próprias em EMF.
@@ -777,7 +918,15 @@ da beta fica por `providerRequestId`, com um item auxiliar por `clientReference`
 | `vehicle-flaky` | Contador por `clientReference` na tabela dos simuladores |
 | Toda a beta | Situação por `providerRequestId`, para o GET de reconciliação |
 | `vehicle-beta-duplicate`, `vehicle-beta-late`, `vehicle-beta-early` | Callbacks agendados na fila `sim-callbacks` |
-| T04, T05 e T06 (reuso) | `REUSE#` e `INFLIGHT#` da provider: o harness do e2e apaga os das `queryKeys` dos fixtures antes de cada caso, pelo DynamoDB do Floci |
+| T01, T04, T05 e T06 (reuso) | `REUSE#` e `INFLIGHT#` da provider: o harness do e2e apaga os da `queryKey` do par veículo/condutor do caso antes dele, pelo DynamoDB do Floci (abaixo) |
+| T25 e T27 | `REUSE#` do par, só lido, sem limpeza: no T25, ele é `NOT_FOUND` e aponta para a evidência usada; no T27, ele não existe, porque `FAILED` nunca entra no índice |
+
+O harness do `quote-e2e` lê o segredo `provider-solution/<stage>/query-key-secret` do Floci e calcula
+a `queryKey` como a provider: HMAC-SHA256 de
+`organizationId|provider|operation|contractVersion|vehicleRef|principalDriverRef` (§5). Antes de T01,
+T04, T05 e T06, ele apaga o `REUSE#` e a partição `INFLIGHT#` (`META` e `FOLLOWER#`) do par; as
+consultas e evidências anteriores ficam. O T05 vence a validade regravando `REUSE#.reusableUntil` no
+passado. Cada caso de reuso tem um par veículo/condutor próprio (§14).
 
 Regras de laboratório:
 
@@ -852,9 +1001,10 @@ plataforma; aparece no alarme de callbacks `UNMATCHED` e no log da provider. `RE
 | `workerRetries` | 2 | Retries do worker, além da tentativa inicial |
 | `retryBackoffMaxSeconds` | 3 | Soma máxima dos backoffs (exponencial com jitter) |
 | `workerTimeoutSeconds` | 25 | Timeout das funções `enrichmentWorker` e `insurerWorker`. Chega aos workers na variável de ambiente `WORKER_TIMEOUT_SECONDS`, que vira `ProviderProperties.workerTimeoutSeconds` (padrão 25), para a reentrega reconhecer uma entrega duplicada viva (§8). O `ServerlessConfigurationTest` confere que a variável e o timeout são iguais |
-| `enrichmentLeaseSeconds` | 30 | Lease da liderança |
-| `inflightTombstoneSeconds` | 3600 | TTL da lápide do `INFLIGHT` |
-| `enrichmentValiditySeconds` | 900 | Validade do enriquecimento simulado |
+| `enrichmentLeaseSeconds` | 30 | Lease da liderança; chega às funções da provider em `ENRICHMENT_LEASE_SECONDS` |
+| `inflightTombstoneSeconds` | 3600 | TTL da lápide do `INFLIGHT` e dos `FOLLOWER#`; chega às funções da provider em `INFLIGHT_TOMBSTONE_SECONDS` (invariante no §9) |
+| `reusePolicyVersion` | `"reuse-v1"` | Versão da política de reuso, gravada na `EVIDENCE`, no `REUSE#` e no `EnrichmentResolved` (§5). É uma string YAML entre aspas, porque sem elas um valor como `2` ou `1.0` viraria número e mudaria o valor publicado; o `ServerlessConfigurationTest` exige `String` no formato. Chega às funções da provider em `REUSE_POLICY_VERSION`; o `ReuseProperties` valida o formato `^[A-Za-z0-9][A-Za-z0-9._-]*$` na subida |
+| `enrichmentValiditySeconds` | 900 | Validade do enriquecimento simulado, contada de min(`observedAt`, `receivedAt`) (§5) |
 | `offerValiditySeconds` | 1800 | Validade da oferta simulada |
 | `providerQuotaPerMinute` | `enrichment-sim`: 30, `alpha`: 30, `beta`: 30 | Quota por provedor e credencial |
 | `betaCallbackDelaySeconds` | 3 | Atraso do callback simulado |
@@ -875,8 +1025,9 @@ plataforma; aparece no alarme de callbacks `UNMATCHED` e no log da provider. `RE
 | provider `sim-callbacks` | `simCallbackSender` | 15 s | 90 s | 5 |
 
 Conferência das invariantes do §9 com esses valores: 5 × 3 + 3 = 18 s ≤ 25 s; `WORKER_TIMEOUT_SECONDS`
-= 25 s, o timeout dos workers; lease de 30 s > 25 s; visibilidade de 6 vezes o timeout; 20 + 1 × 20 +
-30 = 70 s ≤ 300 s no local e 20 + 1 × 90 + 30 = 140 s ≤ 300 s na AWS.
+= 25 s, o timeout dos workers; lease de 30 s > 25 s; lápide de 3600 s ≥ 150 × 3 = 450 s e > 30 s;
+visibilidade de 6 vezes o timeout; 20 + 1 × 20 + 30 = 70 s ≤ 300 s no local e 20 + 1 × 90 + 30 =
+140 s ≤ 300 s na AWS.
 
 **Medição no Floci (M1).** A cadeia do T01 com uma seguradora (stream da quote, fila de pedidos, stream
 da provider e fila de resultados) foi medida no Floci do `compose.yaml`. A coluna "fria" é a primeira
@@ -899,9 +1050,44 @@ Latência da API aquecida, em 30 requisições sequenciais: `POST` com p50 de 20
 `GET` com p50 de 10,3 ms e p95 de 13,3 ms. O teste de carga do PRD (10 criações por segundo durante
 5 min) não foi feito.
 
+**Medição no Floci (M2).** Medida no T04 e no T06 do `quote-e2e`, pelos instantes gravados nas tabelas.
+Cada célula traz as duas rodadas, separadas por barra.
+
+| Trecho | `MISS` | `HIT` |
+|---|---|---|
+| `POST` até `TERMINAL` | 6,50 s / 6,73 s | 6,44 s / 6,65 s |
+| Espera do enriquecimento, da `dispatch` à retomada | 3,00 s / 2,96 s | 3,01 s / 2,95 s |
+| `dispatch` até o worker agir | 1,00 s (liderança) | 0,99 s (`HIT` publicado) |
+| Chamada HTTP ao simulador | 34 ms | Nenhuma |
+| Conclusão até a retomada | 1,93 s | 1,95 s |
+
+No Floci, o `HIT` só economiza a chamada HTTP e as transações da liderança: a cadeia é dominada pelos
+saltos de stream, EventBridge e SQS, com granularidade de cerca de 1 s (§13).
+
+T06 com N = 20, em duas rodadas: os 20 `POST` levaram de 14,7 a 15,6 s, com cold starts de 4
+containers da API e 6 da `workflow-steps`. Do `POST` a `TERMINAL`, mínimo de 6,2 s, p50 de 13,5 a
+15,5 s e máximo de 21,4 a 21,6 s. A espera do enriquecimento teve mínimo de 4,4 s, p50 de 9,5 a 10,0 s
+e máximo de 17,1 a 17,3 s. Houve uma só consulta de enriquecimento, com uma tentativa; os demais
+pedidos foram `HIT`, com o mesmo `evidenceId`. Com N = 30, 6 das 30 versões terminaram
+`TECHNICAL_FAILURE` com `ENRICHMENT_FAILED`: 3 `HIT` chegaram depois do prazo, e 3 pedidos foram
+concluídos pela provider como `FAILED` com `DEADLINE_EXCEEDED_BEFORE_CALL`, sem chamada. Os seis
+resultados ficaram guardados como `LATE`. Numa rodada seguinte com N = 20, um `HIT` chegou 0,43 s
+depois do prazo, e 1 das 20 versões terminou `TECHNICAL_FAILURE` com `ENRICHMENT_FAILED`.
+
+Com um só container do worker e cerca de 1 mensagem por segundo (§13), o último de N pedidos espera
+cerca de N segundos na fila, e essa espera conta dentro dos 20 s de `enrichmentTimeoutSeconds`. Por isso
+o T06 do `quote-e2e` usa N = 12 por padrão, ainda configurável por `-De2e.concurrentQuotes`, e espera
+50 s + N segundos (§14). A propriedade de 100 pedidos concorrentes fica coberta na integração da
+provider (`EnrichmentReuseIT`).
+
+T06 com N = 12, em três rodadas: os 12 `POST` levaram de 9,9 a 11,0 s. A espera do enriquecimento teve
+mínimo de 3,2 a 5,8 s, p50 de 5,9 a 8,7 s e máximo de 9,2 a 11,5 s, com pelo menos 8,5 s de folga nos
+20 s. Do `POST` a `TERMINAL`, o máximo ficou entre 15,2 e 19,8 s. Nas três, houve um `MISS` e 11 `HIT`,
+com uma só consulta e o mesmo `evidenceId`.
+
 ## 13. Limites do Floci 2.4.0
 
-Comportamentos verificados nas revisões do desenho, no spike do M0 e na integração do M1. "Não
+Comportamentos verificados nas revisões do desenho, no spike do M0 e na integração do M1 e do M2. "Não
 verificado" marca o que nenhum teste cobriu ainda; nessas linhas, a coluna do meio diz a alternativa
 caso o Floci não atenda. A coluna M6 marca o que precisa ser repetido na AWS.
 
@@ -909,7 +1095,7 @@ caso o Floci não atenda. A coluna M6 marca o que precisa ser repetido na AWS.
 |---|---|---|
 | `TransactWriteItems` com condição | Funciona; cancela tudo e informa o motivo por item | |
 | `TransactWriteItems` com 101 ações | `ValidationException` | |
-| `TransactionConflict` | Não emulado: 20 transações concorrentes no mesmo item terminam todas com sucesso | Repetir |
+| `TransactionConflict` | Não emulado: 20 transações concorrentes no mesmo item terminam todas com sucesso. Por isso o T06 com 100 pedidos concorrentes no `provider-functions` não exercita o conflito | Repetir, com 100 pedidos concorrentes na liderança |
 | `ReturnValuesOnConditionCheckFailure = ALL_OLD` em `TransactWriteItems` | Não verificado. O desenho não depende dele: o conflito de idempotência relê com `GetItem` e `ConsistentRead` (§8) | |
 | `StartExecution` repetido com mesmo nome e entrada | Idempotente | |
 | `lambda:invoke.waitForTaskToken` e `sqs:sendMessage.waitForTaskToken` | Funcionam | Repetir |
@@ -919,6 +1105,7 @@ caso o Floci não atenda. A coluna M6 marca o que precisa ser repetido na AWS.
 | `TimeoutSeconds` da máquina | Encerra a execução em `TIMED_OUT` sem passar por `Catch` | Repetir |
 | `TimeoutSecondsPath` | Ignorado: a execução fica parada; não usar | |
 | SQS e DynamoDB Streams acionando Lambda | Funcionam; cada salto de ESM leva cerca de 1 s | |
+| Vazão do ESM de SQS | Com `BatchSize` 1, cerca de 1 mensagem por segundo por função, com um só container do worker (`enrichment-requests` da provider e `results` da quote). API Gateway e invocações síncronas sobem vários containers. Por isso o `JOIN` não aparece no `quote-e2e`, e o T06 usa 12 cotações por padrão: com 20, a maior espera do enriquecimento chegou a 17,1 s, e numa rodada um `HIT` chegou 0,43 s depois dos 20 s de espera (§12) | Repetir, com o `JOIN` ponta a ponta |
 | Vazão do ESM de stream | Cerca de 1 lote por segundo: com `BatchSize` 1, 20 registros levaram 20 s; com 100, 1 s | Repetir |
 | Retry padrão do ESM de stream | Bloqueia o shard: o registro com erro é reinvocado e os seguintes esperam; com `MaximumRetryAttempts`, ele é descartado e o shard segue (na AWS, o padrão repete por até um dia) | Repetir |
 | `FilterCriteria` no ESM de stream | Funciona: com o filtro de `INSERT` e `type = OUTBOX`, só os `INSERT` do outbox chegam; `MODIFY`, `REMOVE` e outros tipos nem invocam a função | |
@@ -945,7 +1132,7 @@ caso o Floci não atenda. A coluna M6 marca o que precisa ser repetido na AWS.
 | Marco | Casos do PRD | Onde |
 |---|---|---|
 | M1 | T01 (uma seguradora), T02, T03, T19, T23, T24 | Unitários no `domain`, integração com Floci em `api` e `functions` (o T19 também no `quote-functions`), `quote-e2e` (T01, T02, T03, T19, T23 e T24) |
-| M2 | T04, T05, T06, T15, T25, T27 | Integração com Floci em `provider-functions`, `quote-e2e` |
+| M2 | T04, T05, T06, T15, T25, T27 | Unitários em `provider-domain` e `quote-functions`; integração com Floci em `provider-functions` (T04, T05, T06 com 100 pedidos, T15) e `quote-functions` (lado da quote de T04, T25, T27 e `JOIN`); `quote-e2e` (T04, T05, T06, T25 e T27, com 11 testes ao todo) |
 | M3 | T01, T07, T08, T11, T12, T21, T26 | `provider-functions`, `provider-api`, `quote-e2e` |
 | M4 | T09, T10, T13, T14, T16, T17, T20, T31 | `quote-functions`, `provider-functions`, `quote-e2e` |
 | M5 | T18, T22, T28, T29, T30 | Contrato em `quote-api` contra `contracts/openapi.yaml`, `quote-e2e` |
@@ -962,21 +1149,57 @@ Além dos casos do PRD:
 - M1, variante do T01: o T01 do PRD tem duas seguradoras. No M1, ele roda com uma só, com o
   `vehicle-van-2022` e uso `COMMERCIAL`, que só cota na alpha (§10). O T01 com duas seguradoras entra
   no M3, com a beta.
-- M2: o harness limpa `REUSE#` e `INFLIGHT#` antes de T04, T05 e T06.
+- M2, testes por módulo: `ReusePlanTest` no `provider-domain` (decisão `HIT`, `JOIN` ou liderança,
+  política de reuso, lease e cadeia). `EnrichmentReuseIT` no `provider-functions`, com 17 casos:
+  `t04_reuseHitCompletesWithoutExternalCall`, `t05_expiredReuseStartsNewQueryAndKeepsHistory`,
+  `t06_hundredEquivalentConcurrentRequestsElectOneLeader` (1 líder, 1 chamada, 99 seguidores e 100
+  `EnrichmentResolved` com o mesmo `evidenceId`), `t15_staleLeaderCannotOverwriteAfterLeaseTransfer`,
+  `NOT_FOUND` reutilizado, `FAILED` nunca reutilizado, reentregas idempotentes do líder e do seguidor,
+  seguidor que encontra a liderança concluída, líder interrompido que conclui `FAILED` e responde aos
+  seguidores, e as corridas e reentregas do §8: `observedAt` adiantado que não prolonga a validade,
+  pedido deduplicado pelo `workRef` e não pelo `eventId` recebido, reentrega do líder que responde ao
+  seguidor que o fan-out não alcançou, líder interrompido de uma cadeia antiga que não toca a liderança
+  atual com a mesma versão, líder cujo pedido foi respondido por outra entrega e que conclui mesmo assim
+  para o índice e os seguidores, seguidor cujo registro perde para a conclusão, pedido que perde o
+  índice para outro líder e usa a evidência nova, e líder que perde o índice na conclusão e relê a
+  revisão. A lista com os nomes está em [testes](testing.md). `EnrichmentEvidenceRecordingTest` e casos
+  novos no `QuoteFunctionsFlociIT`, no `quote-functions`: o lado da quote de T04 (com `HIT` e `JOIN`),
+  T25 e T27, e o contrato do `EnrichmentResolved` conferido também depois do prazo. O T15 fica só na
+  integração da provider.
+- M2, `quote-e2e`: o harness limpa o reuso do par antes de T01, T04, T05 e T06 (§10). Pares: T01 e T02
+  usam `vehicle-van-2022` com `driver-acme-bruno`; T04, `vehicle-sedan-2019` com `driver-acme-ana`;
+  T05, `vehicle-classic-1998` com `driver-acme-ana`; T06, `vehicle-classic-1998` com
+  `driver-acme-bruno`. O `vehicle-classic-1998` termina `NO_OFFER` sem chamar seguradora. O T04 confere
+  que a `queryKey` calculada pelo harness é a mesma gravada pela provider. O T25 aceita `MISS` ou `HIT`,
+  porque o `NOT_FOUND` declarado é reutilizável, e confere que o `REUSE#` do par é `NOT_FOUND` e aponta
+  para a evidência usada (mesmo `evidenceId`, `queryId` e `policyVersion`). O T27 confere que não há
+  `REUSE#` para o par com falha. O T06 dispara N cotações equivalentes juntas (12 por padrão,
+  configurável por `-De2e.concurrentQuotes`) e usa uma espera única, que confere todas as cotações a
+  cada intervalo de polling. Na última rodada, os 11 testes do `quote-e2e` (T01, T02, T03,
+  T04, T05, T06, T19, T23, T24, T25 e T27) levaram 191,0 s, e o `mvn verify` dos módulos da provider
+  e da quote rodou 341 testes ([testes](testing.md)).
 - M3: T12 com `vehicle-beta-early`; T21 também no provedor de enriquecimento.
 - M4: o `POST /v1/quotes/{id}/versions` entra no M4, porque o T17 está no M4; o bloqueio de seleção em
   versão substituída é testado na integração da quote. Também entram o reprocessamento das DLQs, as
   ocorrências da quote e os alarmes (só o tipo do recurso no Floci).
 - M5: endpoint de seleção completo.
-- M6: task token, callbacks, IAM, timeouts, `TransactionConflict`, retry e divisão de lote do stream,
-  visibilidade × timeout, issuer do Cognito, recuperação e disparo dos alarmes.
+- M6: task token, callbacks, IAM, timeouts, `TransactionConflict` (inclusive com 100 pedidos
+  concorrentes na liderança), `JOIN` ponta a ponta, retry e divisão de lote do stream, visibilidade ×
+  timeout, issuer do Cognito, recuperação e disparo dos alarmes.
 
 Cada teste leva o identificador do caso no nome (por exemplo, `t02_resubmissionReturnsSameQuote`).
 
 **Orçamento de espera do `quote-e2e`.** Os casos do fluxo não têm número próprio de espera: leem o
-bloco `params` do `serverless.yml` da quote, no stage do teste. O T01 e o T02 esperam pela invariante
-do §9 com uma seguradora (20 + 1 × 20 + 30 = 70 s no local). O T03, o T23 e o T24 terminam nos passos
-simples e esperam `stepsMarginSeconds` (30 s). O polling segue o `retryAfterSeconds` (3 s).
+bloco `params` do `serverless.yml` da quote, no stage do teste. O T01, o T02 e cada cotação do T04
+esperam pela invariante do §9 com uma seguradora (20 + 1 × 20 + 30 = 70 s no local). O T05, o T25 e
+o T27 terminam sem seguradora e esperam 20 + 0 × 20 + 30 = 50 s. O T06 espera esse prazo mais N
+segundos (62 s com o N padrão de 12), numa espera única para todas as cotações: o ESM de SQS do Floci
+entrega cerca de 1 mensagem por segundo (§13), então a última cotação começa cerca de N segundos depois
+da primeira. O N padrão é 12 porque a espera de cada pedido na fila conta dentro dos 20 s de
+`enrichmentTimeoutSeconds`: com 20, a maior espera chegou a 17,1 s, e numa rodada uma versão terminou
+`TECHNICAL_FAILURE` (§12). O caso de 100 pedidos concorrentes fica na integração da provider
+(`EnrichmentReuseIT`). O T03, o T23 e o T24 terminam nos passos simples e esperam `stepsMarginSeconds`
+(30 s). O polling segue o `retryAfterSeconds` (3 s).
 
 O T19 é a exceção, porque depende do agendamento e não da máquina de estado. Ele grava, nas tabelas
 implantadas da quote e da provider, um `OUTBOX_PENDING` de 10 minutos atrás que a relay nunca vê: o
