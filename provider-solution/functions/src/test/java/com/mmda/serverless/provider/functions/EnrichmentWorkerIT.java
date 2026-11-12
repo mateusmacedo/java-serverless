@@ -48,7 +48,8 @@ class EnrichmentWorkerIT extends FlociIntegrationTest {
         assertThat(attribute(query, "operation")).contains("ENRICH");
         assertThat(attribute(query, "clientReference")).contains(request.queryId());
         assertThat(attribute(query, "queryKey")).hasValueSatisfying(key -> assertThat(key).hasSize(64));
-        assertThat(query).doesNotContainKeys("gsi2pk", "fencingVersion");
+        assertThat(query).doesNotContainKey("gsi2pk");
+        assertThat(attribute(query, "fencingVersion")).contains("1");
         List<Map<String, AttributeValue>> attempts = queryItems(request.queryId(), "ATTEMPT#");
         assertThat(attempts).singleElement().satisfies(attempt -> {
             assertThat(attribute(attempt, "startedAt")).isPresent();
@@ -63,6 +64,7 @@ class EnrichmentWorkerIT extends FlociIntegrationTest {
         assertThat(detail.path("version").asInt()).isEqualTo(1);
         assertThat(detail.path("queryId").asString()).isEqualTo(request.queryId());
         assertThat(detail.path("reuseDecision").asString()).isEqualTo("MISS");
+        assertThat(detail.path("policyVersion").asString()).isEqualTo("reuse-v1");
         assertThat(detail.path("resultType").asString()).isEqualTo("FOUND");
         assertThat(detail.path("result").path("vehicle").path("year").asInt()).isEqualTo(2019);
         assertThat(detail.path("result").path("principalDriver").path("ref").asString()).isEqualTo("driver-ana");

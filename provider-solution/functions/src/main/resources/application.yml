@@ -32,6 +32,10 @@ provider:
     enrichment-sim: ${ENRICHMENT_SIM_QUOTA_PER_MINUTE:30}
     alpha: ${ALPHA_QUOTA_PER_MINUTE:30}
     beta: ${BETA_QUOTA_PER_MINUTE:30}
+  reuse:
+    lease-seconds: ${ENRICHMENT_LEASE_SECONDS:30}
+    tombstone-seconds: ${INFLIGHT_TOMBSTONE_SECONDS:3600}
+    policy-version: ${REUSE_POLICY_VERSION:reuse-v1}
 
 mmda:
   aws:

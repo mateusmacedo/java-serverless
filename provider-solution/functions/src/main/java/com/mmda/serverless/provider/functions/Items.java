@@ -27,6 +27,9 @@ final class Items {
     static final String TYPE_OUTBOX = "OUTBOX";
     static final String TYPE_CONSUMED = "CONSUMED";
     static final String TYPE_QUOTA = "QUOTA";
+    static final String TYPE_REUSE = "REUSE";
+    static final String TYPE_INFLIGHT = "INFLIGHT";
+    static final String TYPE_FOLLOWER = "FOLLOWER";
 
     static final String QUERY_IN_FLIGHT = "QUERY_IN_FLIGHT";
     static final String QUERY_UNKNOWN = "QUERY_UNKNOWN";
@@ -45,6 +48,26 @@ final class Items {
 
     static String evidenceSk(String evidenceId) {
         return "EVIDENCE#" + evidenceId;
+    }
+
+    static String reusePk(String queryKey) {
+        return "REUSE#" + queryKey;
+    }
+
+    static String inflightPk(String queryKey) {
+        return "INFLIGHT#" + queryKey;
+    }
+
+    /**
+     * {@code FOLLOWER#<fencingVersion>#<workRef>}. WHY: a versão vai com zeros à esquerda, como a sequência do
+     * {@code ATTEMPT#}, para o fan-out ler só a faixa de versões da cadeia por intervalo de {@code sk}.
+     */
+    static String followerSk(long fencingVersion, String workRef) {
+        return followerPrefix(fencingVersion) + workRef;
+    }
+
+    static String followerPrefix(long fencingVersion) {
+        return "FOLLOWER#%010d#".formatted(fencingVersion);
     }
 
     static String outboxPk(String eventId) {

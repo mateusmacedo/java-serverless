@@ -2,6 +2,7 @@ package com.mmda.serverless.quote.functions;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.mmda.serverless.quote.domain.Hashes;
 import com.mmda.serverless.quote.domain.QuoteEvents;
 import com.mmda.serverless.quote.domain.QuoteKeys;
 import com.mmda.serverless.quote.domain.QuoteSnapshot;
@@ -120,30 +121,75 @@ final class QuoteFixtures {
         return envelope("InsurerResultRecorded", detail);
     }
 
-    /** {@code EnrichmentResolved} com o perfil normalizado do veículo e do condutor. */
+    /** {@code EnrichmentResolved} de um {@code MISS}, com o perfil normalizado do veículo e do condutor. */
     static String enrichmentResult(String workRef, String quoteId, String resultType, int vehicleYear, String eventId) {
+        return enrichmentResult(workRef, quoteId, eventId, EvidenceRef.miss(workRef), resultType, vehicleYear,
+                List.of("vehicleRef"));
+    }
+
+    /**
+     * {@code EnrichmentResolved} com a referência da evidência informada; um campo nulo de {@code evidence} fica
+     * fora do evento. {@code notFoundRefs} só entra em {@code NOT_FOUND}.
+     */
+    static String enrichmentResult(String workRef, String quoteId, String eventId, EvidenceRef evidence,
+            String resultType, int vehicleYear, List<String> notFoundRefs) {
         ObjectNode detail = MAPPER.createObjectNode()
                 .put("eventId", eventId)
                 .put("occurredAt", Instant.now().toString())
                 .put("schemaVersion", "1")
                 .put("workRef", workRef)
                 .put("quoteId", quoteId)
-                .put("version", 1)
-                .put("queryId", "q_enrichment")
-                .put("evidenceId", "ev_1")
-                .put("reuseDecision", "MISS")
-                .put("resultType", resultType)
-                .put("reusableUntil", Instant.now().plusSeconds(900).toString());
+                .put("version", 1);
+        putIfPresent(detail, "queryId", evidence.queryId());
+        putIfPresent(detail, "evidenceId", evidence.evidenceId());
+        putIfPresent(detail, "reuseDecision", evidence.reuseDecision());
+        putIfPresent(detail, "policyVersion", evidence.policyVersion());
+        detail.put("resultType", resultType);
         if ("FOUND".equals(resultType)) {
             ObjectNode result = detail.putObject("result");
-            result.putObject("vehicle").put("year", vehicleYear).put("fipeValue", "95000.00");
-            result.putObject("principalDriver").put("claimsLast5Years", 0);
+            result.putObject("vehicle").put("ref", "vehicle-hatch-2021").put("make", "Volkswagen").put("model", "Polo")
+                    .put("year", vehicleYear).put("marketValue", "75000.00");
+            result.putObject("principalDriver").put("ref", "driver-acme-ana").put("licenseYears", 14)
+                    .put("claimsLast5Years", 1);
+            detail.put("reusableUntil", Instant.now().plusSeconds(900).toString());
         } else if ("NOT_FOUND".equals(resultType)) {
-            detail.putArray("notFoundRefs").add("vehicleRef");
+            notFoundRefs.forEach(detail.putArray("notFoundRefs")::add);
+            detail.put("reusableUntil", Instant.now().plusSeconds(900).toString());
         } else {
             detail.put("errorClass", "PROVIDER_UNAVAILABLE");
         }
         return envelope("EnrichmentResolved", detail);
+    }
+
+    /**
+     * Referência da evidência que a provider publica no {@code EnrichmentResolved}, com os identificadores
+     * derivados pelas regras do AsyncAPI dela.
+     */
+    record EvidenceRef(String queryId, String evidenceId, String reuseDecision, String policyVersion) {
+
+        static final String POLICY_VERSION = "reuse-v1";
+
+        /** Evidência da consulta aberta pelo próprio pedido ({@code MISS}). */
+        static EvidenceRef miss(String workRef) {
+            return shared(workRef, "MISS");
+        }
+
+        /** Evidência da consulta de um líder, reusada ({@code HIT}) ou aguardada ({@code JOIN}) por outro pedido. */
+        static EvidenceRef shared(String leaderWorkRef, String reuseDecision) {
+            String queryId = "q_" + Hashes.sha256Hex(leaderWorkRef).substring(0, 32);
+            return new EvidenceRef(queryId, "ev_" + Hashes.sha256Hex(queryId + "|1").substring(0, 32), reuseDecision,
+                    POLICY_VERSION);
+        }
+
+        EvidenceRef withReuseDecision(String decision) {
+            return new EvidenceRef(queryId, evidenceId, decision, policyVersion);
+        }
+    }
+
+    private static void putIfPresent(ObjectNode node, String field, String value) {
+        if (value != null) {
+            node.put(field, value);
+        }
     }
 
     private static String envelope(String detailType, ObjectNode detail) {

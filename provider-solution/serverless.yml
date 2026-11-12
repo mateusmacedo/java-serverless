@@ -18,6 +18,9 @@ params:
     workerTimeoutSeconds: 25
     enrichmentLeaseSeconds: 30
     inflightTombstoneSeconds: 3600
+    # Versão da política de reuso, dona da validade do enriquecimento: vai na evidência, no REUSE# e no
+    # EnrichmentResolved; um REUSE# de outra versão não serve de HIT
+    reusePolicyVersion: "reuse-v1"
     enrichmentValiditySeconds: 900
     offerValiditySeconds: 1800
     enrichmentSimQuotaPerMinute: 30
@@ -81,11 +84,15 @@ provider:
     RETRY_BACKOFF_MAX_SECONDS: "${param:retryBackoffMaxSeconds}"
     WORKER_TIMEOUT_SECONDS: "${param:workerTimeoutSeconds}"
     ENRICHMENT_VALIDITY_SECONDS: "${param:enrichmentValiditySeconds}"
+    ENRICHMENT_LEASE_SECONDS: "${param:enrichmentLeaseSeconds}"
+    INFLIGHT_TOMBSTONE_SECONDS: "${param:inflightTombstoneSeconds}"
+    REUSE_POLICY_VERSION: "${param:reusePolicyVersion}"
     OUTBOX_REPUBLISH_AFTER_SECONDS: "${param:outboxRepublishAfterSeconds}"
     ENRICHMENT_SIM_QUOTA_PER_MINUTE: "${param:enrichmentSimQuotaPerMinute}"
     ALPHA_QUOTA_PER_MINUTE: "${param:alphaQuotaPerMinute}"
     BETA_QUOTA_PER_MINUTE: "${param:betaQuotaPerMinute}"
-  # Papel das funções da provider; a Lambda dos simuladores tem papel próprio (SimulatorsRole)
+  # Papel das funções da provider; a Lambda dos simuladores tem papel próprio (SimulatorsRole). O reuso do
+  # enriquecimento (REUSE#, INFLIGHT# e FOLLOWER#) usa as mesmas ações na tabela de consultas
   iam:
     role:
       statements:
@@ -245,6 +252,7 @@ resources:
               ProjectionType: ALL
         StreamSpecification:
           StreamViewType: NEW_IMAGE
+        # Expira as janelas de quota, a lápide do INFLIGHT# e os FOLLOWER#
         TimeToLiveSpecification:
           AttributeName: ttl
           Enabled: true

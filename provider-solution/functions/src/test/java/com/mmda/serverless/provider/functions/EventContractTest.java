@@ -2,6 +2,7 @@ package com.mmda.serverless.provider.functions;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.mmda.serverless.provider.domain.EventIds;
 import com.mmda.serverless.provider.domain.Identities;
 import com.mmda.serverless.provider.domain.enrichment.EnrichmentProfile;
 import com.mmda.serverless.provider.domain.enrichment.EnrichmentRequest;
@@ -69,11 +70,37 @@ class EventContractTest {
                 new EnrichmentProfile.Driver("driver-acme-ana", 14, 1));
 
         EnrichmentResolved event = EnrichmentResolved.of(request, Identities.queryId(request.workRef()),
-                documented.path("evidenceId").asString(), ReuseDecision.MISS,
+                documented.path("evidenceId").asString(), ReuseDecision.MISS, documented.path("policyVersion").asString(),
                 EnrichmentResolved.Outcome.found(profile, documented.path("reusableUntil").asString()),
                 documented.path("occurredAt").asString());
 
         assertThat(objectMapper.readTree(objectMapper.writeValueAsString(event))).isEqualTo(documented);
+    }
+
+    @Test
+    void reusedExamplesCarryTheLeaderEvidenceUnderTheirOwnDeterministicEventId() throws IOException {
+        List<JsonNode> examples = examples(messages("provider-solution.asyncapi.yaml"), "EnrichmentResolved");
+        JsonNode leader = examples.getFirst().path("detail");
+        List<JsonNode> reused = examples.stream()
+                .map(example -> example.path("detail"))
+                .filter(detail -> !"MISS".equals(detail.path("reuseDecision").asString()))
+                .toList();
+
+        assertThat(reused).extracting(detail -> detail.path("reuseDecision").asString())
+                .containsExactlyInAnyOrder("JOIN", "HIT");
+        for (JsonNode detail : reused) {
+            String workRef = detail.path("workRef").asString();
+            assertThat(detail.path("workRef").asString()).isEqualTo(Identities.workRef(
+                    detail.path("quoteId").asString(), detail.path("version").asInt(), Identities.ENRICHMENT, null));
+            assertThat(detail.path("queryId")).isEqualTo(leader.path("queryId"));
+            assertThat(detail.path("queryId").asString()).isNotEqualTo(Identities.queryId(workRef));
+            assertThat(detail.path("eventId").asString())
+                    .isEqualTo(EventIds.enrichmentResolved(detail.path("queryId").asString(), workRef));
+            assertThat(detail.path("evidenceId")).isEqualTo(leader.path("evidenceId"));
+            assertThat(detail.path("result")).isEqualTo(leader.path("result"));
+            assertThat(detail.path("reusableUntil")).isEqualTo(leader.path("reusableUntil"));
+            assertThat(detail.path("policyVersion")).isEqualTo(leader.path("policyVersion"));
+        }
     }
 
     @Test

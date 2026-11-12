@@ -10,23 +10,30 @@ import com.mmda.serverless.quote.domain.Insurers;
 import com.mmda.serverless.quote.domain.MissingField;
 import com.mmda.serverless.quote.domain.MissingFieldLabels;
 import com.mmda.serverless.quote.domain.QuoteEvents;
+import com.mmda.serverless.quote.domain.QuoteKeys;
+import com.mmda.serverless.quote.domain.ReuseDecision;
+import com.mmda.serverless.quote.domain.WorkRef;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.yaml.snakeyaml.Yaml;
+import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 
 /**
  * A quote consome os eventos da provider-solution como o {@code docs/events/provider-solution.asyncapi.yaml}
  * os documenta; a provider confere esses exemplos contra o próprio código. Cada campo que o {@code resume} e
- * a consolidação leem precisa estar no exemplo, com o tipo que a quote espera.
+ * a consolidação leem precisa estar no exemplo, com o tipo que a quote espera, e cada exemplo de
+ * {@code EnrichmentResolved} passa pelo {@code resume}, com DynamoDB simulado, até a evidência usada pela versão.
  */
 class ProviderEventsConsumptionTest {
 
@@ -46,9 +53,13 @@ class ProviderEventsConsumptionTest {
     @Test
     void enrichmentResolvedExamplesCarryWhatTheResumeAndTheSelectionRead() {
         Set<EnrichmentOutcome.ResultType> seen = new HashSet<>();
+        Set<ReuseDecision> decisions = EnumSet.noneOf(ReuseDecision.class);
         for (JsonNode detail : details(QuoteEvents.ENRICHMENT_RESOLVED)) {
             assertCommonFields(detail);
             assertThat(detail.path("evidenceId").asText()).isNotBlank();
+            decisions.add(ReuseDecision.valueOf(detail.path("reuseDecision").asText()));
+            assertThat(detail.path("policyVersion").isTextual()).as("policyVersion of the provider reuse policy").isTrue();
+            assertThat(detail.path("policyVersion").asText()).isNotBlank();
             EnrichmentOutcome.ResultType resultType = EnrichmentOutcome.ResultType.valueOf(detail.path("resultType").asText());
             seen.add(resultType);
             switch (resultType) {
@@ -66,6 +77,32 @@ class ProviderEventsConsumptionTest {
             }
         }
         assertThat(seen).containsExactlyInAnyOrder(EnrichmentOutcome.ResultType.values());
+        assertThat(decisions).as("HIT, JOIN and MISS reach the quote").containsExactlyInAnyOrder(ReuseDecision.values());
+    }
+
+    @Test
+    void enrichmentResolvedExamplesBecomeTheEvidenceUsedByTheVersion() {
+        for (JsonNode example : asyncApi.at("/components/messages/" + QuoteEvents.ENRICHMENT_RESOLVED + "/examples")) {
+            JsonNode detail = example.at("/payload/detail");
+            WorkRef workRef = new WorkRef(detail.path("workRef").asText());
+            ResumeProbe probe = new ResumeProbe(workRef, detail.path("quoteId").asText(), detail.path("version").asInt(),
+                    ResumeProbe.NOW.plusSeconds(20));
+
+            assertThat(probe.resume(example.path("payload").toString()))
+                    .as("example %s", example.path("name").asText()).isEqualTo(ResultResumer.Disposition.RESUMED);
+
+            Map<String, AttributeValue> evidence = probe.put(QuoteKeys.TYPE_EVIDENCE);
+            assertThat(evidence.get(QuoteKeys.SK).s())
+                    .isEqualTo(QuoteKeys.evidenceSk(detail.path("version").asInt(), workRef));
+            for (String field : List.of("evidenceId", "queryId", "reuseDecision", "resultType", "policyVersion")) {
+                assertThat(evidence).as("evidence used").containsKey(field);
+                assertThat(evidence.get(field).s()).as(field).isEqualTo(detail.path(field).asText());
+            }
+            JsonNode summary = ResumeProbe.summary(evidence);
+            assertThat(present(summary, "result")).isEqualTo(present(detail, "result"));
+            assertThat(present(summary, "notFoundRefs")).isEqualTo(present(detail, "notFoundRefs"));
+            assertThat(probe.resumePayload().get("reuseDecision").asText()).isEqualTo(detail.path("reuseDecision").asText());
+        }
     }
 
     @Test
@@ -96,6 +133,11 @@ class ProviderEventsConsumptionTest {
             quoted++;
         }
         assertThat(quoted).isPositive();
+    }
+
+    private static JsonNode present(JsonNode node, String field) {
+        JsonNode value = node.get(field);
+        return value == null || value.isNull() ? null : value;
     }
 
     private static void assertCommonFields(JsonNode detail) {

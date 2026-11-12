@@ -9,6 +9,8 @@ import static com.mmda.serverless.provider.functions.Items.s;
 
 import com.mmda.serverless.provider.domain.QueryState;
 import com.mmda.serverless.provider.domain.Timestamps;
+import com.mmda.serverless.provider.domain.enrichment.ReuseIndexEntry;
+import com.mmda.serverless.provider.domain.enrichment.ReusePlan;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -16,6 +18,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
@@ -28,6 +32,7 @@ import software.amazon.awssdk.services.dynamodb.model.TransactWriteItem;
 @Component
 class QueryLedger {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(QueryLedger.class);
     private static final String STATE = "#state";
     private static final Map<String, String> STATE_NAME = Map.of(STATE, "state");
 
@@ -35,12 +40,15 @@ class QueryLedger {
     private final Transactions transactions;
     private final OutboxStore outbox;
     private final ProviderProperties properties;
+    private final ReuseLedger reuse;
 
-    QueryLedger(DynamoDbClient dynamoDb, Transactions transactions, OutboxStore outbox, ProviderProperties properties) {
+    QueryLedger(DynamoDbClient dynamoDb, Transactions transactions, OutboxStore outbox, ProviderProperties properties,
+                ReuseLedger reuse) {
         this.dynamoDb = dynamoDb;
         this.transactions = transactions;
         this.outbox = outbox;
         this.properties = properties;
+        this.reuse = reuse;
     }
 
     enum Reservation {
@@ -50,6 +58,30 @@ class QueryLedger {
         /** A consulta não está mais em voo. */
         NOT_IN_FLIGHT,
         QUOTA_EXHAUSTED
+    }
+
+    enum Leading {
+        LEADING,
+        /** Outro pedido assumiu ou concluiu a liderança depois da leitura. */
+        LEADERSHIP_CHANGED,
+        /** Outro líder trocou a evidência do índice depois da leitura. */
+        REUSE_CHANGED,
+        /** Outra entrega do mesmo pedido criou a consulta antes. */
+        QUERY_EXISTS,
+        QUOTA_EXHAUSTED
+    }
+
+    enum LeaderSettlement {
+        SETTLED,
+        /**
+         * Outra entrega do mesmo pedido já o tinha respondido ({@code HIT} ou {@code JOIN}): a conclusão foi
+         * gravada sem o outbox e o {@code CONSUMED} próprios.
+         */
+        SETTLED_ALREADY_ANSWERED,
+        /** A lease foi transferida: a {@code fencingVersion} do {@code INFLIGHT#} não é mais a do líder. */
+        FENCED,
+        REUSE_CHANGED,
+        ALREADY_SETTLED
     }
 
     Optional<QueryRecord> load(String queryId) {
@@ -80,6 +112,8 @@ class QueryLedger {
         return Optional.of(new QueryRecord(queryId,
                 QueryState.valueOf(Items.string(meta, "state").orElseThrow()),
                 Items.string(meta, "providerRequestId").orElse(null),
+                Items.string(meta, "queryKey").orElse(null),
+                Items.number(meta, "fencingVersion").orElse(null),
                 attempts));
     }
 
@@ -89,6 +123,46 @@ class QueryLedger {
                         .consistentRead(true)
                         .key(Items.key(Items.consumedPk(eventId), META)))
                 .hasItem();
+    }
+
+    Optional<StoredEvidence> loadEvidence(String queryId, String evidenceId) {
+        Map<String, AttributeValue> item = dynamoDb.getItem(builder -> builder
+                        .tableName(properties.tableName())
+                        .consistentRead(true)
+                        .key(Items.key(Items.queryPk(queryId), Items.evidenceSk(evidenceId))))
+                .item();
+        if (item.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(new StoredEvidence(queryId, evidenceId,
+                Items.string(item, "resultType").orElseThrow(),
+                Items.string(item, "normalizedResult").orElse(null),
+                Items.string(item, "reusableUntil").orElse(null),
+                Items.string(item, "errorClass").orElse(null),
+                Items.string(item, "policyVersion").orElse(null)));
+    }
+
+    /**
+     * Antes do HTTP, numa transação (§8): a liderança, a conferência do índice lido, a consulta do líder em voo
+     * com a {@code fencingVersion}, a {@code ATTEMPT#0001} com {@code startedAt} e o débito da quota.
+     */
+    Leading lead(QueryDraft draft, ReusePlan.Lead plan, QuotaReservation quota, Instant now) {
+        Transactions.Result result = transactions.write(List.of(
+                reuse.lead(draft.queryKey(), plan, draft.workRef(), draft.queryId(), now),
+                reuse.reuseUnchanged(draft.queryKey(), plan.expectedReuseRevision()),
+                putQuery(draft.ledBy(plan.fencingVersion()), QueryState.IN_FLIGHT, now),
+                putAttempt(draft.queryId(), 1, now),
+                reserveQuota(quota)));
+        if (result.committed()) {
+            return Leading.LEADING;
+        }
+        if (result.conditionFailedAt(2)) {
+            return Leading.QUERY_EXISTS;
+        }
+        if (result.conditionFailedAt(0)) {
+            return Leading.LEADERSHIP_CHANGED;
+        }
+        return result.conditionFailedAt(1) ? Leading.REUSE_CHANGED : Leading.QUOTA_EXHAUSTED;
     }
 
     /** Antes do HTTP: a consulta em voo, a {@code ATTEMPT#0001} com {@code startedAt} e o débito da quota. */
@@ -138,24 +212,115 @@ class QueryLedger {
 
     /**
      * Grava a conclusão numa transação. Devolve {@code false} quando a consulta já não estava em voo (ou já
-     * existia, na conclusão sem chamada): outra entrega concluiu antes e nada foi gravado.
+     * existia, na conclusão sem chamada): outra entrega concluiu antes e nada foi gravado. Se só o outbox ou o
+     * {@code CONSUMED} próprios falharem, outra entrega já respondeu ao pedido: a consulta existente é concluída
+     * sem eles, e a conclusão sem chamada não cria consulta.
      */
     boolean settle(Settlement settlement, Instant now) {
-        List<TransactWriteItem> items = new ArrayList<>();
-        items.add(settlement.newQuery() == null
+        List<TransactWriteItem> conclusion = new ArrayList<>();
+        conclusion.add(settlement.newQuery() == null
                 ? settleQuery(settlement.queryId(), settlement.finalState(), now)
                 : putQuery(settlement.newQuery(), settlement.finalState(), now));
+        conclusion.addAll(records(settlement, now));
+        List<TransactWriteItem> items = new ArrayList<>(conclusion);
+        items.addAll(ownAnswer(settlement, now));
+        Transactions.Result result = transactions.write(items);
+        if (result.committed()) {
+            return true;
+        }
+        if (settlement.newQuery() != null || result.conditionFailedAt(0)
+                || !answeredBefore(result, conclusion.size())) {
+            return false;
+        }
+        LOGGER.warn("Request already answered by another delivery; the query is concluded without its own event: "
+                + "queryId={}", settlement.queryId());
+        return transactions.write(conclusion).committed();
+    }
+
+    /**
+     * Conclusão do líder (§8), numa transação: a consulta, a liderança como lápide (só com a própria
+     * {@code fencingVersion} e consulta), o índice de reuso quando o resultado é reutilizável ({@code reuseEntry}
+     * não nulo, condicionado à revisão lida), a tentativa, a evidência, o outbox próprio e o {@code CONSUMED}.
+     * WHY: outra entrega do mesmo pedido pode tê-lo respondido depois da conferência do {@code CONSUMED}; a
+     * liderança conclui mesmo assim, sem o outbox e o {@code CONSUMED} próprios, para os seguidores e o índice.
+     */
+    LeaderSettlement settleAsLeader(Settlement settlement, LeaderTerm term, ReuseIndexEntry reuseEntry,
+                                    Long expectedRevision, Instant now) {
+        if (settlement.newQuery() != null || settlement.evidence() == null || settlement.event() == null) {
+            throw new IllegalArgumentException("A leader settles its existing query with evidence and an event");
+        }
+        List<TransactWriteItem> conclusion = new ArrayList<>();
+        conclusion.add(settleQuery(settlement.queryId(), settlement.finalState(), now));
+        conclusion.add(reuse.complete(term, settlement.queryId(), settlement.evidence().evidenceId(),
+                settlement.evidence().resultType(), now));
+        if (reuseEntry != null) {
+            conclusion.add(reuse.putReuse(term.queryKey(), reuseEntry, expectedRevision, now));
+        }
+        conclusion.addAll(records(settlement, now));
+        List<TransactWriteItem> items = new ArrayList<>(conclusion);
+        items.addAll(ownAnswer(settlement, now));
+        Transactions.Result result = transactions.write(items);
+        if (result.committed()) {
+            return LeaderSettlement.SETTLED;
+        }
+        Optional<LeaderSettlement> lost = leaderConflict(result, reuseEntry != null);
+        if (lost.isPresent()) {
+            return lost.get();
+        }
+        if (!answeredBefore(result, conclusion.size())) {
+            return LeaderSettlement.ALREADY_SETTLED;
+        }
+        Transactions.Result withoutOwnAnswer = transactions.write(conclusion);
+        if (withoutOwnAnswer.committed()) {
+            return LeaderSettlement.SETTLED_ALREADY_ANSWERED;
+        }
+        return leaderConflict(withoutOwnAnswer, reuseEntry != null).orElse(LeaderSettlement.ALREADY_SETTLED);
+    }
+
+    private static Optional<LeaderSettlement> leaderConflict(Transactions.Result result, boolean writesReuse) {
+        if (result.conditionFailedAt(0)) {
+            return Optional.of(LeaderSettlement.ALREADY_SETTLED);
+        }
+        if (result.conditionFailedAt(1)) {
+            return Optional.of(LeaderSettlement.FENCED);
+        }
+        if (writesReuse && result.conditionFailedAt(2)) {
+            return Optional.of(LeaderSettlement.REUSE_CHANGED);
+        }
+        return Optional.empty();
+    }
+
+    /** O outbox ou o {@code CONSUMED} próprios, gravados a partir de {@code ownAnswerIndex}, já existiam. */
+    private static boolean answeredBefore(Transactions.Result result, int ownAnswerIndex) {
+        return result.conditionFailedAt(ownAnswerIndex) || result.conditionFailedAt(ownAnswerIndex + 1);
+    }
+
+    /**
+     * Resolução de um pedido sem consulta própria ({@code HIT} ou {@code JOIN}): o outbox e o {@code CONSUMED}
+     * do pedido, numa transação. Devolve {@code false} se o pedido já estava resolvido.
+     */
+    boolean resolve(Settlement.OutboxEvent event, String requestEventId, String workRef, Instant now) {
+        return transactions.write(List.of(outbox.put(event, now), putConsumed(requestEventId, workRef, now)))
+                .committed();
+    }
+
+    private List<TransactWriteItem> records(Settlement settlement, Instant now) {
+        List<TransactWriteItem> items = new ArrayList<>();
         if (settlement.attempt() != null) {
             items.add(finishAttemptItem(settlement.queryId(), settlement.attempt(), now));
         }
         if (settlement.evidence() != null) {
             items.add(putEvidence(settlement.queryId(), settlement.evidence()));
         }
-        if (settlement.event() != null) {
-            items.add(outbox.put(settlement.event(), now));
-            items.add(putConsumed(settlement.consumedEventId(), settlement.workRef(), now));
+        return items;
+    }
+
+    private List<TransactWriteItem> ownAnswer(Settlement settlement, Instant now) {
+        if (settlement.event() == null) {
+            return List.of();
         }
-        return transactions.write(items).committed();
+        return List.of(outbox.put(settlement.event(), now),
+                putConsumed(settlement.consumedEventId(), settlement.workRef(), now));
     }
 
     /** Resposta {@code 202}: grava o {@code providerRequestId} na consulta e na tentativa (§8, passo 3). */
@@ -190,6 +355,9 @@ class QueryLedger {
         item.put("version", n(draft.version()));
         putIfPresent(item, "insurerId", draft.insurerId());
         putIfPresent(item, "queryKey", draft.queryKey());
+        if (draft.fencingVersion() != null) {
+            item.put("fencingVersion", n(draft.fencingVersion()));
+        }
         item.put("deadlineAt", s(Timestamps.format(draft.deadlineAt())));
         item.put("createdAt", s(Timestamps.format(now)));
         item.put("updatedAt", s(Timestamps.format(now)));
@@ -313,6 +481,10 @@ class QueryLedger {
         putIfPresent(item, "reusableUntil", evidence.reusableUntil());
         putIfPresent(item, "checksum", evidence.checksum());
         putIfPresent(item, "errorClass", evidence.errorClass());
+        putIfPresent(item, "policyVersion", evidence.policyVersion());
+        if (evidence.fencingVersion() != null) {
+            item.put("fencingVersion", n(evidence.fencingVersion()));
+        }
         return TransactWriteItem.builder()
                 .put(put -> put
                         .tableName(properties.tableName())

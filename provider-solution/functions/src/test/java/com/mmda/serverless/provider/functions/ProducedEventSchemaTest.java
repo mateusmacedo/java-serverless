@@ -1,6 +1,7 @@
 package com.mmda.serverless.provider.functions;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.mmda.serverless.provider.domain.ErrorClasses;
 import com.mmda.serverless.provider.domain.Identities;
@@ -35,6 +36,7 @@ import org.springframework.boot.test.autoconfigure.json.JsonTest;
 import org.yaml.snakeyaml.Yaml;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * Os eventos que a provider produz em cada desfecho, serializados como no outbox, conferem com os schemas do
@@ -82,14 +84,42 @@ class ProducedEventSchemaTest {
             }
         }
 
-        for (EnrichmentResolved.Outcome outcome : outcomes) {
-            EnrichmentResolved event = EnrichmentResolved.of(request, queryId, Identities.evidenceId(queryId, 1),
-                    ReuseDecision.MISS, outcome, occurredAt);
+        for (ReuseDecision decision : ReuseDecision.values()) {
+            for (EnrichmentResolved.Outcome outcome : outcomes) {
+                EnrichmentResolved event = EnrichmentResolved.of(request, queryId, Identities.evidenceId(queryId, 1),
+                        decision, "reuse-v1", outcome, occurredAt);
 
-            assertThat(validate(schema("EnrichmentResolvedDetail"), objectMapper.valueToTree(event), "detail"))
-                    .as("%s %s", outcome.resultType(), outcome.errorClass())
-                    .isEmpty();
+                assertThat(validate(schema("EnrichmentResolvedDetail"), objectMapper.valueToTree(event), "detail"))
+                        .as("%s %s %s", decision, outcome.resultType(), outcome.errorClass())
+                        .isEmpty();
+            }
         }
+    }
+
+    @Test
+    void enrichmentResolvedRequiresThePolicyVersionOfTheProvider() {
+        EnrichmentRequest request = new EnrichmentRequest(UUID.randomUUID().toString(),
+                Identities.workRef(QUOTE_ID, 1, Identities.ENRICHMENT, null), "org-acme", QUOTE_ID, 1,
+                "enrichment-sim", "VEHICLE_DRIVER_PROFILE", "1",
+                new EnrichmentRequest.Params("vehicle-hatch-2021", "driver-acme-ana"), Instant.now());
+        String queryId = Identities.queryId(request.workRef());
+        JsonNode event = objectMapper.valueToTree(EnrichmentResolved.of(request, queryId,
+                Identities.evidenceId(queryId, 1), ReuseDecision.MISS, "reuse-v1",
+                EnrichmentResolved.Outcome.failed(ErrorClasses.PROVIDER_UNAVAILABLE), occurredAt));
+        ((ObjectNode) event).remove("policyVersion");
+
+        assertThat(validate(schema("EnrichmentResolvedDetail"), event, "detail"))
+                .containsExactly("detail.policyVersion is required");
+    }
+
+    @Test
+    void reusePolicyVersionFollowsTheDocumentedFormat() {
+        assertThat(schema("EnrichmentResolvedDetail").at("/allOf/1/properties/policyVersion/pattern").asString())
+                .isEqualTo(EnrichmentResolved.POLICY_VERSION.pattern());
+        assertThat(new ReuseProperties(30, 3600, "reuse-v1.2").policyVersion()).isEqualTo("reuse-v1.2");
+        assertThatThrownBy(() -> new ReuseProperties(30, 3600, "reuse v1"))
+                .as("a configured version outside the pattern would publish events outside the AsyncAPI")
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

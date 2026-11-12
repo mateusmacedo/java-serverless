@@ -124,7 +124,9 @@ public class WorkflowSteps {
 
     /**
      * {@code select-insurers}: aplica {@code sel-1} com o ano do veículo do enriquecimento e grava, numa
-     * transação, a fase {@code QUOTING} e um {@code RESULT} {@code PENDING} por seguradora.
+     * transação, a fase {@code QUOTING} e um {@code RESULT} {@code PENDING} por seguradora. Sem evidência
+     * {@code FOUND}, devolve a lista vazia sem gravar: nenhuma seguradora é consultada (PRD §8), e a
+     * consolidação decide pela evidência.
      */
     public Map<String, Object> selectInsurers(String quoteId, int version) {
         Map<String, AttributeValue> versionItem = versionItem(quoteId, version);
@@ -132,9 +134,14 @@ public class WorkflowSteps {
         if (stored != null) {
             return selectionOutput(stored);
         }
+        Optional<Map<String, AttributeValue>> evidence = enrichmentEvidence(quoteId, version)
+                .filter(item -> EnrichmentOutcome.ResultType.FOUND.name().equals(Attr.string(item, "resultType")));
+        if (evidence.isEmpty()) {
+            return selectionOutput(List.of());
+        }
         QuoteSnapshot snapshot = snapshot(versionItem);
         InsurerSelectionRule.InsurerSelection selection = InsurerSelectionRule.select(snapshot.risk().usage(),
-                enrichedVehicleYear(quoteId, version, snapshot), config.maxInsurers());
+                enrichedVehicleYear(evidence.get(), snapshot), config.maxInsurers());
         Instant now = Instant.now(clock);
         Map<String, AttributeValue> values = new HashMap<>(Map.of(
                 ":insurers", Attr.list(selection.insurerIds()),
@@ -313,8 +320,7 @@ public class WorkflowSteps {
             return null;
         }
         WorkRef workRef = WorkRef.of(quoteId, version, WorkRef.Kind.ENRICHMENT, null);
-        Optional<Map<String, AttributeValue>> evidence =
-                table.get(QuoteKeys.quotePk(quoteId), QuoteKeys.evidenceSk(version, workRef));
+        Optional<Map<String, AttributeValue>> evidence = enrichmentEvidence(quoteId, version);
         if (evidence.isPresent()) {
             EnrichmentOutcome.ResultType type =
                     EnrichmentOutcome.ResultType.valueOf(Attr.string(evidence.get(), "resultType"));
@@ -335,14 +341,16 @@ public class WorkflowSteps {
                 .toList();
     }
 
-    /** Ano do veículo no perfil enriquecido; o do snapshot quando o perfil não o informa. */
-    private int enrichedVehicleYear(String quoteId, int version, QuoteSnapshot snapshot) {
+    /** Evidência usada pela versão ({@code V#n#EVIDENCE#<workRef>}), gravada pelo {@code resume}. */
+    private Optional<Map<String, AttributeValue>> enrichmentEvidence(String quoteId, int version) {
         WorkRef workRef = WorkRef.of(quoteId, version, WorkRef.Kind.ENRICHMENT, null);
-        return table.get(QuoteKeys.quotePk(quoteId), QuoteKeys.evidenceSk(version, workRef))
-                .map(evidence -> readTree(Attr.string(evidence, "summary")).at("/result/vehicle/year"))
-                .filter(JsonNode::canConvertToInt)
-                .map(JsonNode::asInt)
-                .orElse(snapshot.risk().vehicle().year());
+        return table.get(QuoteKeys.quotePk(quoteId), QuoteKeys.evidenceSk(version, workRef));
+    }
+
+    /** Ano do veículo no perfil enriquecido; o do snapshot quando o perfil não o informa. */
+    private int enrichedVehicleYear(Map<String, AttributeValue> evidence, QuoteSnapshot snapshot) {
+        JsonNode year = readTree(Attr.string(evidence, "summary")).at("/result/vehicle/year");
+        return year.canConvertToInt() ? year.asInt() : snapshot.risk().vehicle().year();
     }
 
     private EligibilityResult storedEligibility(Map<String, AttributeValue> versionItem) {
