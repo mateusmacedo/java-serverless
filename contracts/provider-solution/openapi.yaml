@@ -1,11 +1,11 @@
 openapi: 3.1.0
 info:
-  title: provider-solution API de callbacks
+  title: API de callbacks da provider-solution
   version: 0.1.0
   description: |
     API HTTP da `provider-solution`, em Spring MVC: recebe os callbacks das seguradoras assíncronas, como a
-    `beta` simulada. O desenho está em `docs/quotation-platform.md` (§5 e §8); o resultado gravado vira o evento
-    `InsurerResultRecorded`, descrito em `docs/events/provider-solution.asyncapi.yaml`.
+    `beta` simulada. O desenho está em `docs/plataforma-de-cotacao.md` (§5 e §8); o resultado gravado vira o evento
+    `InsurerResultRecorded`, descrito em `contracts/provider-solution/asyncapi.yaml`.
 
     O corpo é assinado pelo fornecedor com o segredo `provider-solution/{stage}/callback-secret`: o cabeçalho
     `X-Signature` é `sha256=` seguido do hexadecimal minúsculo do HMAC-SHA256 dos bytes exatos do corpo. A API
@@ -33,13 +33,13 @@ servers:
           Id da API REST da stack. Obtenha com
           `aws --endpoint-url http://localhost:4566 apigateway get-rest-apis --query "items[?name=='local-provider-solution'].id" --output text`.
 tags:
-  - name: callbacks
+  - name: retornos-de-seguradoras
     description: Resultados de seguradoras entregues por callback
 paths:
   /v1/providers/{provider}/callbacks:
     post:
       tags:
-        - callbacks
+        - retornos-de-seguradoras
       operationId: receiveInsurerCallback
       summary: Recebe o resultado de uma seguradora assíncrona
       description: |

@@ -1,14 +1,14 @@
 asyncapi: 3.1.0
 info:
-  title: quote-solution eventos
+  title: Eventos da quote-solution
   version: 0.3.0
   description: |
     Eventos que a `quote-solution`, em Quarkus, publica no barramento da plataforma
-    `platform-{stage}-events` ([ADR 0013](../decisions/0013-barramento-da-plataforma.md)), com
-    `source` `mmda.quote`. O desenho está em `docs/quotation-platform.md` (§3).
+    `platform-{stage}-events` ([ADR 0013](../../docs/decisoes/0013-barramento-da-plataforma.md)), com
+    `source` `mmda.quote`. O desenho está em `docs/plataforma-de-cotacao.md` (§3).
 
     Todo evento nasce de um item de outbox gravado na mesma transação do fato
-    ([ADR 0015](../decisions/0015-modelo-dynamodb-e-outbox-da-cotacao.md)) e é publicado pela
+    ([ADR 0015](../../docs/decisoes/0015-modelo-dynamodb-e-outbox-da-cotacao.md)) e é publicado pela
     `outbox-relay` (stream da tabela) ou pelo `reconciler` (republicador). A entrega é pelo menos uma vez:
     consumidores descartam repetições pelo `eventId` ou pela identidade do pedido (`workRef`). O
     `StartQuoteRequested` também é um item de outbox, mas é interno: a relay inicia a execução da máquina
@@ -82,9 +82,9 @@ channels:
         $ref: '#/components/parameters/stage'
     messages:
       enrichmentResolved:
-        $ref: './provider-solution.asyncapi.yaml#/components/messages/EnrichmentResolved'
+        $ref: '../provider-solution/asyncapi.yaml#/components/messages/EnrichmentResolved'
       insurerResultRecorded:
-        $ref: './provider-solution.asyncapi.yaml#/components/messages/InsurerResultRecorded'
+        $ref: '../provider-solution/asyncapi.yaml#/components/messages/InsurerResultRecorded'
   issuesQueue:
     address: quote-solution-{stage}-issues
     title: Fila issues da quote (M5)
@@ -98,11 +98,11 @@ channels:
         $ref: '#/components/parameters/stage'
     messages:
       queryReconciled:
-        $ref: './provider-solution.asyncapi.yaml#/components/messages/QueryReconciled'
+        $ref: '../provider-solution/asyncapi.yaml#/components/messages/QueryReconciled'
       operationIssueRaised:
-        $ref: './provider-solution.asyncapi.yaml#/components/messages/OperationIssueRaised'
+        $ref: '../provider-solution/asyncapi.yaml#/components/messages/OperationIssueRaised'
       operationIssueUpdated:
-        $ref: './provider-solution.asyncapi.yaml#/components/messages/OperationIssueUpdated'
+        $ref: '../provider-solution/asyncapi.yaml#/components/messages/OperationIssueUpdated'
 operations:
   receiveProviderResults:
     action: receive

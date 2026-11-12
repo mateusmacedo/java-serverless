@@ -21,7 +21,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * {@code POST /v1/providers/{provider}/callbacks} (§8), no contrato {@code docs/api/provider-solution.openapi.yaml}.
+ * {@code POST /v1/providers/{provider}/callbacks} (§8), no contrato {@code contracts/provider-solution/openapi.yaml}.
  * A assinatura é conferida sobre os bytes recebidos antes de qualquer leitura ou escrita: sem ela, {@code 401}.
  * O resultado gravado responde {@code 200}; o callback guardado à espera do encontro no {@code CORR#}, {@code 202}.
  * Só o envelope é validado aqui: o conteúdo de {@code result} é classificado no processamento.

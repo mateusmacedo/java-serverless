@@ -5,7 +5,7 @@
 
 ## Contexto
 
-O [PRD de backend](../prds/PRD_Cotacao_Seguros_Backend_v2.md) (§10) descreve 18 entidades com
+O [PRD de backend](../prds/prd-cotacao-seguros-backend-v2.md) (§10) descreve 18 entidades com
 invariantes de unicidade, versões imutáveis, idempotência, outbox e inbox. As soluções do repositório
 usam DynamoDB, e as escritas idempotentes já usam `attribute_not_exists`
 ([ADR 0011](0011-integracao-entre-solucoes-por-eventbridge.md)).
@@ -48,7 +48,7 @@ shard e a faixa de sequência, sem o conteúdo, e a divisão reentrega os regist
 
 ## Consequências
 
-- Os padrões de acesso ficam documentados em `docs/quotation-platform.md`; consultas não previstas
+- Os padrões de acesso ficam documentados em `docs/plataforma-de-cotacao.md`; consultas não previstas
   exigem novo índice, e não um `Scan`.
 - O snapshot da cotação é pequeno e fica no próprio item da versão. Respostas brutas de fornecedores
   vão para o S3 da provider, referenciadas por chave.

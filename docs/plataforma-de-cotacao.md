@@ -1,12 +1,12 @@
 # Plataforma de cotação: desenho técnico
 
-Este documento detalha como o [PRD de backend](prds/PRD_Cotacao_Seguros_Backend_v2.md) é implementado
-no monorepo. As decisões estão nos ADRs [0013](decisions/0013-barramento-da-plataforma.md),
-[0014](decisions/0014-cotacao-em-duas-solucoes-e-task-token.md) e
-[0015](decisions/0015-modelo-dynamodb-e-outbox-da-cotacao.md). O contrato da API de produto é o
-`contracts/openapi.yaml`; os eventos estão em `docs/events/quote-solution.asyncapi.yaml` e
-`docs/events/provider-solution.asyncapi.yaml`; o callback das seguradoras assíncronas, em
-`docs/api/provider-solution.openapi.yaml`.
+Este documento detalha como o [PRD de backend](prds/prd-cotacao-seguros-backend-v2.md) é implementado
+no monorepo. As decisões estão nos ADRs [0013](decisoes/0013-barramento-da-plataforma.md),
+[0014](decisoes/0014-cotacao-em-duas-solucoes-e-task-token.md) e
+[0015](decisoes/0015-modelo-dynamodb-e-outbox-da-cotacao.md). O contrato da API de produto é o
+`contracts/openapi.yaml`; os eventos estão em `contracts/quote-solution/asyncapi.yaml` e
+`contracts/provider-solution/asyncapi.yaml`; o callback das seguradoras assíncronas, em
+`contracts/provider-solution/openapi.yaml`.
 
 ## 1. Módulos
 
@@ -54,7 +54,8 @@ cerca de 4,6 s de partida a frio, dentro da espera de 20 s da seguradora no stag
 | quote | Máquina de estado | `quote-solution-<stage>-quote-flow` |
 | quote | Segredo da cifra de tokens | `quote-solution/<stage>/token-key` |
 | quote | User pool, client e grupos Cognito | `quote-solution-<stage>-users` |
-| quote | Alarmes CloudWatch | `quote-solution-<stage>-<alarme>`: 8 alarmes (6 do M4 e 2 da `issues-dlq` no M5), sem `AlarmActions` (§9) |
+| quote | Alarmes CloudWatch | `quote-solution-<stage>-<alarme>`: 8 alarmes (6 do M4 e 2 da `issues-dlq` no M5), com `AlarmActions` no tópico de alarmes (§9) |
+| quote | Tópico SNS de alarmes + assinatura por e-mail | `quote-solution-<stage>-alarms` (`AlarmsTopic`); a assinatura `AlarmsEmailSubscription` só existe com o param `alarmEmail` preenchido (condição `HasAlarmEmail`, §12) |
 | provider | Tabela | `provider-solution-<stage>-queries` (stream `NEW_IMAGE`, índice `gsi2`) |
 | provider | Tabela dos simuladores | `provider-solution-<stage>-simulators` (TTL; acesso só da Lambda `simulators`) |
 | provider | Bucket de respostas brutas | `provider-solution-<stage>-payloads` |
@@ -63,7 +64,8 @@ cerca de 4,6 s de partida a frio, dentro da espera de 20 s da seguradora no stag
 | provider | Fila de falhas do stream | `provider-solution-<stage>-stream-failures` (destino `onFailure` da relay) |
 | provider | Segredo de assinatura de callbacks | `provider-solution/<stage>/callback-secret` |
 | provider | Segredo da chave de reuso | `provider-solution/<stage>/query-key-secret` |
-| provider | Alarmes CloudWatch | `provider-solution-<stage>-<alarme>`: 16 alarmes, sem `AlarmActions` (M4, §9) |
+| provider | Alarmes CloudWatch | `provider-solution-<stage>-<alarme>`: 16 alarmes (M4), com `AlarmActions` no tópico de alarmes (§9) |
+| provider | Tópico SNS de alarmes + assinatura por e-mail | `provider-solution-<stage>-alarms` (`AlarmsTopic`); a assinatura `AlarmsEmailSubscription` só existe com o param `alarmEmail` preenchido (condição `HasAlarmEmail`, §12) |
 
 Regras no barramento da plataforma, declaradas por quem consome:
 
@@ -86,8 +88,9 @@ da stack. Na provider, as funções de trabalho (no M1, `enrichmentWorker`, `ins
 restrita ao recurso que usa: tabela de consultas e índice `gsi2`, prefixo `raw/` do bucket de respostas,
 barramento, segredo da chave de reuso e as filas de reenvio adiado e de falhas do stream. No M4, esse
 papel ganhou `sqs:SendMessage` na `reconcile-requests` e na `sim-callbacks`, para o reprocessamento
-devolver as mensagens das DLQs à fila de origem, e `sqs:ReceiveMessage`, `sqs:DeleteMessage` e
-`sqs:GetQueueAttributes` nas 4 DLQs (§9). Três Lambdas têm papel próprio, cada uma com o que usa:
+devolver as mensagens das DLQs à fila de origem, e `sqs:ReceiveMessage` e `sqs:DeleteMessage` nas 4 DLQs
+(§9). O `sqs:GetQueueAttributes` nas DLQs saiu no M6: elas não têm ESM, e o código não lê atributo de fila.
+Três Lambdas têm papel próprio, cada uma com o que usa:
 
 | Papel | Função | Permissões |
 |---|---|---|
@@ -100,7 +103,19 @@ Só a `api` e o `simCallbackSender` leem o `callback-secret`; o papel das funç�
 o `CallbacksApiRole` e o `SimCallbackSenderRole` têm exatamente essas ações, além das de log.
 
 Na quote, o M4 ampliou o papel do `reconciler` e o da API (§7). O M5 acrescentou o `IssueProjectorRole`,
-do `issue-projector`, e ampliou de novo os papéis da API e do `reconciler` (§7).
+do `issue-projector`, e ampliou de novo os papéis da API e do `reconciler` (§7). No M6:
+
+- o `ReconcilerRole` passou a confiar também em `scheduler.amazonaws.com`, com a condição
+  `aws:SourceAccount` igual à conta, e ganhou `lambda:InvokeFunction` só na própria função
+  (`quote-solution-<stage>-reconciler` e os ARNs qualificados dela, `:*`): ele é também o papel de
+  execução do agendamento (`method: scheduler`), e, com papel próprio, o Serverless não acrescenta essas
+  duas permissões;
+- os 7 papéis da quote trocaram a `AWSLambdaBasicExecutionRole`, que liberava logs em `*`, por uma política
+  própria de logs (`quote-<função>-logs`, como `quote-api-logs`), com `logs:CreateLogStream` e
+  `logs:PutLogEvents` só no grupo de log da própria função.
+
+O papel do `reconciler` também perdeu o `sqs:GetQueueAttributes` nas DLQs (§7). O
+`FunctionTimingConfigurationTest` confere a confiança, a invocação e as políticas de logs.
 
 **Variáveis do M4.** Todas as funções das duas soluções recebem `STAGE` e `METRICS_NAMESPACE`
 (`mmda/provider-solution` e `mmda/quote-solution`), que as métricas EMF e os alarmes usam (§9). Na
@@ -113,11 +128,15 @@ API de situação da beta (§8 e §9). Na quote, as variáveis do `reconciler` f
 proporcionalmente à memória, e 1.769 MB equivalem a 1 vCPU. No Floci, o valor é só o teto de memória do
 container, porque o Floci não limita CPU; por isso os tempos medidos no Floci (§12) não dependem dele.
 
-O Floci não aplica IAM, então cinco pontos ficam para o M6: o `states:SendTaskSuccess` restrito ao ARN
-da máquina; o `dynamodb:ListStreams` da relay, que não aceita recurso específico e usa `*`; o papel
-que o `serverless-step-functions` gera para a máquina chamar a `dispatch` com `waitForTaskToken`; os
-papéis próprios da provider (tabela acima), inclusive os do M3, cuja restrição nenhum teste exercitou;
-e as permissões que o M4 e o M5 acrescentaram nas duas soluções.
+O Floci não aplica IAM, então estes pontos ficam para a verificação do M6 na AWS: o
+`states:SendTaskSuccess` restrito ao ARN da máquina; o `dynamodb:ListStreams` da relay da quote, que usa
+`*` (a `DynamoDBStreamReadPolicy` do SAM o restringe a `table/<tabela>/stream/*`, então a restrição é
+possível e fica para conferir); o papel que o `serverless-step-functions` gera para a máquina chamar a
+`dispatch` com `waitForTaskToken`; os papéis próprios da provider (tabela acima), inclusive os do M3, cuja
+restrição nenhum teste exercitou; as permissões que o M4 e o M5 acrescentaram nas duas soluções; e as do
+M6 na quote: a confiança do `ReconcilerRole` no `scheduler.amazonaws.com` com `aws:SourceAccount`, o
+`lambda:InvokeFunction` na própria função e as políticas de logs que substituíram a
+`AWSLambdaBasicExecutionRole` nos 7 papéis.
 
 ## 3. Eventos
 
@@ -263,7 +282,7 @@ pedido; o `quoteId` do `DEAD_LETTER` segue a regra do §9. O texto registra tamb
 `InsurerResultRecorded` com oferta são anteriores ao M5: hoje as coberturas vêm do perfil do
 `catalog.json`, com `COMPREHENSIVE` quando o pedido não traz perfil, e a franquia é de 5% na alpha e de
 4% na beta sobre a `COLLISION` (§10). Os exemplos não foram recapturados, porque o `quoted-by-callback`
-está amarrado ao exemplo de callback de `docs/api/provider-solution.openapi.yaml` pelo `EventContractTest`.
+está amarrado ao exemplo de callback de `contracts/provider-solution/openapi.yaml` pelo `EventContractTest`.
 
 O da quote passou a 0.3.0 e declara o que ela consome: os canais `resultsQueue`
 (`quote-solution-{stage}-results`) e `issuesQueue` (`quote-solution-{stage}-issues`) e as operações
@@ -606,8 +625,8 @@ que republica também o `StartQuoteRequested` com o mesmo código de publicaçã
 No M4, o papel do `reconciler` ganhou `PutItem` e `Query` na tabela (a finalização grava o outbox
 `QuoteCompleted` e lê os itens da versão), `states:SendTaskSuccess` e a leitura do segredo `token-key`,
 para retomar o waiter `RESUMING` com o token decifrado (T13), `states:GetExecutionHistory`, que confere a
-entrega antes do `TASK_EXPIRED` (§8), e, no SQS, `ReceiveMessage`,
-`DeleteMessage` e `GetQueueAttributes` na `results-dlq` e `SendMessage` na `results` (§9). O papel da
+entrega antes do `TASK_EXPIRED` (§8), e, no SQS, `ReceiveMessage` e
+`DeleteMessage` na `results-dlq` e `SendMessage` na `results` (§9). O papel da
 API ganhou `UpdateItem`, que a nova versão usa no `META` e na versão substituída (§8). As variáveis do
 `reconciler` (`RESULTS_QUEUE_URL`, `RESULTS_DLQ_URL`, `DLQ_MAX_ATTEMPTS`,
 `STUCK_VERSION_MARGIN_SECONDS` e `RESUMING_RETRY_AFTER_SECONDS`) ficam no `environment` do `provider`
@@ -624,10 +643,14 @@ No M5:
   com `batchSize: 1` e `ReportBatchItemFailures`;
 - o papel da API ganhou `ConditionCheckItem` na tabela, que a seleção usa para conferir a oferta na
   transação (§8), e `Query` no índice `gsi1`, das listagens de cotações e de ocorrências (§11);
-- o papel do `reconciler` ganhou `ReceiveMessage`, `DeleteMessage` e `GetQueueAttributes` na
-  `issues-dlq` e `SendMessage` na `issues`, para reprocessar a DLQ (§9); a revisão das ocorrências usa a
-  leitura do `gsi2` e o `UpdateItem` que ele já tinha. As variáveis `ISSUES_QUEUE_URL` e `ISSUES_DLQ_URL`
-  ficam, como as outras do `reconciler`, no `environment` do `provider`.
+- o papel do `reconciler` ganhou `ReceiveMessage` e `DeleteMessage` na `issues-dlq` e `SendMessage` na
+  `issues`, para reprocessar a DLQ (§9); a revisão das ocorrências usa a leitura do `gsi2` e o `UpdateItem`
+  que ele já tinha. As variáveis `ISSUES_QUEUE_URL` e `ISSUES_DLQ_URL` ficam, como as outras do
+  `reconciler`, no `environment` do `provider`.
+
+No M6, o papel do `reconciler` perdeu o `GetQueueAttributes` na `results-dlq` e na `issues-dlq`, que não
+têm ESM e cujos atributos o código não lê. As outras mudanças de IAM do M6 (confiança no Scheduler,
+invocação da própria função e políticas de logs) estão no §2.
 
 O `outbox-relay` e o `resume` não usam os modelos do `aws-lambda-java-events`: leem o JSON cru do
 evento de stream ou de SQS e convertem o `NewImage` direto para o `AttributeValue` do SDK v2. O Jackson
@@ -1069,7 +1092,7 @@ cancelada pela condição da `QUERY`, e o worker faz mesmo assim a sua metade do
 chegaram só com o `providerRequestId` passam a `PROCESSED`, sem outro resultado.
 
 **Callbacks.** O contrato do `POST /v1/providers/{provider}/callbacks` está em
-`docs/api/provider-solution.openapi.yaml`. A `api` confere a assinatura `X-Signature` (`sha256=` seguido
+`contracts/provider-solution/openapi.yaml`. A `api` confere a assinatura `X-Signature` (`sha256=` seguido
 do hexadecimal minúsculo do HMAC-SHA256 do corpo, com o `callback-secret` como chave) sobre os bytes
 recebidos, antes de qualquer leitura ou escrita. A comparação é em tempo constante
 (`MessageDigest.isEqual`, em `CallbackSignature`). Assinatura ausente, fora do formato ou que não confere
@@ -1476,8 +1499,13 @@ O `expired-tasks` só vê as ocorrências `TASK_EXPIRED` da regra do §8. Um wai
 resultado é o timeout normal da etapa e não conta; com a contagem de todo `EXPIRED`, o alarme, de
 limiar 1, dispararia a cada timeout de seguradora (T08, T14, T16).
 
-Nenhum alarme tem `AlarmActions`, inclusive os da `issues-dlq`: o disparo e as ações ficam para o M6. No Floci, os alarmes são
-criados, inclusive os de metric math, e aparecem no `DescribeAlarms`, mas não disparam (§13).
+Desde o M6, todo alarme das duas soluções, inclusive os da `issues-dlq`, tem `AlarmActions` com o tópico
+SNS `<solução>-<stage>-alarms` (`AlarmsTopic`) da própria stack. A assinatura por e-mail
+(`AlarmsEmailSubscription`) só existe quando o param `alarmEmail` não é vazio (condição `HasAlarmEmail`,
+§12) e precisa ser confirmada pelo link que a AWS envia. O `ServerlessConfigurationTest` e o
+`FunctionTimingConfigurationTest` conferem o tópico, as ações dos 16 e dos 8 alarmes e a assinatura
+condicional. No Floci, os alarmes são criados, inclusive os de metric math, e aparecem no `DescribeAlarms`,
+mas não disparam (§13); o disparo, a notificação e a assinatura ficam para a verificação na AWS.
 
 ## 10. Simuladores e cenários
 
@@ -1559,7 +1587,7 @@ a `queryKey` como a provider: HMAC-SHA256 de
 `organizationId|provider|operation|contractVersion|vehicleRef|principalDriverRef` (§5). Antes de T01,
 T04, T05 e T06, ele apaga o `REUSE#` e a partição `INFLIGHT#` (`META` e `FOLLOWER#`) do par; as
 consultas e evidências anteriores ficam. O T05 vence a validade regravando `REUSE#.reusableUntil` no
-passado. Cada caso de reuso tem um par veículo/condutor próprio (§14).
+passado. Cada caso de reuso tem um par veículo/condutor próprio ([testes](testes.md#ponta-a-ponta)).
 
 O harness lê também o `provider-solution/<stage>/callback-secret` do Floci local. No T11, depois da
 conclusão, ele reenvia o callback guardado na inbox, assinado como o fornecedor, e a `api` responde 200
@@ -1660,7 +1688,7 @@ O contrato acrescenta, de forma compatível, `quoteId` e `version` em `QuoteVers
 cota de produto; na AWS, ele pode vir do throttling do API Gateway, conferido no M6. Os 14 arquivos novos
 de `contracts/fixtures` (progresso, oferta parcial, recusa, indisponibilidade, pendência, `PARTIAL` com
 pendência, expiração, conflitos, erros, seleção, listagem, páginas do catálogo, operações e `/v1/me`)
-são trocas conferidas contra o contrato pelo `ContractFixturesTest` ([testes](testing.md)).
+são trocas conferidas contra o contrato pelo `ContractFixturesTest` ([testes](testes.md)).
 
 **Identificadores de caminho e limites de chave (M5).** Um `quoteId`, `queryId` ou `operationId` de
 caminho com mais de 128 caracteres (`Items.fitsKey`, acima de qualquer id da plataforma) responde 404 sem
@@ -1704,52 +1732,62 @@ atual responde 400, para o cliente recomeçar.
 
 ## 12. Parâmetros por stage
 
-| Parâmetro | local | Uso |
-|---|---|---|
-| `quoteDeadlineSeconds` | 300 | Prazo total da versão (`deadlineAt`) |
-| `workflowMarginSeconds` | 60 | Margem somada ao `TimeoutSeconds` da máquina (rede de segurança) |
-| `workflowTimeoutSeconds` | 360 | `TimeoutSeconds` da máquina: `quoteDeadlineSeconds` + `workflowMarginSeconds`, declarado explícito porque o Serverless não soma variáveis; o teste de configuração confere a soma |
-| `jwtIssuerBase` | `http://floci:4566` | Base do `JWT_ISSUER`, unida ao id do user pool com `Fn::Join` (§11) |
-| `enrichmentTimeoutSeconds` | 20 | Espera do enriquecimento (ver a medição abaixo) |
-| `insurerTimeoutSeconds` | 20 | Espera por seguradora (90 na AWS; ver a medição abaixo) |
-| `mapConcurrency` | 2 | Itens simultâneos do Map |
-| `maxInsurers` | 2 | Seguradoras por versão, no máximo |
-| `stepsMarginSeconds` | 30 | Margem dos passos na invariante de orçamento |
-| `providerHttpTimeoutSeconds` | 5 | Timeout de conexão e leitura por chamada |
-| `workerRetries` | 2 | Retries do worker, além da tentativa inicial |
-| `retryBackoffMaxSeconds` | 3 | Soma máxima dos backoffs (exponencial com jitter) |
-| `workerTimeoutSeconds` | 25 | Timeout das funções `enrichmentWorker` e `insurerWorker`. Chega aos workers na variável de ambiente `WORKER_TIMEOUT_SECONDS`, que vira `ProviderProperties.workerTimeoutSeconds` (padrão 25), para a reentrega reconhecer uma entrega duplicada viva (§8). O `ServerlessConfigurationTest` confere que a variável e o timeout são iguais |
-| `enrichmentLeaseSeconds` | 30 | Lease da liderança; chega às funções da provider em `ENRICHMENT_LEASE_SECONDS` |
-| `inflightTombstoneSeconds` | 3600 | TTL da lápide do `INFLIGHT` e dos `FOLLOWER#`; chega às funções da provider em `INFLIGHT_TOMBSTONE_SECONDS` (invariante no §9) |
-| `reusePolicyVersion` | `"reuse-v1"` | Versão da política de reuso, gravada na `EVIDENCE`, no `REUSE#` e no `EnrichmentResolved` (§5). É uma string YAML entre aspas, porque sem elas um valor como `2` ou `1.0` viraria número e mudaria o valor publicado; o `ServerlessConfigurationTest` exige `String` no formato. Chega às funções da provider em `REUSE_POLICY_VERSION`; o `ReuseProperties` valida o formato `^[A-Za-z0-9][A-Za-z0-9._-]*$` na subida |
-| `enrichmentValiditySeconds` | 900 | Validade do enriquecimento simulado, contada de min(`observedAt`, `receivedAt`) (§5) |
-| `offerValiditySeconds` | 1800 | Validade da oferta simulada |
-| `enrichmentSimQuotaPerMinute`, `alphaQuotaPerMinute`, `betaQuotaPerMinute` | 30 cada | Quota por provedor e credencial, numa janela de 1 min comum a todos os workflows (§9, T21); chega às funções da provider em `ENRICHMENT_SIM_QUOTA_PER_MINUTE`, `ALPHA_QUOTA_PER_MINUTE` e `BETA_QUOTA_PER_MINUTE` |
-| `betaCallbackDelaySeconds` | 3 | Atraso do callback simulado; menor que `insurerTimeoutSeconds` da quote no mesmo stage |
-| `betaLateCallbackDelaySeconds` | 30 (120 nos demais stages) | Atraso do callback do `vehicle-beta-late`, maior que `insurerTimeoutSeconds` da quote no mesmo stage (20 no local, 90 na AWS). O `ServerlessConfigurationTest` confere as duas relações; o caso `dev` fica ignorado enquanto a quote não declara a espera desse stage |
-| `simCallbackSenderTimeoutSeconds` | 15 | Timeout da função `simCallbackSender` |
-| `memorySize` | 1769 | Memória de todas as funções, igual em todos os stages; fica no `provider` de cada `serverless.yml`, fora do bloco `params` (§2) |
-| `simCallbacksVisibilityTimeoutSeconds` | 90 | `VisibilityTimeout` da `sim-callbacks`, 6 vezes o timeout do sender |
-| `simCallbacksMaxReceiveCount` | 5 | Recebimentos da `sim-callbacks` antes da DLQ |
-| `retryAfterSeconds` | 3 | Orientação de polling |
-| `outboxRepublishAfterSeconds` | 30 | Idade a partir da qual o `reconciler` republica o outbox |
-| `dlqMaxAttempts` | 3 | Tentativas de uma mensagem de DLQ, contando a entrega original: dois reenvios e descarte na terceira chegada à DLQ (ADR 0007, §9). Nas duas soluções; a tentativa vai no atributo `dlqAttempt`. Na `results-dlq` da quote, o prazo da versão não conta: a mensagem é reenviada enquanto a tentativa for menor que o limite, e a que não traz `quoteId` e `version` é descartada na hora |
-| `unmatchedCallbackAfterSeconds` | 60 | Prazo, pelo `receivedAt`, para um callback sem correlação virar `UNMATCHED` (M4; provider) |
-| `inboxStuckAfterSeconds` | 30 | Idade do callback `RECEIVED` a partir da qual o `reconciler` refaz o encontro; maior que o timeout da `api` (M4; provider) |
-| `staleOutboxAfterSeconds` | 120 | Idade do outbox, pelo `createdAt`, que abre `STALE_OUTBOX`; é também o limiar do alarme `outbox-pending-age` da provider (M4) |
-| `statusReadBudgetSeconds` | 30 | Teto, por ciclo do `reconciler`, das leituras da API de situação; chega ao `reconciler` em `STATUS_READ_BUDGET_SECONDS`. O `reconcileWorker` não tem teto (M4; provider, §9) |
-| `stuckVersionMarginSeconds` | 120 | Margem além do `deadlineAt` para `STUCK_VERSION` (M4; quote) |
-| `resumingRetryAfterSeconds` | 30 | Idade do waiter `RESUMING` a partir da qual o `reconciler` o retoma; maior que o timeout do `resume` (M4; quote) |
-| `issueProjectorTimeoutSeconds` | 15 | Timeout do `issue-projector`, igual ao do `resume` (M5; quote) |
-| `issuesVisibilityTimeoutSeconds` | 90 | `VisibilityTimeout` da fila `issues`, 6 vezes o timeout do `issue-projector` (M5; quote) |
-| `issuesMaxReceiveCount` | 5 | Recebimentos da fila `issues` antes da `issues-dlq` (M5; quote) |
-| `dlqAlarmVisibleMessages` (provider), `dlqAlarmMessages` (quote) | 1 | Mensagens visíveis que disparam o alarme de volume de cada DLQ e da `stream-failures` (M4; na quote, também a `issues-dlq` desde o M5) |
-| `dlqAlarmAgeSeconds` | 300 | Idade da mensagem mais antiga que dispara o alarme de idade de cada DLQ e da `stream-failures` (M4; na quote, também a `issues-dlq` desde o M5) |
-| `outboxAlarmAgeSeconds` | 120 | Limiar do alarme `outbox-pending-age` da quote (M4) |
-| `unmatchedCallbacksAlarmThreshold`, `unknownQueriesAlarmThreshold` | 1 cada | Limiares dos alarmes `unmatched-callbacks` e `unknown-queries` (M4; provider) |
-| `expiredTasksAlarmThreshold` | 1 | Limiar do alarme `expired-tasks` (M4; quote) |
-| `providerFailureAlarmPercent`, `providerFailureAlarmPeriodSeconds` | 50 e 300 | Percentual de falhas sobre as chamadas, por provedor, e a janela dele (M4; provider) |
-| `alarmPeriodSeconds` | 60 | Período dos alarmes da quote (M4); os da provider usam 60 s fixos, menos os de falhas por provedor |
+Os valores ficam no bloco `params` de cada `serverless.yml`: o `default` traz os da AWS, e o `local`, só o
+que difere no Floci. Um stage sem bloco próprio, como o `dev`, herda o `default`. A tabela é a referência
+de uso e de valores por stage; o `FunctionTimingConfigurationTest` e o `ServerlessConfigurationTest`
+conferem, nos stages `local` e `dev`, que todo `${param:...}` referenciado tem valor e que as invariantes
+do §9 valem.
+
+| Parâmetro | `default` (AWS) | `local` | Uso |
+|---|---|---|---|
+| `awsEndpointUrl` | `""` | `http://floci:4566` | Endpoint do SDK nas duas soluções. Vazio, a condição `HasAwsEndpointUrl` é falsa e tira das funções o `AWS_ENDPOINT_URL` (e, na provider, o `AWS_ENDPOINT_URL_S3`), e o SDK resolve o endpoint pela região; o SDK trataria um valor vazio como endpoint, então a variável não pode existir |
+| `s3PathStyleAccess` | `"false"` | `"true"` | Endereçamento do S3 na provider (`S3_PATH_STYLE_ACCESS`): estilo virtual-hosted na AWS e por caminho no Floci |
+| `providersBaseUrl` | `https://${ApiGatewayRestApi}.execute-api.${aws:region}.amazonaws.com/${sls:stage}` | `http://floci:4566/restapis/${ApiGatewayRestApi}/local/_user_request_` | URL base dos fornecedores simulados, na própria API da provider (`PROVIDERS_BASE_URL` e `CALLBACKS_BASE_URL`, §7) |
+| `alarmEmail` | `""` | `""` | E-mail da assinatura do tópico de alarmes nas duas soluções. Vazio, a condição `HasAlarmEmail` é falsa e a `AlarmsEmailSubscription` não é criada; no `dev`, chega por `--param="alarmEmail=<e-mail>"` ([implantação na AWS](implantacao-aws-dev.md)) |
+| `quoteDeadlineSeconds` | 300 | 300 | Prazo total da versão (`deadlineAt`) |
+| `workflowMarginSeconds` | 60 | 60 | Margem somada ao `TimeoutSeconds` da máquina (rede de segurança) |
+| `workflowTimeoutSeconds` | 360 | 360 | `TimeoutSeconds` da máquina: `quoteDeadlineSeconds` + `workflowMarginSeconds`, declarado explícito porque o Serverless não soma variáveis; o teste de configuração confere a soma |
+| `jwtIssuerBase` | `https://cognito-idp.${aws:region}.amazonaws.com` | `http://floci:4566` | Base do `JWT_ISSUER`, unida ao id do user pool com `Fn::Join` (§11). Na AWS, o `JWT_ISSUER` da `api` vira o issuer do user pool |
+| `enrichmentTimeoutSeconds` | 20 | 20 | Espera do enriquecimento (ver a medição abaixo) |
+| `insurerTimeoutSeconds` | 90 | 20 | Espera por seguradora (ver a medição abaixo). Na AWS, a invariante do §9 dá 20 + 1 × 90 + 30 = 140 s ≤ 300 s |
+| `mapConcurrency` | 2 | 2 | Itens simultâneos do Map |
+| `maxInsurers` | 2 | 2 | Seguradoras por versão, no máximo |
+| `stepsMarginSeconds` | 30 | 30 | Margem dos passos na invariante de orçamento |
+| `providerHttpTimeoutSeconds` | 5 | 5 | Timeout de conexão e leitura por chamada |
+| `workerRetries` | 2 | 2 | Retries do worker, além da tentativa inicial |
+| `retryBackoffMaxSeconds` | 3 | 3 | Soma máxima dos backoffs (exponencial com jitter) |
+| `workerTimeoutSeconds` | 25 | 25 | Timeout das funções `enrichmentWorker` e `insurerWorker`. Chega aos workers na variável de ambiente `WORKER_TIMEOUT_SECONDS`, que vira `ProviderProperties.workerTimeoutSeconds` (padrão 25), para a reentrega reconhecer uma entrega duplicada viva (§8). O `ServerlessConfigurationTest` confere que a variável e o timeout são iguais |
+| `enrichmentLeaseSeconds` | 30 | 30 | Lease da liderança; chega às funções da provider em `ENRICHMENT_LEASE_SECONDS` |
+| `inflightTombstoneSeconds` | 3600 | 3600 | TTL da lápide do `INFLIGHT` e dos `FOLLOWER#`; chega às funções da provider em `INFLIGHT_TOMBSTONE_SECONDS` (invariante no §9) |
+| `reusePolicyVersion` | `"reuse-v1"` | `"reuse-v1"` | Versão da política de reuso, gravada na `EVIDENCE`, no `REUSE#` e no `EnrichmentResolved` (§5). É uma string YAML entre aspas, porque sem elas um valor como `2` ou `1.0` viraria número e mudaria o valor publicado; o `ServerlessConfigurationTest` exige `String` no formato. Chega às funções da provider em `REUSE_POLICY_VERSION`; o `ReuseProperties` valida o formato `^[A-Za-z0-9][A-Za-z0-9._-]*$` na subida |
+| `enrichmentValiditySeconds` | 900 | 900 | Validade do enriquecimento simulado, contada de min(`observedAt`, `receivedAt`) (§5) |
+| `offerValiditySeconds` | 1800 | 1800 | Validade da oferta simulada |
+| `enrichmentSimQuotaPerMinute`, `alphaQuotaPerMinute`, `betaQuotaPerMinute` | 30 cada | 30 cada | Quota por provedor e credencial, numa janela de 1 min comum a todos os workflows (§9, T21); chega às funções da provider em `ENRICHMENT_SIM_QUOTA_PER_MINUTE`, `ALPHA_QUOTA_PER_MINUTE` e `BETA_QUOTA_PER_MINUTE` |
+| `betaCallbackDelaySeconds` | 3 | 3 | Atraso do callback simulado; menor que `insurerTimeoutSeconds` da quote no mesmo stage |
+| `betaLateCallbackDelaySeconds` | 120 | 30 | Atraso do callback do `vehicle-beta-late`, maior que `insurerTimeoutSeconds` da quote no mesmo stage (20 no local, 90 na AWS): mantém 3 < 90 < 120 na AWS. O `ServerlessConfigurationTest` confere as duas relações nos stages `local` e `dev` |
+| `simCallbackSenderTimeoutSeconds` | 15 | 15 | Timeout da função `simCallbackSender` |
+| `memorySize` | 1769 | 1769 | Memória de todas as funções, igual em todos os stages; fica no `provider` de cada `serverless.yml`, fora do bloco `params` (§2) |
+| `simCallbacksVisibilityTimeoutSeconds` | 90 | 90 | `VisibilityTimeout` da `sim-callbacks`, 6 vezes o timeout do sender |
+| `simCallbacksMaxReceiveCount` | 5 | 5 | Recebimentos da `sim-callbacks` antes da DLQ |
+| `retryAfterSeconds` | 3 | 3 | Orientação de polling |
+| `outboxRepublishAfterSeconds` | 30 | 30 | Idade a partir da qual o `reconciler` republica o outbox |
+| `dlqMaxAttempts` | 3 | 3 | Tentativas de uma mensagem de DLQ, contando a entrega original: dois reenvios e descarte na terceira chegada à DLQ (ADR 0007, §9). Nas duas soluções; a tentativa vai no atributo `dlqAttempt`. Na `results-dlq` da quote, o prazo da versão não conta: a mensagem é reenviada enquanto a tentativa for menor que o limite, e a que não traz `quoteId` e `version` é descartada na hora |
+| `unmatchedCallbackAfterSeconds` | 60 | 60 | Prazo, pelo `receivedAt`, para um callback sem correlação virar `UNMATCHED` (M4; provider) |
+| `inboxStuckAfterSeconds` | 30 | 30 | Idade do callback `RECEIVED` a partir da qual o `reconciler` refaz o encontro; maior que o timeout da `api` (M4; provider) |
+| `staleOutboxAfterSeconds` | 120 | 120 | Idade do outbox, pelo `createdAt`, que abre `STALE_OUTBOX`; é também o limiar do alarme `outbox-pending-age` da provider (M4) |
+| `statusReadBudgetSeconds` | 30 | 30 | Teto, por ciclo do `reconciler`, das leituras da API de situação; chega ao `reconciler` em `STATUS_READ_BUDGET_SECONDS`. O `reconcileWorker` não tem teto (M4; provider, §9) |
+| `stuckVersionMarginSeconds` | 120 | 120 | Margem além do `deadlineAt` para `STUCK_VERSION` (M4; quote) |
+| `resumingRetryAfterSeconds` | 30 | 30 | Idade do waiter `RESUMING` a partir da qual o `reconciler` o retoma; maior que o timeout do `resume` (M4; quote) |
+| `issueProjectorTimeoutSeconds` | 15 | 15 | Timeout do `issue-projector`, igual ao do `resume` (M5; quote) |
+| `issuesVisibilityTimeoutSeconds` | 90 | 90 | `VisibilityTimeout` da fila `issues`, 6 vezes o timeout do `issue-projector` (M5; quote) |
+| `issuesMaxReceiveCount` | 5 | 5 | Recebimentos da fila `issues` antes da `issues-dlq` (M5; quote) |
+| `dlqAlarmVisibleMessages` (provider), `dlqAlarmMessages` (quote) | 1 | 1 | Mensagens visíveis que disparam o alarme de volume de cada DLQ e da `stream-failures` (M4; na quote, também a `issues-dlq` desde o M5) |
+| `dlqAlarmAgeSeconds` | 300 | 300 | Idade da mensagem mais antiga que dispara o alarme de idade de cada DLQ e da `stream-failures` (M4; na quote, também a `issues-dlq` desde o M5) |
+| `outboxAlarmAgeSeconds` | 120 | 120 | Limiar do alarme `outbox-pending-age` da quote (M4) |
+| `unmatchedCallbacksAlarmThreshold`, `unknownQueriesAlarmThreshold` | 1 cada | 1 cada | Limiares dos alarmes `unmatched-callbacks` e `unknown-queries` (M4; provider) |
+| `expiredTasksAlarmThreshold` | 1 | 1 | Limiar do alarme `expired-tasks` (M4; quote) |
+| `providerFailureAlarmPercent`, `providerFailureAlarmPeriodSeconds` | 50 e 300 | 50 e 300 | Percentual de falhas sobre as chamadas, por provedor, e a janela dele (M4; provider) |
+| `alarmPeriodSeconds` | 60 | 60 | Período dos alarmes da quote (M4); os da provider usam 60 s fixos, menos os de falhas por provedor |
 
 | Fila | Consumidor | Timeout da função | `VisibilityTimeout` | `maxReceiveCount` |
 |---|---|---|---|---|
@@ -1816,7 +1854,7 @@ depois do prazo, e 1 das 20 versões terminou `TECHNICAL_FAILURE` com `ENRICHMEN
 Com um só container do worker e cerca de 1 mensagem por segundo (§13), o último de N pedidos espera
 cerca de N segundos na fila, e essa espera conta dentro dos 20 s de `enrichmentTimeoutSeconds`. Por isso
 o T06 do `quote-e2e` usa N = 12 por padrão, ainda configurável por `-De2e.concurrentQuotes`, e espera
-50 s + N segundos (§14). A propriedade de 100 pedidos concorrentes fica coberta na integração da
+50 s + N segundos ([testes](testes.md#ponta-a-ponta)). A propriedade de 100 pedidos concorrentes fica coberta na integração da
 provider (`EnrichmentReuseIT`).
 
 T06 com N = 12, em três rodadas: os 12 `POST` levaram de 9,9 a 11,0 s. A espera do enriquecimento teve
@@ -1854,18 +1892,8 @@ No T12, com atraso 0, na rodada de fechamento do M3: 8,8 s do `POST` a `TERMINAL
 de partida a frio por Lambda, mais que a espera de 20 s: é o motivo de o sender não usar Spring (§1).
 
 **Medição no Floci (M4).** Medida na rodada de integração do M4, com a máquina ociosa e o `quote-e2e`
-completo (26 testes em 747,6 s).
-
-| Caso | Tempo |
-|---|---|
-| T09 | 9,3 s |
-| T10 | 9,4 s |
-| T13 | 55,0 s |
-| T14 | 87,6 s |
-| T16 | 42,4 s |
-| T17 | 16,6 s |
-| T20 | 136,9 s (`dispatch` no ciclo do `reconciler` + 50,4 s, `StopExecution` no ciclo + 54,3 s) |
-| T31 | 82,6 s |
+completo (26 testes em 747,6 s). Os tempos de cada caso dessa rodada estão em
+[testes](testes.md#ponta-a-ponta).
 
 Os casos que dependem do `reconciler` duram ciclos dele, e não o tempo da máquina de estado. O
 agendamento `rate(1 minute)` do Floci disparou a cada 60,0 ou 70,0 s em 25 intervalos medidos, o que
@@ -1886,7 +1914,7 @@ T06 sob carga, numa rodada anterior da integração do M4, com a máquina carreg
 `POST` subiu 11 containers da API ao mesmo tempo, com 18 s de partida a frio. A relay da quote publicou
 `QuoteAccepted` e `StartQuoteRequested` até 22,4 s depois do `createdAt`, e a `dispatch` rodou em série,
 a cerca de 1,6 s por chamada. Os 11 pedidos `HIT` chegaram depois da espera de 20 s. É o limite que o
-próprio T06 descreve (§14), não um defeito do M4: a folga do T06 depende de a máquina estar livre. Mesmo
+próprio T06 descreve ([testes](testes.md#limites-conhecidos)), não um defeito do M4: a folga do T06 depende de a máquina estar livre. Mesmo
 assim, os 22,4 s ficaram abaixo dos 30 s de `outboxRepublishAfterSeconds`, e nada foi republicado em
 dobro.
 
@@ -1916,7 +1944,7 @@ T06 com N = 12 na rodada da verificação com a máquina ociosa: um `MISS` e 11 
 15,2 s. Do `POST` a `TERMINAL`, mínimo de 14,6 s, p50 de 31,9 s e máximo de 37,3 s. A espera do
 enriquecimento teve mínimo de 5,5 s, p50 de 17,4 s e máximo de 18,9 s, com só 1,1 s de folga nos 20 s:
 bem menos que os 7,7 s do M4. Na rodada sob carga, o T06 terminou pelo timeout da espera de 62 s
-([testes](testing.md)).
+([testes](testes.md)).
 
 ## 13. Limites do Floci 2.4.0
 
@@ -1929,7 +1957,7 @@ caso o Floci não atenda. A coluna M6 marca o que precisa ser repetido na AWS.
 | `TransactWriteItems` com condição | Funciona; cancela tudo e informa o motivo por item | |
 | `TransactWriteItems` com 101 ações | `ValidationException` | |
 | `TransactionConflict` | Não emulado: 20 transações concorrentes no mesmo item terminam todas com sucesso. Por isso o T06 com 100 pedidos concorrentes no `provider-functions` não exercita o conflito. Com condição, o Floci serializa as transações: numa sonda do M5, com 5 rodadas de 20 transações condicionais concorrentes, cada rodada teve uma vencedora, e nenhuma recebeu `TransactionConflict`. A corrida entre seleção e nova versão (T29; 4 rodadas de 6 pedidos no `QuoteApiFlociIT`) só exercita a condição do `META` | Repetir, com 100 pedidos concorrentes na liderança e com a corrida do T29 |
-| Limites de chave e `ExclusiveStartKey` do DynamoDB | Não reproduzidos pelo Floci nem pelo mock dos testes: chave de partição acima de 2048 bytes, de ordenação acima de 1024 e `ExclusiveStartKey` fora da condição da chave não são recusados. Na AWS, as três respondem `ValidationException`. A API não chega a elas (§11), e os testes de contrato da API usam uma tabela simulada que reproduz as recusas (`DynamoDbLimits`, [testes](testing.md)) | |
+| Limites de chave e `ExclusiveStartKey` do DynamoDB | Não reproduzidos pelo Floci nem pelo mock dos testes: chave de partição acima de 2048 bytes, de ordenação acima de 1024 e `ExclusiveStartKey` fora da condição da chave não são recusados. Na AWS, as três respondem `ValidationException`. A API não chega a elas (§11), e os testes de contrato da API usam uma tabela simulada que reproduz as recusas (`DynamoDbLimits`, [testes](testes.md)) | |
 | `ReturnValuesOnConditionCheckFailure = ALL_OLD` em `TransactWriteItems` | Não verificado. O desenho não depende dele: o conflito de idempotência relê com `GetItem` e `ConsistentRead` (§8) | |
 | `StartExecution` repetido com mesmo nome e entrada | Idempotente | |
 | `lambda:invoke.waitForTaskToken` e `sqs:sendMessage.waitForTaskToken` | Funcionam | Repetir |
@@ -1955,7 +1983,7 @@ caso o Floci não atenda. A coluna M6 marca o que precisa ser repetido na AWS.
 | `/v1/{proxy+}` e `/sim/{proxy+}` em `AWS_PROXY` | Funcionam: a API da quote atende `/v1/{proxy+}` e os simuladores da provider, `/sim/{proxy+}`. A rota `POST /v1/providers/{provider}/callbacks` da `api` da provider também | |
 | Assinatura do corpo pelo `AWS_PROXY` | Os bytes de um corpo ASCII atravessam o API Gateway intactos, e a assinatura `X-Signature` confere na `api` (`quote-e2e`; o `StreamLambdaHandlerFlociIT` confere o mesmo com o evento de proxy entregue direto ao handler). Corpo fora do ASCII não verificado: o `simCallbackSender` escapa em JSON tudo o que não é ASCII (§10) | Repetir (corpo fora do ASCII) |
 | Lambda chamando o API Gateway da própria stack (`PROVIDERS_BASE_URL`) | Funciona: os workers da provider chamam os simuladores por `http://floci:4566/restapis/<id>/local/_user_request_`, e o `simCallbackSender` chama a `api` de callbacks pelo mesmo caminho | |
-| Ordem do callback antecipado (`vehicle-beta-early`) | No `quote-e2e`, o callback nunca chega antes do `202`: o `202` é gravado de 0,13 a 0,21 s depois da chamada, e o callback chega de 0,94 a 1,2 s depois, pelo salto do ESM da `sim-callbacks`. A ordem "callback retido na inbox" fica coberta pela integração da provider: no `CallbackApiFlociIT` e no `InsurerCallbackIT`, que passa os callbacks pelo código real do `provider-api` e cobre o encontro no `CORR#` nas duas ordens, inclusive o callback com `clientReference` que conclui a consulta antes de o `202` ser gravado (§14) | |
+| Ordem do callback antecipado (`vehicle-beta-early`) | No `quote-e2e`, o callback nunca chega antes do `202`: o `202` é gravado de 0,13 a 0,21 s depois da chamada, e o callback chega de 0,94 a 1,2 s depois, pelo salto do ESM da `sim-callbacks`. A ordem "callback retido na inbox" fica coberta pela integração da provider: no `CallbackApiFlociIT` e no `InsurerCallbackIT`, que passa os callbacks pelo código real do `provider-api` e cobre o encontro no `CORR#` nas duas ordens, inclusive o callback com `clientReference` que conclui a consulta antes de o `202` ser gravado ([testes](testes.md#integração-com-floci)) | |
 | CloudWatch Logs das Lambdas | A saída de cada Lambda fica no grupo `/aws/lambda/<função>`, e o `FilterLogEvents` a lê: o T11 do `quote-e2e` confere ali o descarte da retomada (§8) | |
 | Partida a frio de Lambda Java com contexto Spring | Cerca de 7 s por Lambda. Com o `simCallbackSender` em Spring, o primeiro callback depois do deploy levou 28,8 s (§12); sem Spring, o sender economiza cerca de 4,6 s (§1) | |
 | IAM dos papéis próprios da provider (`SimulatorsRole`, `CallbacksApiRole`, `SimCallbackSenderRole`) | Não aplicado: o Floci não confere IAM (§2) | Repetir |
@@ -1964,10 +1992,10 @@ caso o Floci não atenda. A coluna M6 marca o que precisa ser repetido na AWS.
 | `iss` do Cognito | `http://floci:4566/<poolId>`, com o host do `FLOCI_HOSTNAME` mesmo em chamada por `localhost`; igual ao `issuer` do `openid-configuration`. O `jwks_uri` usa o mesmo host. Tokens `RS256` com `kid = <poolId>`; a assinatura confere com o JWKS | Repetir (issuer da AWS) |
 | Claims dos tokens do Cognito | Access token: `token_use = access`, `client_id`, `cognito:groups`, sem `aud`. ID token: `token_use = id`, `aud = client_id`, `cognito:groups`. `InitiateAuth` com `USER_PASSWORD_AUTH` devolve tokens sem challenge para usuário `CONFIRMED` | |
 | Containers de Lambda ociosos | Removidos depois de 300 s sem invocação (verificação a cada 30 s); a invocação seguinte paga o cold start. Chave `floci.services.lambda.container-idle-timeout-seconds`; a variável de ambiente equivalente não foi testada | |
-| CloudFormation de Cognito, KMS, Scheduler, alarmes e EventSourceMapping | Tipos reconhecidos. Os 22 alarmes do M4 e os 2 da `issues-dlq` do M5 são criados, inclusive os de metric math, e o `DescribeAlarms` lista métrica e limiar de cada um; o alarme não dispara | Repetir (disparo e `AlarmActions` dos alarmes) |
+| CloudFormation de Cognito, KMS, Scheduler, alarmes e EventSourceMapping | Tipos reconhecidos. Os 22 alarmes do M4 e os 2 da `issues-dlq` do M5 são criados, inclusive os de metric math, e o `DescribeAlarms` lista métrica e limiar de cada um; o alarme não dispara. As `AlarmActions` com o tópico de alarmes estão declaradas desde o M6 (§9) | Repetir (disparo, notificação no tópico e assinatura por e-mail) |
 | Métricas EMF | A linha EMF dos `reconciler` das duas soluções chega ao CloudWatch Logs como JSON puro. A extração da métrica não foi verificada | Repetir (extração) |
 | `DescribeExecution` | Devolve `FAILED`, `TIMED_OUT` e `ABORTED` das execuções encerradas e `ExecutionDoesNotExist` para execução ausente, que o `reconciler` da quote trata como inexistente (§9) | |
-| `StopExecution` | Marca a execução `ABORTED`, mas o interpretador do Floci continua executando os estados sem registrá-los no histórico. Na primeira tentativa do T20, isso consolidou a versão com `STEP_TIMEOUT` antes de o `reconciler` rodar; por isso o T20 alinha a parada ao ciclo dele (§14). Sob carga, numa rodada do M5, a continuação gravou `STEP_TIMEOUT` na beta, mas o `reconciler` finalizou a versão antes do `ConsolidateQuote`, o que é legítimo e o T20 ainda não reconhece (§14) | Repetir |
+| `StopExecution` | Marca a execução `ABORTED`, mas o interpretador do Floci continua executando os estados sem registrá-los no histórico. Na primeira tentativa do T20, isso consolidou a versão com `STEP_TIMEOUT` antes de o `reconciler` rodar; por isso o T20 alinha a parada ao ciclo dele ([testes](testes.md#ponta-a-ponta)). Sob carga, numa rodada do M5, a continuação gravou `STEP_TIMEOUT` na beta, mas o `reconciler` finalizou a versão antes do `ConsolidateQuote`, o que é legítimo e o T20 ainda não reconhece ([testes](testes.md#limites-conhecidos)) | Repetir |
 | Vazão da relay e da `dispatch` sob carga | Cai com a máquina carregada: no T06 de uma rodada do M4, com load de 7,7, a relay da quote publicou até 22,4 s depois do `createdAt`, e a `dispatch` rodou em série, a cerca de 1,6 s por chamada (§12) | |
 
 ## 14. Testes por marco
@@ -1979,7 +2007,7 @@ caso o Floci não atenda. A coluna M6 marca o que precisa ser repetido na AWS.
 | M3 | T01, T07, T08, T11, T12, T21, T26 | Unitários em `provider-domain`, `provider-simulators`, `quote-domain` e `quote-functions`; contrato em `provider-api` e `quote-api`; integração com Floci em `provider-api` (T11, T12), `provider-functions` (T11, T12, T21), `provider-simulators`, `quote-api` (T07, T08) e `quote-functions` (T01, T07, T08, T11, T26); `quote-e2e` (T01 com duas seguradoras, T07, T08, T11, T12, T21 e T26, com 18 testes ao todo) |
 | M4 | T09, T10, T13, T14, T16, T17, T20, T31 | Unitários em `provider-domain`, `provider-functions`, `quote-domain` e `quote-functions`; contrato e configuração em `provider-functions`, `quote-api` e `quote-functions`; integração com Floci em `provider-api`, `provider-functions` (T14, T16, T31), `quote-api` (T17) e `quote-functions` (T09, T10, T13, T16, T17, T20, T31); `quote-e2e` (os oito casos, com 26 testes ao todo) |
 | M5 | T18, T22, T28, T29, T30 | Unitários em `quote-domain` (seleção e operações) e `provider-simulators` (catálogo); contrato em `quote-api` contra `contracts/openapi.yaml` e as fixtures (T18, T22, T28, T29, T30) e em `quote-functions` (AsyncAPI); integração com Floci em `provider-functions`, `provider-simulators`, `quote-api` (T18, T28, T29, listagem e reconciliação) e `quote-functions` (`issue-projector`, `issues-dlq`, `STUCK_VERSION` e resumo do `META`); `quote-e2e` (os cinco casos, a reconciliação manual e o catálogo com a listagem, com 33 testes ao todo) |
-| M6 | Itens marcados no §13 | Stage `dev` na AWS |
+| M6 | Itens marcados no §13 | Stage `dev` na AWS, pelo roteiro da [implantação na AWS](implantacao-aws-dev.md) |
 
 Além dos casos do PRD:
 
@@ -1992,59 +2020,16 @@ Além dos casos do PRD:
 - M1, variante do T01: o T01 do PRD tem duas seguradoras. No M1, ele roda com uma só, com o
   `vehicle-van-2022` e uso `COMMERCIAL`, que só cota na alpha (§10). O T01 com duas seguradoras entrou
   no M3, com a beta, e a variante do M1 continua no `quote-e2e`.
-- M2, testes por módulo: `ReusePlanTest` no `provider-domain` (decisão `HIT`, `JOIN` ou liderança,
-  política de reuso, lease e cadeia). `EnrichmentReuseIT` no `provider-functions`, com 17 casos:
-  `t04_reuseHitCompletesWithoutExternalCall`, `t05_expiredReuseStartsNewQueryAndKeepsHistory`,
-  `t06_hundredEquivalentConcurrentRequestsElectOneLeader` (1 líder, 1 chamada, 99 seguidores e 100
-  `EnrichmentResolved` com o mesmo `evidenceId`), `t15_staleLeaderCannotOverwriteAfterLeaseTransfer`,
-  `NOT_FOUND` reutilizado, `FAILED` nunca reutilizado, reentregas idempotentes do líder e do seguidor,
-  seguidor que encontra a liderança concluída, líder interrompido que conclui `FAILED` e responde aos
-  seguidores, e as corridas e reentregas do §8: `observedAt` adiantado que não prolonga a validade,
-  pedido deduplicado pelo `workRef` e não pelo `eventId` recebido, reentrega do líder que responde ao
-  seguidor que o fan-out não alcançou, líder interrompido de uma cadeia antiga que não toca a liderança
-  atual com a mesma versão, líder cujo pedido foi respondido por outra entrega e que conclui mesmo assim
-  para o índice e os seguidores, seguidor cujo registro perde para a conclusão, pedido que perde o
-  índice para outro líder e usa a evidência nova, e líder que perde o índice na conclusão e relê a
-  revisão. A lista com os nomes está em [testes](testing.md). `EnrichmentEvidenceRecordingTest` e casos
-  novos no `QuoteFunctionsFlociIT`, no `quote-functions`: o lado da quote de T04 (com `HIT` e `JOIN`),
-  T25 e T27, e o contrato do `EnrichmentResolved` conferido também depois do prazo. O T15 fica só na
-  integração da provider.
-- M2, `quote-e2e`: o harness limpa o reuso do par antes de T01, T04, T05 e T06 (§10). Pares: T01 e T02
-  usam `vehicle-van-2022` com `driver-acme-bruno`; T04, `vehicle-sedan-2019` com `driver-acme-ana`;
-  T05, `vehicle-classic-1998` com `driver-acme-ana`; T06, `vehicle-classic-1998` com
-  `driver-acme-bruno`. O `vehicle-classic-1998` termina `NO_OFFER` sem chamar seguradora. O T04 confere
-  que a `queryKey` calculada pelo harness é a mesma gravada pela provider. O T25 aceita `MISS` ou `HIT`,
-  porque o `NOT_FOUND` declarado é reutilizável, e confere que o `REUSE#` do par é `NOT_FOUND` e aponta
-  para a evidência usada (mesmo `evidenceId`, `queryId` e `policyVersion`). O T27 confere que não há
-  `REUSE#` para o par com falha. O T06 dispara N cotações equivalentes juntas (12 por padrão,
-  configurável por `-De2e.concurrentQuotes`) e usa uma espera única, que confere todas as cotações a
-  cada intervalo de polling. No fechamento do M2, os 11 testes do `quote-e2e` (T01, T02, T03,
-  T04, T05, T06, T19, T23, T24, T25 e T27) levaram 191,0 s, e o `mvn verify` dos módulos da provider
-  e da quote rodou 341 testes.
-- M3, testes por módulo: no `provider-domain`, o `CallbackSignatureTest` e casos novos no
-  `InsurerProtocolTest`. O `provider-api`, módulo novo, tem o `CallbackApiContractTest`, o
-  `CallbackApiFlociIT` e o `StreamLambdaHandlerFlociIT`. No `provider-functions`, o `InsurerCallbackIT`
-  (T11, T12 e pendências) e o `QuotaAcrossWorkflowsIT` (T21). O `provider-functions` tem dependência de
-  teste do `provider-api`, só das classes (exclusão `*:*` das transitivas), e a ponte `CallbackApi`, em
-  `functions/src/test/java/com/mmda/serverless/provider/api`, usa o `CallbackInbox` real. Assim o
-  `InsurerCallbackIT` cobre o encontro no `CORR#` com o código real das duas metades, nas duas ordens,
-  inclusive o callback com `clientReference` que conclui a consulta antes de o `202` ser gravado
-  (`recordAccepted` devolve `false`), disparado durante a chamada pelo `ProviderStub.beforeAnswering`.
-  No `provider-simulators`, o `BetaInsurerSimulatorControllerTest`, o `SimCallbackSenderTest` e casos
-  novos no `SimulatorsLambdaFlociIT`. No `quote-domain`, o `RulesTest` e o `ConsolidationTest`
-  (precedência com duas seguradoras). No `quote-functions`, o `FunctionTimingConfigurationTest` (Map e
-  orçamento), o `ProviderEventsConsumptionTest`, o `QuoteEventsContractTest` e 7 casos novos no
-  `QuoteFunctionsFlociIT`. No `quote-api`, o `QuoteApiFlociIT` (T07 e T08) e o `QuoteApiContractTest`
-  (versão `PARTIAL`, T08). O que cada classe cobre está em [testes](testing.md).
-- M3, `quote-e2e`: 18 testes, os 11 do M1 e do M2 mais o T01 com duas seguradoras, T07, T08, T11, T12,
-  T21 e T26. Pares: o T01 com duas seguradoras usa `vehicle-hatch-2021` com `driver-acme-ana`; os casos
-  da beta (T07, T08, T11 e T12) usam `driver-acme-bruno`; o T26 usa `vehicle-classic-1998` com
-  `driver-acme-ana` e aceita `HIT` ou `MISS`, porque o par é o do T05. O T12 usa o `vehicle-beta-early`,
-  mas no Floci o callback não chega antes do `202` (§13); a ordem inversa fica no `CallbackApiFlociIT` e
-  no `InsurerCallbackIT`, este com o código real das duas metades. O harness lê o `callback-secret` no
-  T11, confere no log da retomada o descarte do evento republicado e grava e apaga o `QUOTA#alpha` no
-  T21 (§10). O T21 do enriquecimento fica no `QuotaAcrossWorkflowsIT`. Os números da rodada de
-  fechamento do M3 (testes e tempos do `quote-e2e` e do `mvn verify`) ficam só em [testes](testing.md).
+- M2: o `ReusePlanTest` (decisão `HIT`, `JOIN` ou liderança) e o `EnrichmentReuseIT`, com 17 casos que
+  cobrem T04, T05, T06 com 100 pedidos, T15 e as corridas e reentregas do §8; no `quote-functions`, o
+  `EnrichmentEvidenceRecordingTest` e o lado da quote de T04 (com `HIT` e `JOIN`), T25 e T27, com o
+  contrato do `EnrichmentResolved` conferido também depois do prazo. O T15 fica só na integração da
+  provider. No `quote-e2e`, o harness limpa o reuso do par antes de T01, T04, T05 e T06 (§10).
+- M3: o módulo `provider-api` (callbacks, com o encontro no `CORR#` coberto com o código real das duas
+  metades no `InsurerCallbackIT`), o `QuotaAcrossWorkflowsIT` (T21), a beta e o `simCallbackSender` nos
+  simuladores, a precedência com duas seguradoras na consolidação e o `Map` no `quote-functions`. No
+  Floci, o callback antecipado do T12 não chega antes do `202` (§13); a ordem inversa fica na integração
+  da provider.
 - M4: o `POST /v1/quotes/{id}/versions` entra no M4, porque o T17 está no M4; o bloqueio de seleção em
   versão substituída é testado na integração da quote. Também entram o reprocessamento das DLQs, as
   ocorrências das duas soluções, o `reconcileWorker` e os alarmes (no Floci, só a criação, §13). O
@@ -2052,66 +2037,11 @@ Além dos casos do PRD:
   ele que não foi entregue à execução, conferido no histórico dela. No M3, `EXPIRED` e `DONE` eram lidos
   do mesmo jeito. Depois de um `quote-e2e` completo com essa regra, a quote tinha uma só ocorrência, o
   `WORKFLOW_FAILED` do T20, e nenhum `TASK_EXPIRED`; antes dela, a mesma rodada abria 16 ocorrências.
-- M4, testes por módulo: no `provider-domain`, o `OperationsTest` (ocorrências, `QueryReconciled` e a
-  política das DLQs) e o `InsurerStatusTest` (classificação da API de situação). No `provider-api`, um
-  caso novo no `CallbackApiFlociIT` (callback `UNMATCHED` repetido). No `provider-functions`, o
-  `ReconcilerIT` (cada dever do `reconciler`, o caso de borda do M2, T14 e T16), o `ReconcileWorkerIT`, o
-  `DeadLetterReprocessingIT` (T31), o `StatusReadsTest` (teto das leituras da API de situação) e casos
-  novos no `ServerlessConfigurationTest` e no `ProducedEventSchemaTest`. No `quote-domain`, o
-  `ReconciliationTest`. No `quote-functions`, o `ReconcilerMetricsTest`, o `ExpiredTaskDeliveryTest`
-  (entrega do resultado gravado no histórico da execução) e casos novos no
-  `FunctionTimingConfigurationTest` e no `QuoteFunctionsFlociIT` (T09, T10, T13, T16, T17, T20, T31,
-  `STUCK_VERSION`, `TASK_EXPIRED`, o reparo do `META` e o ciclo completo do `reconciler`). No
-  `quote-api`, o T17 no `QuoteApiContractTest` e no `QuoteApiFlociIT`. O que cada classe cobre está em
-  [testes](testing.md).
-- M4, `quote-e2e`: 26 testes, os 18 do M1 ao M3 mais T09, T10, T13, T14, T16, T17, T20 e T31. Cada caso
-  novo usa um par veículo/condutor próprio, apaga o reuso do par no início e no `finally` e espera os
-  `reconciler` com prazo, sem pausa fixa. Os números da rodada de fechamento do M4 (testes e tempos do
-  `quote-e2e` e do `mvn verify`) ficam só em [testes](testing.md). Adaptações ao laboratório e ao Floci:
-  - T09 e T10 rodam só com a alpha. Nenhum veículo faz as duas seguradoras recusarem, e a beta não tem
-    cenário de indisponibilidade. Com uso `COMMERCIAL`, que só cota na alpha (§10), o
-    `vehicle-alpha-declines` e o `vehicle-alpha-down` fazem recusar ou cair todas as seguradoras
-    aplicáveis. O T09 confere `NO_OFFER` com `ALL_INSURERS_DECLINED`, o motivo `RISK_NOT_ACCEPTED` e uma
-    só tentativa (sem retry na recusa). O T10 confere `TECHNICAL_FAILURE` com
-    `INSURER_TECHNICAL_FAILURE`, nunca `NO_OFFER`, com 1 + `workerRetries` = 3 tentativas, consulta
-    `FAILED` e evidência `UNAVAILABLE`.
-  - O T13 usa estado fabricado, como o `QUOTA#` do T21: o harness deixa ilegível o token do waiter da
-    beta enquanto ele espera, então o `resume` grava `RESUMING`, `resumePayload`, `RESULT`, `OFFER` e
-    `CONSUMED` e cai na decifração; depois da queda, o token volta. O caso confere a versão `COMPLETED`
-    com as duas ofertas, a retomada pelo `reconciler`, o waiter fora do índice, nenhum `TASK_EXPIRED`,
-    nenhum `LATE` e uma só tentativa por seguradora.
-  - O T20 se alinha ao ciclo do `reconciler`: como o `StopExecution` não para o interpretador do Floci
-    (§13), o caso despacha a cotação cerca de 51 s depois de um ciclo e faz o `StopExecution` com a
-    oferta da alpha gravada e a beta em `PROCESSING`. Ele tenta até 3 cotações e registra cada tentativa
-    no log; nas rodadas validadas, bastou a primeira. Cada tentativa apaga o reuso do par antes, para o
-    enriquecimento ser `MISS` e a latência até a `dispatch`, medida na tentativa anterior e usada no
-    alinhamento, continuar valendo. A tentativa descartada, que a
-    continuação do Floci consolidou antes do ciclo, confere as invariantes: as ofertas mantidas, nenhum
-    `WORKFLOW_FAILED` e o `QuoteCompleted` com o `outcome` da versão. A tentativa que o `reconciler`
-    finaliza confere `PARTIAL`, a beta `TIMED_OUT` com `WORKFLOW_ABORTED`, as ofertas mantidas, a versão
-    fora do `ACTIVE_VERSION`, o `WORKFLOW_FAILED` aberto e o `QuoteCompleted` no outbox. Limite conhecido,
-    visto sob carga numa rodada do M5: o caso classifica a tentativa só pelo `reasonCode` da beta. A
-    continuação do Floci gravou `STEP_TIMEOUT` na beta, mas o `reconciler` finalizou a versão antes do
-    `ConsolidateQuote` (`TERMINAL` e `WORKFLOW_FAILED` no mesmo instante), o que é legítimo, e o teste
-    acusou "consolidated before the reconciler". Decidir pela transição a `TERMINAL` ou pela presença da
-    ocorrência evitaria o falso negativo; o teste não mudou.
-  - O T31 põe as entregas direto nas DLQs. Primeiro confere a `RedrivePolicy` implantada nas filas
-    `results`, `insurer-requests` e `reconcile-requests`. Depois, com uma cotação já concluída, o caso
-    põe a versão fora do prazo (`deadlineAt` no passado) antes de pôr o `InsurerResultRecorded` na
-    `results-dlq`. Como o prazo da versão não conta (§9), o resultado é reenviado como tentativa 2 e
-    descartado pelo `CONSUMED`; o `QueryReconcileRequested` na `reconcile-requests-dlq` é reenviado como tentativa 2, e o
-    `QueryReconciled` sai `SUCCEEDED`; o `InsurerQuoteRequested` vencido na `insurer-requests-dlq` é
-    descartado com `DEAD_LETTER` e `OperationIssueRaised`. A cotação e a consulta não mudam. A passagem
-    real pela `RedrivePolicy`, com as visibilidades do stage, levaria mais de 7 min por mensagem; ela
-    fica coberta pelo `QuoteFunctionsFlociIT`
-    (`t31_resultThatKeepsFailingReachesTheDlqAndItsReprocessingDoesNotDuplicateIt`) e pelo
-    `DeadLetterReprocessingIT`
-    (`t31_messageThatAlwaysFailsGoesToTheDeadLetterQueueAndIsDiscardedAfterDlqMaxAttempts`).
-  - O T14 e o T16 usam a beta como ela é: o T14 confere, no log do `reconciler` da provider, a consulta
-    deixada `UNKNOWN` e concluída pela API de situação sem nova chamada, e o `LATE` na quote sem mudar a
-    versão; o T16, o callback tardio guardado como `LATE` sem reabrir a cotação. O T17 cria a v2 com a
-    v1 ainda em andamento, e o usuário do e2e ganhou o grupo `perm_offers_select`, para conferir que só
-    a versão atual oferece `SELECT_OFFER`.
+- M4, adaptações ao laboratório e ao Floci no `quote-e2e`: T09 e T10 rodam só com a alpha, porque nenhum
+  veículo faz as duas seguradoras recusarem e a beta não tem cenário de indisponibilidade; o T13 usa
+  estado fabricado, como o `QUOTA#` do T21; o T20 se alinha ao ciclo do `reconciler`, porque o
+  `StopExecution` não para o interpretador do Floci (§13), e tem um limite conhecido sob carga; o T31 põe
+  as entregas direto nas DLQs, e a passagem real pela `RedrivePolicy` fica na integração das duas soluções.
 - M5, o que o M4 deixou e entrou: a publicação do `QueryReconcileRequested` pela API da quote (§8); a
   regra e a fila `issues` da quote, com o `issue-projector`, que grava o `type` do evento no `issueType`
   do item (§3); a `issues-dlq`, com reprocessamento e alarmes (§9); o `GET /v1/operations/issues`, o
@@ -2125,80 +2055,30 @@ Além dos casos do PRD:
   e o fixture `quote-partial-needs-information.json`: em `PARTIAL`, as pendências ficam em
   `insurerResults[].missingFields`, e o `missingFields` da versão fica vazio, o que o PRD permite (§6). Os
   simuladores passaram a ler o `catalog.json` (§10), e o `DEAD_LETTER` da provider passou a levar o par
-  `queryId`/`organizationId` só da consulta da organização do pedido (§9).
-- M5, testes por módulo: no `quote-domain`, o `SelectionsTest` e o `OperationsTest`. No `quote-api`, o
-  `SelectionContractTest`, o `OperationsContractTest`, o `ContractFixturesTest` e casos novos no
-  `QuoteApiContractTest` e no `QuoteApiFlociIT` (T18, T28, T29, listagem e reconciliação). No
-  `quote-functions`, casos novos no `QuoteFunctionsFlociIT` (`issue-projector`, `issues-dlq`,
-  `STUCK_VERSION`, resumo monotônico e o ciclo do `reconciler`), no `ProviderEventsConsumptionTest`, no
-  `QuoteEventsContractTest` e no `FunctionTimingConfigurationTest`. No `provider-simulators`, o
-  `LabCatalogTest`, o `LambdaZipCatalogIT` e casos novos nos testes dos três simuladores. No
-  `provider-functions`, casos novos no `DeadLetterReprocessingIT` e no `EnrichmentReuseIT`. O que cada
-  classe cobre está em [testes](testing.md).
-- M5, `quote-e2e`: 33 testes, os 26 do M1 ao M4 mais T18, T22, T28, T29, T30 e dois casos sem número no
-  PRD, que usam o prefixo `m5_`: a reconciliação manual (`m5_manualReconciliationOfAConcludedQuery…`) e o
-  catálogo com a listagem (`m5_catalogAndQuoteListingPageWithCursorAndFilters`). Toda troca com a API da
-  quote, nos 33 testes, passa pelo `ContractClient`, que a confere contra o `contracts/openapi.yaml`. Os
-  números da rodada de fechamento ficam só em [testes](testing.md). Adaptações ao laboratório e ao Floci:
-  - Decisão do M5: a reconciliação manual de ponta a ponta usa uma `UNKNOWN_QUERY` publicada no barramento
-    pelo próprio teste, em nome da provider, apontando a consulta já concluída da alpha de uma cotação do
-    `vehicle-flaky`, porque nenhum cenário do laboratório deixa uma consulta `UNKNOWN` de forma
-    determinística. O resultado conferido é `SUCCEEDED` ("já concluída"), nas duas tabelas. O teste remove
-    no `finally` a ocorrência, o `QUERYREF#` e o `CONSUMED#` que ele criou.
-  - O T18 fabrica a oferta expirada: grava no passado o `validUntil` da oferta e o devolve no `finally`.
-  - O vencedor do T29 varia entre rodadas: em umas, a seleção vence uma disputa; em outras, a nova versão
-    vence as três, e a seleção é feita sem disputa na versão 4. O teste afirma que o `NEEDS_INFORMATION`
-    da beta chega depois da seleção, o caso "pendência posterior" do PRD. No Floci, a corrida não gera
-    `TransactionConflict` (§13).
-- M6, o que o M5 deixou: o IAM efetivo do `IssueProjectorRole` e das permissões novas da API e do
-  `reconciler`; o disparo e as `AlarmActions` dos alarmes da `issues-dlq`; os tempos reais de DLQ da fila
-  `issues`; o `TransactionConflict` na corrida do T29; o 429 do API Gateway; o T18, o T29 e o T30 com os
-  grupos reais do Cognito; os params do stage `dev`; e a conferência de que nenhum `ISSUE#` no formato
-  anterior ao ADR 0015 existe nos ambientes da AWS (§4).
-- M6: task token, callbacks (inclusive com corpo fora do ASCII), IAM (inclusive os papéis próprios da
-  provider), timeouts, `TransactionConflict` (inclusive com 100 pedidos concorrentes na liderança),
-  `JOIN` ponta a ponta, retry e divisão de lote do stream, visibilidade × timeout, issuer do Cognito,
-  recuperação e disparo dos alarmes. Do M4, ficam o disparo e as `AlarmActions` dos alarmes, a extração
-  das métricas EMF, o IAM das permissões novas, os tempos reais de DLQ e o `StopExecution`, repetidos na
-  AWS. O caso `dev` do `ServerlessConfigurationTest` que compara os
-  atrasos dos callbacks da beta com a espera da seguradora, hoje ignorado, vira asserção quando o M6
-  declarar os params da AWS na quote.
+  `queryId`/`organizationId` só da consulta da organização do pedido (§9). No `quote-e2e`, toda troca com
+  a API da quote passa pelo `ContractClient`, que a confere contra o `contracts/openapi.yaml`. Decisão do
+  M5: a reconciliação manual de ponta a ponta parte de uma `UNKNOWN_QUERY` publicada pelo próprio teste,
+  porque nenhum cenário do laboratório deixa uma consulta `UNKNOWN` de forma determinística.
+- M6, preparação no código (já feita): os `params` das duas soluções com os valores da AWS no `default` e
+  só as diferenças do Floci no `local` (§12); o `AWS_ENDPOINT_URL` condicional; as `AlarmActions` com o
+  tópico de alarmes e a assinatura por e-mail opcional (§9); o IAM restrito do §2 e do §7. Os testes de
+  configuração rodam os casos de params nos stages `local` e `dev`, e o caso `dev` do
+  `ServerlessConfigurationTest` que compara os atrasos dos callbacks da beta com a espera da seguradora
+  virou asserção. O `quote-e2e` ganhou o perfil `e2e-aws`, que roda contra o stage `dev` com as credenciais
+  da cadeia padrão ([testes](testes.md#ponta-a-ponta)).
+- M6, o que o M5 deixou para a AWS: o IAM efetivo do `IssueProjectorRole` e das permissões novas da API e
+  do `reconciler`; o disparo dos alarmes da `issues-dlq`; os tempos reais de DLQ da fila `issues`; o
+  `TransactionConflict` na corrida do T29; o 429 do API Gateway; o T18, o T29 e o T30 com os grupos reais
+  do Cognito; e a conferência de que nenhum `ISSUE#` no formato anterior ao ADR 0015 existe nos ambientes
+  da AWS (§4).
+- M6, a repetir na AWS: task token, callbacks (inclusive com corpo fora do ASCII), IAM (inclusive os
+  papéis próprios da provider e as permissões do M6 na quote), timeouts, `TransactionConflict` (inclusive
+  com 100 pedidos concorrentes na liderança), `JOIN` ponta a ponta, retry e divisão de lote do stream,
+  visibilidade × timeout, issuer do Cognito, recuperação e disparo dos alarmes. Do M4, ficam o disparo dos
+  alarmes, a notificação no tópico e a assinatura por e-mail (as `AlarmActions` estão declaradas desde o
+  M6, §9), a extração das métricas EMF, o IAM das permissões novas, os tempos reais de DLQ e o
+  `StopExecution`. O roteiro está na [implantação na AWS](implantacao-aws-dev.md).
 
-Cada teste leva o identificador do caso no nome (por exemplo, `t02_resubmissionReturnsSameQuote`).
-
-**Orçamento de espera do `quote-e2e`.** Os casos do fluxo não têm número próprio de espera: leem o
-bloco `params` do `serverless.yml` da quote, no stage do teste. O T01, o T02 e cada cotação do T04
-esperam pela invariante do §9 com uma seguradora (20 + 1 × 20 + 30 = 70 s no local). O T05, o T25 e
-o T27 terminam sem seguradora e esperam 20 + 0 × 20 + 30 = 50 s. O T06 espera esse prazo mais N
-segundos (62 s com o N padrão de 12), numa espera única para todas as cotações: o ESM de SQS do Floci
-entrega cerca de 1 mensagem por segundo (§13), então a última cotação começa cerca de N segundos depois
-da primeira. O N padrão é 12 porque a espera de cada pedido na fila conta dentro dos 20 s de
-`enrichmentTimeoutSeconds`: com 20, a maior espera chegou a 17,1 s, e numa rodada uma versão terminou
-`TECHNICAL_FAILURE` (§12). O caso de 100 pedidos concorrentes fica na integração da provider
-(`EnrichmentReuseIT`). O T03, o T23 e o T24 terminam nos passos simples e esperam `stepsMarginSeconds`
-(30 s). Os casos com duas seguradoras (T01 com duas, T07, T08, T11 e T12) esperam
-20 + ceil(2 / 2) × 20 + 30 = 70 s; o T26 termina sem seguradora e espera 50 s; cada cotação do T21
-espera a invariante com uma seguradora mais 5 s, uma por cotação disparada (75 s). O polling segue o
-`retryAfterSeconds` (3 s). Os casos do M4 que dependem do `reconciler` (T13, T14, T20 e T31) esperam
-os ciclos dele com prazo, sem pausa fixa; cada ciclo pode levar até 70 s no Floci (§13).
-
-O T19 é a exceção, porque depende do agendamento e não da máquina de estado. Ele grava, nas tabelas
-implantadas da quote e da provider, um `OUTBOX_PENDING` de 10 minutos atrás que a relay nunca vê: o
-`INSERT` sai com `type = E2E_PROBE`, e um `UPDATE` posterior troca para `OUTBOX`; o filtro do stream
-ignora esse `MODIFY` (§7). O `detail-type` `ReconcilerProbe` não tem regra no barramento. O teste espera
-até 3 min, com polling de 5 s, pelo `publishedAt` e pela remoção do `gsi2pk` nas duas tabelas.
-
-Por isso, ao fim de uma rodada do `quote-e2e`, o log dos `reconciler` mostra a republicação de um item
-criado 10 minutos antes, como a vista às 23:04 no fechamento do M3. É a sonda do T19, nas duas
-tabelas, e não um outbox real atrasado: sem regra para o `ReconcilerProbe`, a republicação não tem
-efeito duplicado. Nas duas rodadas completas da integração do M4, cada `reconciler` republicou
-exatamente esse item, e nenhum outbox real da provider foi publicado mais de 10 s depois do
-`createdAt`. Sob carga, a relay da quote chegou a atrasar 22,4 s, abaixo dos 30 s de
-`outboxRepublishAfterSeconds` (§12). Se o atraso passasse do limiar, o `reconciler` publicaria junto com
-a relay o mesmo `eventId`, e os consumidores descartariam a repetição (`CONSUMED`, `workRef`,
-`ExecutionAlreadyExists`).
-
-**Seleção de módulos no Maven 3.9.** `mvn -pl <solução> -am verify` seleciona só o POM agregador da
-solução e não roda teste nenhum. Para rodar os testes de uma solução, liste os módulos, como em
-`mvn -pl quote-solution/domain,quote-solution/api,quote-solution/functions -am verify`, ou acrescente
-`-amd` (`mvn -pl quote-solution -am -amd verify`).
+Cada teste leva o identificador do caso no nome (por exemplo, `t02_resubmissionReturnsSameQuote`). O que
+cada classe cobre, os pares veículo/condutor, as esperas do `quote-e2e`, as adaptações de cada caso, os
+números das rodadas de fechamento e a seleção de módulos no Maven estão em [testes](testes.md).

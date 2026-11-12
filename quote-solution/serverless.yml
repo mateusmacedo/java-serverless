@@ -747,7 +747,7 @@ resources:
         AlarmActions:
           - !Ref AlarmsTopic
 
-    # source e detail-type precisam bater com os eventos da provider-solution (docs/events)
+    # source e detail-type precisam bater com os eventos da provider-solution (contracts/provider-solution/asyncapi.yaml)
     ProviderResultsRule:
       Type: AWS::Events::Rule
       Properties:
@@ -1036,7 +1036,8 @@ resources:
                     - dynamodb:GetRecords
                     - dynamodb:GetShardIterator
                   Resource: !GetAtt QuotesTable.StreamArn
-                # ListStreams não aceita recurso específico
+                # NOTE: o ListStreams aceita recurso (a DynamoDBStreamReadPolicy do SAM o restringe a
+                # table/<tabela>/stream/*); o "*" segue até a restrição ser conferida na AWS
                 - Effect: Allow
                   Action: dynamodb:ListStreams
                   Resource: "*"

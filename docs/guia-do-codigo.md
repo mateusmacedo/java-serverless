@@ -5,8 +5,8 @@ Lambda começa, como os componentes são registrados e por onde uma requisição
 envolvidos em cada etapa. A [última parte](#como-as-lambdas-da-receipt-solution-sobem-quarkus) mostra
 o mesmo para a `receipt-solution`, em Quarkus.
 
-Para a referência de componentes e recursos, veja [Arquitetura](architecture.md). Para os diagramas
-de execução em Mermaid, veja [Fluxos](flows.md).
+Para a referência de componentes e recursos, veja [Arquitetura](arquitetura.md). Para os diagramas
+de execução em Mermaid, veja [Fluxos](fluxos.md).
 
 ## Por que o fluxo não aparece navegando pelo código Java
 
@@ -80,7 +80,8 @@ pnpm deploy:receipt   (lê receipt-solution/serverless.yml; a sample precisa est
   └─ environment:    TABLE_NAME, EVENT_BUS_NAME e STATE_MACHINE_ARN
 ```
 
-O `pnpm deploy:local` faz o `mvn package` e os dois deploys, nessa ordem.
+O `pnpm deploy:local` empacota todos os módulos e implanta as stacks na ordem descrita em
+[Implantação no Floci](../README.md#implantação-no-floci).
 
 ## Como a Lambda `api` sobe e registra os componentes
 
@@ -183,15 +184,15 @@ EventBridge Scheduler, a cada 5 minutos  ← serverless.yml: functions.reprocess
                  → attempt igual a 3: descarta a mensagem
 ```
 
-Os formatos de cada mensagem estão no [AsyncAPI](events/asyncapi.yaml), e o contrato da rota no
-[OpenAPI](api/openapi.yaml).
+Os formatos de cada mensagem estão no [AsyncAPI](../contracts/sample-solution/asyncapi.yaml), e o contrato da rota no
+[OpenAPI](../contracts/sample-solution/openapi.yaml).
 
 ## Como as Lambdas da receipt-solution sobem (Quarkus)
 
 A `receipt-solution` segue a mesma ideia com outro framework: um zip só, várias Lambdas, e cada uma
 escolhe o seu handler por variável de ambiente. Quem decide a ordem continua sendo o Step Functions,
 agora iniciado pelo evento `RequestCompleted` da sample
-([ADR 0011](decisions/0011-integracao-entre-solucoes-por-eventbridge.md)).
+([ADR 0011](decisoes/0011-integracao-entre-solucoes-por-eventbridge.md)).
 
 ```text
 Runtime java21 da Lambda
@@ -237,13 +238,13 @@ ambiente estão no guia oficial da extensão `quarkus-amazon-lambda`.
 
 | Quero... | O que muda |
 |---|---|
-| Adicionar um passo à máquina de estado | Nova classe `Function<In, Out>` com `@Component("nome")` em `functions`; nova Lambda no bloco `functions:` do `serverless.yml`, com `SPRING_CLOUD_FUNCTION_DEFINITION: nome`; novo estado no bloco `stepFunctions:`; permissões em `provider.iam`; testes ([Testes](testing.md)) |
-| Adicionar uma rota HTTP | Método em `RequestController` ou novo `@RestController` em `api`; novo evento `http` na Lambda `api` do `serverless.yml`, porque o API Gateway só encaminha os caminhos declarados; atualizar o [OpenAPI](api/openapi.yaml) |
-| Usar outro serviço da AWS (Spring) | Entrada do SDK com as exclusões de cliente HTTP no `platform/spring-parent/pom.xml`; SDK opcional e nova configuração aninhada em `AwsClientsAutoConfiguration`; SDK declarado no pom do módulo que vai usar ([ADR 0005](decisions/0005-clients-sincronos-com-crt.md)) |
+| Adicionar um passo à máquina de estado | Nova classe `Function<In, Out>` com `@Component("nome")` em `functions`; nova Lambda no bloco `functions:` do `serverless.yml`, com `SPRING_CLOUD_FUNCTION_DEFINITION: nome`; novo estado no bloco `stepFunctions:`; permissões em `provider.iam`; testes ([Testes](testes.md)) |
+| Adicionar uma rota HTTP | Método em `RequestController` ou novo `@RestController` em `api`; novo evento `http` na Lambda `api` do `serverless.yml`, porque o API Gateway só encaminha os caminhos declarados; atualizar o [OpenAPI](../contracts/sample-solution/openapi.yaml) |
+| Usar outro serviço da AWS (Spring) | Entrada do SDK com as exclusões de cliente HTTP no `platform/spring-parent/pom.xml`; SDK opcional e nova configuração aninhada em `AwsClientsAutoConfiguration`; SDK declarado no pom do módulo que vai usar ([ADR 0005](decisoes/0005-clients-sincronos-com-crt.md)) |
 | Usar outro serviço da AWS (Quarkus) | Extensão `quarkus-amazon-<serviço>` no pom do módulo, com versão do BOM do `quarkus-parent`; `quarkus.<serviço>.sync-client.type=aws-crt` no `application.properties` |
-| Adicionar uma rota à API da `receipt-solution` | Método em `ReceiptResource` ou novo recurso JAX-RS em `receipt-solution/api`; novo evento `http` na Lambda `api` do `serverless.yml`; atualizar o [OpenAPI da receipt](api/receipt-solution.openapi.yaml) |
+| Adicionar uma rota à API da `receipt-solution` | Método em `ReceiptResource` ou novo recurso JAX-RS em `receipt-solution/api`; novo evento `http` na Lambda `api` do `serverless.yml`; atualizar o [OpenAPI da receipt](../contracts/receipt-solution/openapi.yaml) |
 | Adicionar um passo à `receipt-solution` | Nova classe `RequestHandler<In, Out>` com `@Singleton` e `@Named("nome")`; nova Lambda no `serverless.yml` com `QUARKUS_LAMBDA_HANDLER: nome`; novo estado no bloco `stepFunctions:`; permissões em `provider.iam` |
-| Criar uma solução que reage a outra | Pasta nova com o parent do framework em `platform/` e `serverless.yml` próprio; evento `eventBridge` na máquina de estado, com `eventBusName` do barramento da produtora; primeiro passo idempotente ([ADR 0011](decisions/0011-integracao-entre-solucoes-por-eventbridge.md)) |
+| Criar uma solução que reage a outra | Pasta nova com o parent do framework em `platform/` e `serverless.yml` próprio; evento `eventBridge` na máquina de estado, com `eventBusName` do barramento da produtora; primeiro passo idempotente ([ADR 0011](decisoes/0011-integracao-entre-solucoes-por-eventbridge.md)) |
 | Mudar o nome de um recurso | Bloco `custom.names` do `serverless.yml`; as variáveis de ambiente levam o novo nome às Lambdas |
 | Mudar o limite de tamanho do payload | Recurso `MaxPayloadParameter` no `serverless.yml` (o valor fica no SSM e é lido a cada validação) |
 | Mudar o número de tentativas | Variável `MAX_ATTEMPTS` nas Lambdas (padrão `3` em `functions/src/main/resources/application.yml`) |

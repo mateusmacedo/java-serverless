@@ -1,8 +1,8 @@
 # Fluxos
 
 Como uma requisição percorre a `sample-solution` e como o resultado aciona a `receipt-solution`. Os
-componentes estão descritos em [Arquitetura](architecture.md); os formatos das mensagens, no
-[AsyncAPI da sample](events/asyncapi.yaml) e no [da receipt](events/receipt-solution.asyncapi.yaml).
+componentes estão descritos em [Arquitetura](arquitetura.md); os formatos das mensagens, no
+[AsyncAPI da sample](../contracts/sample-solution/asyncapi.yaml) e no [da receipt](../contracts/receipt-solution/asyncapi.yaml).
 
 ## Máquina de estado `request-flow`
 
@@ -73,7 +73,7 @@ O cliente recebe `202` assim que a execução é iniciada; o processamento conti
 assíncrona. O nome da execução é o `requestId` (e `requestId-attempt` nos reprocessamentos), o que
 liga cada execução ao objeto no S3 e ao item no DynamoDB. O payload fica no S3 e só a chave trafega
 na máquina de estado
-([ADR 0006](decisions/0006-payload-no-s3.md)).
+([ADR 0006](decisoes/0006-payload-no-s3.md)).
 
 ## Caminho de falha
 
@@ -118,13 +118,13 @@ sequenceDiagram
 
 A nova execução recomeça do `Validate`, com `signature` e `payloadBytes` limpos. Um payload que
 sempre falha é reiniciado duas vezes e descartado na terceira tentativa
-([ADR 0007](decisions/0007-dlq-e-reprocessamento.md)).
+([ADR 0007](decisoes/0007-dlq-e-reprocessamento.md)).
 
 ## Integração com a receipt-solution
 
 A `receipt-solution`, em Quarkus, reage ao mesmo `RequestCompleted`. Uma regra que ela cria no
 barramento da `sample-solution` inicia a máquina de estado `receipt-flow` direto, sem Lambda no meio
-([ADR 0011](decisions/0011-integracao-entre-solucoes-por-eventbridge.md)).
+([ADR 0011](decisoes/0011-integracao-entre-solucoes-por-eventbridge.md)).
 
 ```mermaid
 sequenceDiagram
@@ -179,7 +179,7 @@ sequenceDiagram
 A emissão manual entra na mesma máquina e no mesmo formato do evento, então reaproveita o `issue`
 idempotente: emitir de novo para um `requestId` que já tem comprovante devolve o comprovante
 existente e publica `ReceiptIssued` mais uma vez. Os contratos estão no
-[OpenAPI da receipt](api/receipt-solution.openapi.yaml).
+[OpenAPI da receipt](../contracts/receipt-solution/openapi.yaml).
 
 ## Onde cada erro termina
 

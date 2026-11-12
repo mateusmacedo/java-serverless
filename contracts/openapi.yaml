@@ -4,7 +4,7 @@ info:
   version: 1.0.0
   description: |
     API de produto da `quote-solution`, conforme o contrato compartilhado dos PRDs de backend e de
-    frontend (versão 2.0) e o desenho técnico (`docs/quotation-platform.md`). O frontend e os testes do
+    frontend (versão 2.0) e o desenho técnico (`docs/plataforma-de-cotacao.md`). O frontend e os testes do
     backend usam estes schemas e as fixtures de `contracts/fixtures`, validadas contra este documento.
 
     Versão 1.0.0 (marco M5): identidade, catálogo do laboratório, cotações (criação, listagem, versões,
@@ -49,19 +49,19 @@ servers:
 security:
   - bearerAuth: []
 tags:
-  - name: identity
+  - name: identidade
     description: Usuário autenticado
-  - name: catalog
+  - name: catalogo
     description: Fixtures autorizadas do laboratório, usadas no formulário da cotação
-  - name: quotes
+  - name: cotacoes
     description: Cotações, versões, ofertas e seleção
-  - name: operations
+  - name: operacoes
     description: Ocorrências operacionais e reconciliação manual, restritas a operadores
 paths:
   /v1/me:
     get:
       tags:
-        - identity
+        - identidade
       operationId: getMe
       summary: Usuário, organização e permissões
       x-permissions: []
@@ -81,7 +81,7 @@ paths:
   /v1/catalog/customers:
     get:
       tags:
-        - catalog
+        - catalogo
       operationId: listCatalogCustomers
       summary: Clientes sintéticos da organização
       description: |
@@ -107,7 +107,7 @@ paths:
   /v1/catalog/vehicles:
     get:
       tags:
-        - catalog
+        - catalogo
       operationId: listCatalogVehicles
       summary: Veículos sintéticos da organização
       description: |
@@ -133,7 +133,7 @@ paths:
   /v1/catalog/drivers:
     get:
       tags:
-        - catalog
+        - catalogo
       operationId: listCatalogDrivers
       summary: Condutores sintéticos da organização
       description: |
@@ -159,7 +159,7 @@ paths:
   /v1/catalog/coverage-profiles:
     get:
       tags:
-        - catalog
+        - catalogo
       operationId: listCatalogCoverageProfiles
       summary: Perfis de cobertura simulados, com o resumo das coberturas
       description: |
@@ -189,7 +189,7 @@ paths:
   /v1/quotes:
     get:
       tags:
-        - quotes
+        - cotacoes
       operationId: listQuotes
       summary: Cotações da organização, das mais novas para as mais antigas
       description: |
@@ -241,7 +241,7 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
     post:
       tags:
-        - quotes
+        - cotacoes
       operationId: createQuote
       summary: Registra uma cotação de forma durável e idempotente
       description: |
@@ -303,7 +303,7 @@ paths:
   /v1/quotes/{quoteId}/versions:
     post:
       tags:
-        - quotes
+        - cotacoes
       operationId: createQuoteVersion
       summary: Cria uma nova versão da cotação com um novo pedido
       description: |
@@ -400,7 +400,7 @@ paths:
   /v1/quotes/{quoteId}/versions/{version}:
     get:
       tags:
-        - quotes
+        - cotacoes
       operationId: getQuoteVersion
       summary: Andamento, resultado, pendências e resultados por seguradora de uma versão
       description: |
@@ -433,7 +433,7 @@ paths:
   /v1/quotes/{quoteId}/versions/{version}/offers:
     get:
       tags:
-        - quotes
+        - cotacoes
       operationId: listQuoteOffers
       summary: Ofertas da versão, inclusive parciais, com validade e disponibilidade
       description: |
@@ -467,7 +467,7 @@ paths:
   /v1/quotes/{quoteId}/versions/{version}/selection:
     post:
       tags:
-        - quotes
+        - cotacoes
       operationId: selectOffer
       summary: Registra a seleção definitiva de uma oferta, sem emitir proposta
       description: |
@@ -547,7 +547,7 @@ paths:
   /v1/operations/issues:
     get:
       tags:
-        - operations
+        - operacoes
       operationId: listOperationIssues
       summary: Ocorrências operacionais da organização
       description: |
@@ -589,7 +589,7 @@ paths:
   /v1/operations/queries/{queryId}/reconcile:
     post:
       tags:
-        - operations
+        - operacoes
       operationId: reconcileQuery
       summary: Pede a reconciliação manual de uma consulta da organização
       description: |
@@ -649,7 +649,7 @@ paths:
   /v1/operations/{operationId}:
     get:
       tags:
-        - operations
+        - operacoes
       operationId: getOperation
       summary: Situação de uma reconciliação manual
       description: |

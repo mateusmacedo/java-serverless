@@ -37,14 +37,14 @@ import tools.jackson.databind.ObjectMapper;
 @JsonTest
 class EventContractTest {
 
-    private static final Path EVENTS = Path.of("..", "..", "docs", "events");
+    private static final Path CONTRACTS = Path.of("..", "..", "contracts");
 
     @Autowired
     private ObjectMapper objectMapper;
 
     @Test
     void producedEventsSerializeExactlyAsTheDocumentedExamples() throws IOException {
-        Map<String, Object> messages = messages("provider-solution.asyncapi.yaml");
+        Map<String, Object> messages = messages("provider-solution/asyncapi.yaml");
         Map<String, Class<?>> details = Map.of(
                 "EnrichmentResolved", EnrichmentResolved.class,
                 "InsurerResultRecorded", InsurerResultRecorded.class,
@@ -68,7 +68,7 @@ class EventContractTest {
 
     @Test
     void enrichmentResolvedOfTheFoundExampleHasTheDeterministicEventId() throws IOException {
-        JsonNode documented = examples(messages("provider-solution.asyncapi.yaml"), "EnrichmentResolved")
+        JsonNode documented = examples(messages("provider-solution/asyncapi.yaml"), "EnrichmentResolved")
                 .getFirst().path("detail");
         EnrichmentRequest request = new EnrichmentRequest("request", documented.path("workRef").asString(),
                 "org-acme", documented.path("quoteId").asString(), 1, "enrichment-sim", "VEHICLE_DRIVER_PROFILE", "1",
@@ -87,7 +87,7 @@ class EventContractTest {
 
     @Test
     void reusedExamplesCarryTheLeaderEvidenceUnderTheirOwnDeterministicEventId() throws IOException {
-        List<JsonNode> examples = examples(messages("provider-solution.asyncapi.yaml"), "EnrichmentResolved");
+        List<JsonNode> examples = examples(messages("provider-solution/asyncapi.yaml"), "EnrichmentResolved");
         JsonNode leader = examples.getFirst().path("detail");
         List<JsonNode> reused = examples.stream()
                 .map(example -> example.path("detail"))
@@ -113,7 +113,7 @@ class EventContractTest {
 
     @Test
     void insurerResultRecordedOfTheQuotedExampleHasTheDeterministicEventId() throws IOException {
-        JsonNode documented = examples(messages("provider-solution.asyncapi.yaml"), "InsurerResultRecorded")
+        JsonNode documented = examples(messages("provider-solution/asyncapi.yaml"), "InsurerResultRecorded")
                 .getFirst().path("detail");
         InsurerQuoteRequest request = new InsurerQuoteRequest("request", documented.path("workRef").asString(),
                 "org-acme", documented.path("quoteId").asString(), 1, "alpha", Map.of(), Map.of(), Instant.now());
@@ -133,15 +133,15 @@ class EventContractTest {
     @Test
     @SuppressWarnings("unchecked")
     void callbackExampleOfTheApiBecomesTheDocumentedBetaEvent() throws IOException {
-        JsonNode documented = examples(messages("provider-solution.asyncapi.yaml"), "InsurerResultRecorded").stream()
+        JsonNode documented = examples(messages("provider-solution/asyncapi.yaml"), "InsurerResultRecorded").stream()
                 .map(example -> example.path("detail"))
                 .filter(detail -> "beta".equals(detail.path("insurerId").asString())
                         && "QUOTED".equals(detail.path("status").asString()))
                 .findFirst()
                 .orElseThrow();
         Map<String, Object> openApi;
-        try (Reader reader = Files.newBufferedReader(EVENTS.resolveSibling("api")
-                .resolve("provider-solution.openapi.yaml"))) {
+        try (Reader reader = Files.newBufferedReader(CONTRACTS.resolve("provider-solution")
+                .resolve("openapi.yaml"))) {
             openApi = new Yaml().load(reader);
         }
         Map<String, Object> operation = (Map<String, Object>) ((Map<String, Object>) ((Map<String, Object>) openApi
@@ -172,7 +172,7 @@ class EventContractTest {
 
     @Test
     void consumedRequestsAreReadFromTheQuoteSolutionExamples() throws IOException {
-        Map<String, Object> messages = messages("quote-solution.asyncapi.yaml");
+        Map<String, Object> messages = messages("quote-solution/asyncapi.yaml");
         EventJson json = new EventJson(objectMapper);
 
         JsonNode enrichmentExample = examples(messages, "EnrichmentRequested").getFirst();
@@ -209,7 +209,7 @@ class EventContractTest {
 
     @SuppressWarnings("unchecked")
     private static Map<String, Object> messages(String file) throws IOException {
-        try (Reader reader = Files.newBufferedReader(EVENTS.resolve(file))) {
+        try (Reader reader = Files.newBufferedReader(CONTRACTS.resolve(file))) {
             Map<String, Object> document = new Yaml().load(reader);
             return (Map<String, Object>) ((Map<String, Object>) document.get("components")).get("messages");
         }

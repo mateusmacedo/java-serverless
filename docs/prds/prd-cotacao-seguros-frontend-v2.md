@@ -1,7 +1,7 @@
 # PRD Frontend — Plataforma de cotação de seguros
 
 Versão: 2.0 • Data: 11/11/2026 • Status: especificação implementável do MVP
-Documento complementar: PRD_Cotacao_Seguros_Backend_v2.md.
+Documento complementar: prd-cotacao-seguros-backend-v2.md.
 
 ## 1. Resumo e problema
 

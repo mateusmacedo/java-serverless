@@ -1,6 +1,6 @@
 asyncapi: 3.1.0
 info:
-  title: sample-solution eventos e mensagens
+  title: Eventos e mensagens da sample-solution
   version: 0.1.0
   description: |
     Contratos assíncronos da solução de referência: o estado que atravessa a máquina de estado

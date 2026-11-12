@@ -9,8 +9,10 @@ A `sample-solution`, em Spring, é a solução de referência: recebe uma requis
 persiste e notifica, com falhas enviadas para uma fila de mensagens com falha (DLQ) e reprocessamento
 agendado. A `receipt-solution`, em Quarkus, reage ao `RequestCompleted` da sample e emite um
 comprovante para cada pedido concluído. As duas compartilham o ambiente AWS e só se conhecem pelo
-evento ([ADR 0011](decisions/0011-integracao-entre-solucoes-por-eventbridge.md)). O passo a passo de
-cada caminho está em [Fluxos](flows.md).
+evento ([ADR 0011](decisoes/0011-integracao-entre-solucoes-por-eventbridge.md)). O passo a passo de
+cada caminho está em [Fluxos](fluxos.md). A plataforma de cotação (`quote-solution` e `provider-solution`)
+tem o próprio [desenho técnico](plataforma-de-cotacao.md); as versões das peças estão no
+[README da raiz](../README.md#tecnologias).
 
 ## Contexto
 
@@ -37,7 +39,7 @@ flowchart LR
     dev -->|pnpm deploy:local| aws
 ```
 
-## Containers
+## Contêineres
 
 ```mermaid
 flowchart TB
@@ -77,14 +79,14 @@ As Lambdas `api`, `validate`, `persist`, `notify` e `reprocess` da parte de cima
 
 | Módulo | Empacotamento | Responsabilidade |
 |---|---|---|
-| `serverless-parent` (raiz) | `pom` | Neutro: Java 21, versões e configuração dos plugins Maven e `testcontainers-floci-aws` ([ADR 0010](decisions/0010-raiz-neutra-e-parents-por-framework.md)) |
-| `platform/spring-parent` | `pom` | Importa os BOMs do Spring Boot 4.0.9, do AWS SDK 2.57.12 e do Spring Cloud 2025.1.4; exclui `apache-client` e `netty-nio-client` de cada service do SDK; define o empacotamento em zip para Lambda, herdado pelo módulo que declarar `maven-dependency-plugin` e `maven-assembly-plugin` |
-| `platform/quarkus-parent` | `pom` | Importa os BOMs do Quarkus 3.40.1.2 e do Quarkus Amazon Services (extensões 3.22.1, AWS SDK 2.54.13); configura o `quarkus-maven-plugin` e monta o `<artifactId>-lambda.zip` de cada módulo, com o `aws-crt` só nos jars Linux; fixa versões fora do BOM (`aws-crt`, AssertJ e `openapi-request-validator-restassured`) |
-| `platform/spring-aws` | `jar` | Só para soluções Spring: autoconfiguração dos clients síncronos do SDK, cada um com o próprio `AwsCrtHttpClient` e criado só quando o SDK correspondente está no classpath ([ADR 0005](decisions/0005-clients-sincronos-com-crt.md)) |
+| `serverless-parent` (raiz) | `pom` | Neutro: Java 21, versões e configuração dos plugins Maven e `testcontainers-floci-aws` ([ADR 0010](decisoes/0010-raiz-neutra-e-parents-por-framework.md)) |
+| `platform/spring-parent` | `pom` | Importa os BOMs do Spring Boot, do AWS SDK e do Spring Cloud; exclui `apache-client` e `netty-nio-client` de cada service do SDK; define o empacotamento em zip para Lambda, herdado pelo módulo que declarar `maven-dependency-plugin` e `maven-assembly-plugin` |
+| `platform/quarkus-parent` | `pom` | Importa os BOMs do Quarkus e do Quarkus Amazon Services (extensões e AWS SDK); configura o `quarkus-maven-plugin` e monta o `<artifactId>-lambda.zip` de cada módulo, com o `aws-crt` só nos jars Linux; fixa versões fora do BOM (`aws-crt`, AssertJ e `openapi-request-validator-restassured`) |
+| `platform/spring-aws` | `jar` | Só para soluções Spring: autoconfiguração dos clients síncronos do SDK, cada um com o próprio `AwsCrtHttpClient` e criado só quando o SDK correspondente está no classpath ([ADR 0005](decisoes/0005-clients-sincronos-com-crt.md)) |
 | `sample-solution` | `pom` | Herda do `spring-parent`; agrega `api` e `functions` e, com `-Pe2e`, o `e2e` |
 | `sample-solution/api` | `jar` + zip | Lambda HTTP com Spring MVC via `aws-serverless-java-container-springboot4` |
 | `sample-solution/functions` | `jar` + zip | Lambdas dos passos e do reprocessamento com Spring Cloud Function |
-| `sample-solution/e2e` | `jar`, só com testes | Testes ponta a ponta contra a stack implantada; entra no build apenas com o perfil `-Pe2e` ([Testes](testing.md)) |
+| `sample-solution/e2e` | `jar`, só com testes | Testes ponta a ponta contra a stack implantada; entra no build apenas com o perfil `-Pe2e` ([Testes](testes.md)) |
 | `receipt-solution` | `pom` | Herda do `quarkus-parent`; agrega `api` e `functions` e, com `-Pe2e`, o `e2e` |
 | `receipt-solution/api` (`receipt-api`) | `jar` + `receipt-api-lambda.zip` | Lambda HTTP com Quarkus REST via `quarkus-amazon-lambda-rest`: consulta e emissão manual de comprovantes |
 | `receipt-solution/functions` (`receipt-functions`) | `jar` + `receipt-functions-lambda.zip` | Lambdas `issue` e `announce` com `quarkus-amazon-lambda`; clients do Quarkus Amazon Services com `aws-crt` |
@@ -94,7 +96,7 @@ As Lambdas `api`, `validate`, `persist`, `notify` e `reprocess` da parte de cima
 
 | Função | Handler | Gatilho | SDKs usados | Entrada e saída |
 |---|---|---|---|---|
-| `api` | `com.mmda.serverless.sample.api.StreamLambdaHandler::handleRequest` | API Gateway, `POST /requests` | S3, Step Functions | Evento proxy do API Gateway; responde `202` ([OpenAPI](api/openapi.yaml)) |
+| `api` | `com.mmda.serverless.sample.api.StreamLambdaHandler::handleRequest` | API Gateway, `POST /requests` | S3, Step Functions | Evento proxy do API Gateway; responde `202` ([OpenAPI](../contracts/sample-solution/openapi.yaml)) |
 | `validate` | `org.springframework.cloud.function.adapter.aws.FunctionInvoker::handleRequest` | Step Functions | S3, SSM, Secrets Manager | `RequestContext` → `RequestContext` com `signature` e `payloadBytes` |
 | `persist` | `FunctionInvoker` | Step Functions | DynamoDB | `RequestContext` → `RequestContext` |
 | `notify` | `FunctionInvoker` | Step Functions | SNS, EventBridge | `RequestContext` → `RequestContext` |
@@ -103,24 +105,24 @@ As Lambdas `api`, `validate`, `persist`, `notify` e `reprocess` da parte de cima
 As quatro funções do módulo `functions` usam o mesmo zip. Cada Lambda escolhe a sua pela variável
 `SPRING_CLOUD_FUNCTION_DEFINITION`, e o `FunctionInvoker` encontra a aplicação pela variável
 `MAIN_CLASS`. Os formatos de `RequestContext`, `ReprocessCommand` e `ReprocessResult` estão no
-[AsyncAPI](events/asyncapi.yaml).
+[AsyncAPI](../contracts/sample-solution/asyncapi.yaml).
 
 Lambdas da `receipt-solution`, em Quarkus:
 
 | Função | Handler | Gatilho | SDKs usados | Entrada e saída |
 |---|---|---|---|---|
-| `api` | `io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest` | API Gateway, `GET /receipts/{requestId}` e `POST /receipts` | DynamoDB, Step Functions | Evento proxy do API Gateway; responde `200`/`404` e `202` ([OpenAPI](api/receipt-solution.openapi.yaml)) |
+| `api` | `io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest` | API Gateway, `GET /receipts/{requestId}` e `POST /receipts` | DynamoDB, Step Functions | Evento proxy do API Gateway; responde `200`/`404` e `202` ([OpenAPI](../contracts/receipt-solution/openapi.yaml)) |
 | `issue` | `QuarkusStreamHandler` | Step Functions `receipt-flow`, com `InputPath: $.detail` | DynamoDB | `CompletedRequest` → `Receipt` |
 | `announce` | `QuarkusStreamHandler` | Step Functions `receipt-flow` | EventBridge | `Receipt` → `Receipt` |
 
 A Lambda `api` usa o `QuarkusStreamHandler` da extensão `quarkus-amazon-lambda-rest`, que converte o
 evento do API Gateway REST numa requisição para o Quarkus REST (`ReceiptResource`): `GET
 /receipts/{requestId}` lê a tabela e `POST /receipts` inicia o `receipt-flow` com
-`{"detail": <corpo>}`, o mesmo formato do evento ([OpenAPI](api/receipt-solution.openapi.yaml)).
+`{"detail": <corpo>}`, o mesmo formato do evento ([OpenAPI](../contracts/receipt-solution/openapi.yaml)).
 
 `issue` e `announce` usam o mesmo `receipt-functions-lambda.zip`. Cada Lambda escolhe o seu handler pela variável
 `QUARKUS_LAMBDA_HANDLER`, que bate com o `@Named` de `IssueReceiptHandler` e `AnnounceReceiptHandler`.
-O formato do `Receipt` está no [AsyncAPI da receipt-solution](events/receipt-solution.asyncapi.yaml).
+O formato do `Receipt` está no [AsyncAPI da receipt-solution](../contracts/receipt-solution/asyncapi.yaml).
 
 ## Recursos AWS
 
@@ -159,7 +161,7 @@ Todas as Lambdas recebem as variáveis de `provider.environment`. A aplicação 
 | Variável | Valor no stage `local` | Usada por |
 |---|---|---|
 | `AWS_ENDPOINT_URL` | `http://floci:4566` | Todos os clients do SDK |
-| `AWS_ENDPOINT_URL_S3` | `http://floci:4566` | Client do S3 ([ADR 0008](decisions/0008-aws-endpoint-url-s3-no-offline.md)) |
+| `AWS_ENDPOINT_URL_S3` | `http://floci:4566` | Client do S3 ([ADR 0008](decisoes/0008-aws-endpoint-url-s3-no-offline.md)) |
 | `S3_PATH_STYLE_ACCESS` | `true` | Client do S3 (`mmda.aws.s3.path-style-access`) |
 | `BUCKET_NAME` | `sample-solution-local-payloads` | `api`, `validate` |
 | `TABLE_NAME` | `sample-solution-local-requests` | `persist` |
@@ -173,8 +175,11 @@ Todas as Lambdas recebem as variáveis de `provider.environment`. A aplicação 
 | `MAIN_CLASS` / `SPRING_CLOUD_FUNCTION_DEFINITION` | por função | Lambdas do módulo `functions` |
 
 Região, conta e endpoint vêm das cadeias padrão do AWS SDK, então o mesmo código roda no Floci e na
-AWS. Os valores de `AWS_ENDPOINT_URL*` e `S3_PATH_STYLE_ACCESS` estão em `params.local` e existem só
-para o stage `local`.
+AWS. Na `sample-solution` e na `receipt-solution`, os valores de `AWS_ENDPOINT_URL*` e
+`S3_PATH_STYLE_ACCESS` estão em `params.local` e existem só para o stage `local`. A plataforma de cotação é
+diferente: o `params.default` traz os valores da AWS, e as variáveis de endpoint só existem quando o param
+`awsEndpointUrl` não é vazio, pela condição `HasAwsEndpointUrl`
+([parâmetros por stage](plataforma-de-cotacao.md#12-parâmetros-por-stage)).
 
 Na `receipt-solution`, o Quarkus lê as variáveis pelo `application.properties`:
 
@@ -218,15 +223,15 @@ receipt-api-lambda.zip / receipt-functions-lambda.zip
 
 Nos dois frameworks, o `lib/` leva o `aws-crt` só com os nativos de Linux, nos jars `linux-x86_64` e
 `linux-aarch_64`, no lugar do jar completo com os nativos de todas as plataformas. Os testes
-continuam com o jar completo ([ADR 0012](decisions/0012-aws-crt-com-nativos-linux-no-pacote.md)).
+continuam com o jar completo ([ADR 0012](decisoes/0012-aws-crt-com-nativos-linux-no-pacote.md)).
 
 ## Ambiente local
 
 ```mermaid
 flowchart LR
     dev([Desenvolvedor]) -->|pnpm deploy:local| sls[Serverless Framework v4 e serverless-localstack]
-    sls -->|CloudFormation em localhost:4566, sample e depois receipt| floci[Floci]
-    floci -->|socket do Docker| lambdas[Containers das Lambdas - imagem java 21]
+    sls -->|CloudFormation em localhost:4566, cinco stacks na ordem do README| floci[Floci]
+    floci -->|socket do Docker| lambdas[Contêineres das Lambdas - imagem java 21]
     lambdas -->|AWS_ENDPOINT_URL floci:4566| floci
     dev -->|pnpm sls offline --stage local, em sample-solution| offline[serverless-offline na porta 3000]
     offline -->|container na rede floci| apiC[Lambda api]
@@ -235,11 +240,11 @@ flowchart LR
 
 - O Floci cria um container por Lambda a partir da imagem oficial `public.ecr.aws/lambda/java:21` e
   injeta `AWS_ENDPOINT_URL=http://floci:4566` por causa de `FLOCI_HOSTNAME=floci` no `compose.yaml`.
-- O `pnpm deploy:local` empacota os módulos e implanta a `sample-solution` antes da
-  `receipt-solution`, porque a regra que aciona a receipt fica no barramento da sample.
+- O `pnpm deploy:local` empacota os módulos e implanta as stacks na ordem descrita em
+  [Implantação no Floci](../README.md#implantação-no-floci).
 - O `serverless-offline` só está configurado na `sample-solution`. Ele executa só as Lambdas e a rota
   HTTP; a máquina de estado e os recursos continuam no Floci, então ele depende do deploy local.
-- Decisão sobre o emulador e os plugins: [ADR 0001](decisions/0001-serverless-framework-e-floci.md).
+- Decisão sobre o emulador e os plugins: [ADR 0001](decisoes/0001-serverless-framework-e-floci.md).
 
 ## Permissões
 

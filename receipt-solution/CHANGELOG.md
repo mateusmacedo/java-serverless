@@ -15,7 +15,7 @@ Primeira versão estável.
   por `requestId` e publicam o evento `ReceiptIssued` no barramento do EventBridge da solução.
 - Máquina de estado `receiptFlow`, iniciada pelo EventBridge por uma regra no barramento da
   `sample-solution` para o evento `RequestCompleted`
-  ([ADR 0011](../docs/decisions/0011-integracao-entre-solucoes-por-eventbridge.md)).
+  ([ADR 0011](../docs/decisoes/0011-integracao-entre-solucoes-por-eventbridge.md)).
 - API REST com `quarkus-amazon-lambda-rest`: `GET /receipts/{requestId}` consulta um comprovante e
   `POST /receipts` emite um manualmente pela mesma máquina de estado.
 - Recursos declarados no `serverless.yml`: tabela DynamoDB de comprovantes e barramento próprio do

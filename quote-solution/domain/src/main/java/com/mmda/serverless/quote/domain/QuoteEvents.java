@@ -6,7 +6,7 @@ import java.util.Map;
 
 /**
  * Eventos da quote-solution (§3 do desenho). Os schemas estão em
- * {@code docs/events/quote-solution.asyncapi.yaml}; os {@code detail} são montados só aqui, para a API
+ * {@code contracts/quote-solution/asyncapi.yaml}; os {@code detail} são montados só aqui, para a API
  * e as functions gravarem o mesmo formato no outbox.
  */
 public final class QuoteEvents {
