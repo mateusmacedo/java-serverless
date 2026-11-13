@@ -28,13 +28,17 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * A Lambda dos simuladores pelo handler real, com o evento de proxy que o API Gateway entrega na rota
- * {@code /sim/{proxy+}}, e o estado na tabela dos simuladores no Floci: o contador do {@code vehicle-flaky} e a
- * situação da beta. A Lambda {@code simCallbackSender} entrega o callback agendado na fila a uma API em processo.
+ * A Lambda dos simuladores pelo handler real, com o evento de proxy que o API
+ * Gateway entrega na rota
+ * {@code /sim/{proxy+}}, e o estado na tabela dos simuladores no Floci: o
+ * contador do {@code vehicle-flaky} e a
+ * situação da beta. A Lambda {@code simCallbackSender} entrega o callback
+ * agendado na fila a uma API em processo.
  */
 class SimulatorsLambdaFlociIT {
 
-    private static final FlociContainer FLOCI = new FlociContainer(System.getProperty("floci.image", "floci/floci:2.4.0"));
+    private static final FlociContainer FLOCI = new FlociContainer(
+            System.getProperty("floci.image", "floci/floci:2.4.0"));
     private static final String TABLE = "it-provider-simulators";
     private static final String CALLBACK_SECRET = "it/provider/callback-secret";
     private static final String CALLBACK_SECRET_VALUE = "it-callback-secret-value";
@@ -115,8 +119,10 @@ class SimulatorsLambdaFlociIT {
     void betaAcceptsSchedulesTheCallbackAndKeepsTheSituationByEitherReference() throws IOException {
         String clientReference = "q_" + "ab".repeat(16);
 
-        JsonNode accepted = invoke("/sim/insurers/beta/quotes", """
-                {"clientReference":"%s","risk":{"usage":"PERSONAL","vehicle":{"ref":"vehicle-beta-early"}},                "enrichment":{}}""".formatted(clientReference));
+        JsonNode accepted = invoke("/sim/insurers/beta/quotes",
+                """
+                        {"clientReference":"%s","risk":{"usage":"PERSONAL","vehicle":{"ref":"vehicle-beta-early"}},                "enrichment":{}}"""
+                        .formatted(clientReference));
 
         assertThat(accepted.path("statusCode").asInt()).isEqualTo(202);
         String providerRequestId = JSON.readTree(accepted.path("body").asString()).path("providerRequestId").asString();
@@ -176,7 +182,8 @@ class SimulatorsLambdaFlociIT {
             HttpServer server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
             server.createContext("/", exchange -> {
                 RECEIVED.set(new HttpExchangeCopy(exchange.getRequestURI().getPath(),
-                        exchange.getRequestHeaders().getFirst("X-Signature"), exchange.getRequestBody().readAllBytes()));
+                        exchange.getRequestHeaders().getFirst("X-Signature"),
+                        exchange.getRequestBody().readAllBytes()));
                 exchange.sendResponseHeaders(200, -1);
                 exchange.close();
             });

@@ -8,8 +8,10 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Corpos e cabeçalho das mutações do M5: seleção de oferta e pedido de reconciliação. Como na criação, campo
- * desconhecido é 400, porque o {@code requestHash} da idempotência é calculado sobre o body inteiro.
+ * Corpos e cabeçalho das mutações do M5: seleção de oferta e pedido de
+ * reconciliação. Como na criação, campo
+ * desconhecido é 400, porque o {@code requestHash} da idempotência é calculado
+ * sobre o body inteiro.
  */
 final class MutationRequests {
 
@@ -41,7 +43,10 @@ final class MutationRequests {
         return singleText(body, OFFER_ID, MAX_OFFER_ID_LENGTH, "Informe o id de uma oferta da versão.");
     }
 
-    /** {@code {"reason": "..."}} do {@code POST /v1/operations/queries/{id}/reconcile}, registrado na auditoria. */
+    /**
+     * {@code {"reason": "..."}} do
+     * {@code POST /v1/operations/queries/{id}/reconcile}, registrado na auditoria.
+     */
     static String reason(JsonNode body) {
         return singleText(body, REASON, MAX_REASON_LENGTH,
                 "Informe o motivo da reconciliação, com até " + MAX_REASON_LENGTH + " caracteres.");
@@ -67,7 +72,10 @@ final class MutationRequests {
         return value.textValue();
     }
 
-    /** WHY: o {@code maxLength} do JSON Schema conta code points; o {@code length()} contaria o emoji duas vezes. */
+    /**
+     * WHY: o {@code maxLength} do JSON Schema conta code points; o {@code length()}
+     * contaria o emoji duas vezes.
+     */
     static int characters(String text) {
         return text.codePointCount(0, text.length());
     }

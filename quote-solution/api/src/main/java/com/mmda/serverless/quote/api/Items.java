@@ -3,7 +3,9 @@ package com.mmda.serverless.quote.api;
 import java.util.Map;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 
-/** Leitura tolerante de atributos: ausente devolve nulo ou o padrão informado. */
+/**
+ * Leitura tolerante de atributos: ausente devolve nulo ou o padrão informado.
+ */
 final class Items {
 
     private Items() {
@@ -28,8 +30,10 @@ final class Items {
     }
 
     /**
-     * Id opaco do cliente que pode ser parte de uma chave. WHY: o DynamoDB recusa com {@code ValidationException}
-     * a partição acima de 2048 bytes e a ordenação acima de 1024; um id maior que os da plataforma não existe e
+     * Id opaco do cliente que pode ser parte de uma chave. WHY: o DynamoDB recusa
+     * com {@code ValidationException}
+     * a partição acima de 2048 bytes e a ordenação acima de 1024; um id maior que
+     * os da plataforma não existe e
      * responde 404 ou 400, sem chegar à tabela.
      */
     static boolean fitsKey(String id) {

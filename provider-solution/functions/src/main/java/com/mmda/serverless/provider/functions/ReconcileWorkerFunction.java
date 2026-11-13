@@ -7,7 +7,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-/** Lambda da fila {@code reconcile-requests}: a reconciliação manual pedida pela quote (M4). */
+/**
+ * Lambda da fila {@code reconcile-requests}: a reconciliação manual pedida pela
+ * quote (M4).
+ */
 @Component("reconcileWorker")
 class ReconcileWorkerFunction implements Function<SQSEvent, SQSBatchResponse> {
 

@@ -7,7 +7,8 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 public record AwsClientsProperties(@DefaultValue S3 s3) {
 
     /**
-     * @param pathStyleAccess usa URLs no formato host/bucket/chave; necessário quando o
+     * @param pathStyleAccess usa URLs no formato host/bucket/chave; necessário
+     *                        quando o
      *                        host do emulador não resolve subdomínios por bucket
      */
     public record S3(boolean pathStyleAccess) {

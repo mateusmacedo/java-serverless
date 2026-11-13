@@ -3,8 +3,10 @@ package com.mmda.serverless.provider.domain;
 import java.time.Duration;
 
 /**
- * Retry do worker, único dono do retry (desenho, §9), com backoff exponencial e jitter completo.
- * Os tetos dobram a cada retry e somam {@code backoffMax}, então a espera total nunca passa dele.
+ * Retry do worker, único dono do retry (desenho, §9), com backoff exponencial e
+ * jitter completo.
+ * Os tetos dobram a cada retry e somam {@code backoffMax}, então a espera total
+ * nunca passa dele.
  *
  * @param retries retries além da tentativa inicial ({@code workerRetries})
  */

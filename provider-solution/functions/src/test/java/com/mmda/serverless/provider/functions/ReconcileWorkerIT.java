@@ -24,9 +24,12 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * {@code reconcileWorker} no Floci (desenho, §7 e §8, "Reconciliação manual"): o {@code QueryReconcileRequested}
- * chega à fila como a regra do barramento o entrega, grava o {@code OPERATION#}, reconcilia pelo caminho do
- * reconciler e publica {@code QueryReconciled}. A publicação pela API da quote é do M5.
+ * {@code reconcileWorker} no Floci (desenho, §7 e §8, "Reconciliação manual"):
+ * o {@code QueryReconcileRequested}
+ * chega à fila como a regra do barramento o entrega, grava o
+ * {@code OPERATION#}, reconcilia pelo caminho do
+ * reconciler e publica {@code QueryReconciled}. A publicação pela API da quote
+ * é do M5.
  */
 class ReconcileWorkerIT extends FlociIntegrationTest {
 
@@ -134,7 +137,10 @@ class ReconcileWorkerIT extends FlociIntegrationTest {
         assertThat(PROVIDERS.statusReads(ProviderStub.betaRequestId(request.queryId()))).isZero();
     }
 
-    /** Alpha sem resposta depois do envio: o worker deixa a consulta {@code UNKNOWN} para a reconciliação. */
+    /**
+     * Alpha sem resposta depois do envio: o worker deixa a consulta {@code UNKNOWN}
+     * para a reconciliação.
+     */
     private TestRequests.Request unknownAlphaQuery() {
         TestRequests.Request request = TestRequests.insurer(ProviderStub.VEHICLE_SLOW, deadline());
         insurerWorker.apply(sqsEvent(request.body()));
@@ -150,7 +156,10 @@ class ReconcileWorkerIT extends FlociIntegrationTest {
         return detail;
     }
 
-    /** O envelope que a regra {@code QueryReconcileRequested} entrega na fila, com o {@code detail} da quote. */
+    /**
+     * O envelope que a regra {@code QueryReconcileRequested} entrega na fila, com o
+     * {@code detail} da quote.
+     */
     private String reconcileRequest(String operationId, String organizationId, String queryId) {
         Map<String, Object> detail = new LinkedHashMap<>();
         detail.put("eventId", UUID.randomUUID().toString());

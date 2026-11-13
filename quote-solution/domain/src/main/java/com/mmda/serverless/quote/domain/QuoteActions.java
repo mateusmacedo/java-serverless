@@ -6,7 +6,8 @@ import java.util.Collection;
 import java.util.List;
 
 /**
- * Ações permitidas e disponibilidade das ofertas, derivadas na leitura (§8 do desenho). O
+ * Ações permitidas e disponibilidade das ofertas, derivadas na leitura (§8 do
+ * desenho). O
  * {@code serverTime} é o relógio do servidor no momento da leitura.
  */
 public final class QuoteActions {
@@ -17,14 +18,20 @@ public final class QuoteActions {
     private QuoteActions() {
     }
 
-    /** Motivo de uma oferta não ser selecionável, na ordem de precedência do desenho. */
+    /**
+     * Motivo de uma oferta não ser selecionável, na ordem de precedência do
+     * desenho.
+     */
     public enum UnavailabilityReason {
         VERSION_SUPERSEDED,
         SELECTION_ALREADY_EXISTS,
         OFFER_EXPIRED
     }
 
-    /** Estado da cotação que decide as ações: versão lida, versão atual e seleção existente. */
+    /**
+     * Estado da cotação que decide as ações: versão lida, versão atual e seleção
+     * existente.
+     */
     public record QuoteState(int version, int currentVersion, boolean selected) {
 
         boolean isCurrent() {

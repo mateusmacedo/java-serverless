@@ -8,7 +8,8 @@ import java.util.function.Consumer;
 import org.slf4j.Logger;
 
 /**
- * Falha parcial no ESM de SQS ({@code ReportBatchItemFailures}): só a mensagem que falhou volta à fila e,
+ * Falha parcial no ESM de SQS ({@code ReportBatchItemFailures}): só a mensagem
+ * que falhou volta à fila e,
  * depois de {@code maxReceiveCount}, vai para a DLQ.
  */
 final class SqsBatches {

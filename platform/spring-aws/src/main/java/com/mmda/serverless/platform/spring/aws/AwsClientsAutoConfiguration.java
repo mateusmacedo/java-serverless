@@ -18,10 +18,13 @@ import software.amazon.awssdk.services.sqs.SqsClient;
 import software.amazon.awssdk.services.ssm.SsmClient;
 
 /**
- * Clients síncronos do AWS SDK v2. Região, credenciais e endpoint vêm das cadeias padrão
- * do SDK (incluindo {@code AWS_ENDPOINT_URL}), então o mesmo código roda no Floci e na AWS.
+ * Clients síncronos do AWS SDK v2. Região, credenciais e endpoint vêm das
+ * cadeias padrão
+ * do SDK (incluindo {@code AWS_ENDPOINT_URL}), então o mesmo código roda no
+ * Floci e na AWS.
  * <p>
- * WHY: cada client recebe o próprio {@link AwsCrtHttpClient} pelo builder, como recomenda a AWS,
+ * WHY: cada client recebe o próprio {@link AwsCrtHttpClient} pelo builder, como
+ * recomenda a AWS,
  * e só é criado se o módulo declarar o SDK correspondente.
  */
 @AutoConfiguration

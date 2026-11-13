@@ -13,8 +13,10 @@ import java.util.Optional;
 import org.springframework.stereotype.Component;
 
 /**
- * Adaptadores dos protocolos dos fornecedores simulados. O {@code clientReference} enviado é o
- * {@code queryId}, para o callback e o contador do {@code vehicle-flaky} acharem a consulta (§10).
+ * Adaptadores dos protocolos dos fornecedores simulados. O
+ * {@code clientReference} enviado é o
+ * {@code queryId}, para o callback e o contador do {@code vehicle-flaky}
+ * acharem a consulta (§10).
  */
 @Component
 class ProviderClients {
@@ -39,7 +41,9 @@ class ProviderClients {
         return ProviderExchange.of(http.postJson(ENRICHMENT_PATH, json.write(body)), json, EnrichmentReply.class);
     }
 
-    /** Rota síncrona da seguradora; vazio quando ela não é atendida por este worker. */
+    /**
+     * Rota síncrona da seguradora; vazio quando ela não é atendida por este worker.
+     */
     Optional<String> insurerPath(String insurerId) {
         return properties.supportedInsurers().contains(insurerId)
                 ? Optional.of("/sim/insurers/" + insurerId + "/quotes")
@@ -47,8 +51,10 @@ class ProviderClients {
     }
 
     /**
-     * Situação de um pedido já enviado, pela referência dele no fornecedor ({@code providerRequestId} ou
-     * {@code clientReference}). WHY: é uma leitura; a reconciliação nunca repete o {@code POST} da cotação (§8).
+     * Situação de um pedido já enviado, pela referência dele no fornecedor
+     * ({@code providerRequestId} ou
+     * {@code clientReference}). WHY: é uma leitura; a reconciliação nunca repete o
+     * {@code POST} da cotação (§8).
      */
     ProviderExchange<InsurerStatus> insurerStatus(String insurerId, String reference) {
         String path = "/sim/insurers/" + insurerId + "/quotes/" + URLEncoder.encode(reference, StandardCharsets.UTF_8);

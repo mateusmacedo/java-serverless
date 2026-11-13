@@ -9,7 +9,10 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
-/** Regras {@code elig-1} e {@code sel-1} no nível de regra, sem nenhuma chamada externa. */
+/**
+ * Regras {@code elig-1} e {@code sel-1} no nível de regra, sem nenhuma chamada
+ * externa.
+ */
 class RulesTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -94,8 +97,8 @@ class RulesTest {
 
     @Test
     void t26_enrichedVehicleBefore2000HasNoApplicableInsurerEvenWithARecentInputYear() {
-        InsurerSelectionRule.InsurerSelection selection =
-                InsurerSelectionRule.select(snapshot(Usage.PERSONAL, 2021, false, "2010-01-01"), profile(1998), 2);
+        InsurerSelectionRule.InsurerSelection selection = InsurerSelectionRule
+                .select(snapshot(Usage.PERSONAL, 2021, false, "2010-01-01"), profile(1998), 2);
 
         assertThat(selection.insurerIds()).isEmpty();
         assertThat(selection.ruleVersion()).isEqualTo("sel-1");
@@ -116,7 +119,8 @@ class RulesTest {
 
     @Test
     void profileWithoutVehicleYearFallsBackToTheInputYear() {
-        JsonNode withoutYear = MAPPER.createObjectNode().set("vehicle", MAPPER.createObjectNode().put("ref", "vehicle-x"));
+        JsonNode withoutYear = MAPPER.createObjectNode().set("vehicle",
+                MAPPER.createObjectNode().put("ref", "vehicle-x"));
 
         assertThat(InsurerSelectionRule.select(snapshot(Usage.PERSONAL, 1998, false, "2010-01-01"), withoutYear, 2)
                 .insurerIds()).isEmpty();
@@ -130,7 +134,10 @@ class RulesTest {
         assertThat(Insurers.nameOf("gamma")).isEmpty();
     }
 
-    /** {@code result} do {@code EnrichmentResolved} no formato do {@code EnrichmentProfile} da provider. */
+    /**
+     * {@code result} do {@code EnrichmentResolved} no formato do
+     * {@code EnrichmentProfile} da provider.
+     */
     private static JsonNode profile(int vehicleYear) {
         ObjectNode profile = MAPPER.createObjectNode();
         profile.putObject("vehicle").put("ref", "vehicle-x").put("year", vehicleYear).put("marketValue", "75000.00");

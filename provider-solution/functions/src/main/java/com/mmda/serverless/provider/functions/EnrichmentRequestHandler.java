@@ -27,8 +27,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
- * Um {@code EnrichmentRequested} (desenho, §8 e §9): reentrega, prazo, reuso ({@code HIT}), espera da consulta
- * em voo ({@code JOIN}) ou liderança com quota, chamada com o retry do worker e conclusão com evidência,
+ * Um {@code EnrichmentRequested} (desenho, §8 e §9): reentrega, prazo, reuso
+ * ({@code HIT}), espera da consulta
+ * em voo ({@code JOIN}) ou liderança com quota, chamada com o retry do worker e
+ * conclusão com evidência,
  * índice de reuso, fan-out e {@code EnrichmentResolved}.
  */
 @Component
@@ -54,10 +56,10 @@ class EnrichmentRequestHandler {
     private final Metrics metrics;
 
     EnrichmentRequestHandler(QueryLedger ledger, ReuseLedger reuseLedger, EnrichmentResolutions resolutions,
-                             ProviderClients clients, RawResponses rawResponses, QueryKeySecret queryKeySecret,
-                             DelayedRedelivery redelivery, EventJson json, ProviderProperties properties,
-                             ReuseProperties reuse, RetryPolicy retryPolicy, Clock clock, Sleeper sleeper,
-                             RandomGenerator jitter, Metrics metrics) {
+            ProviderClients clients, RawResponses rawResponses, QueryKeySecret queryKeySecret,
+            DelayedRedelivery redelivery, EventJson json, ProviderProperties properties,
+            ReuseProperties reuse, RetryPolicy retryPolicy, Clock clock, Sleeper sleeper,
+            RandomGenerator jitter, Metrics metrics) {
         this.ledger = ledger;
         this.reuseLedger = reuseLedger;
         this.resolutions = resolutions;
@@ -76,8 +78,10 @@ class EnrichmentRequestHandler {
     }
 
     /**
-     * Antes do índice de reuso, a reentrega confere, nesta ordem, a consulta do próprio {@code workRef} (foi
-     * líder), o {@code CONSUMED} do pedido (já resolvido) e o registro como seguidor na cadeia corrente (§8).
+     * Antes do índice de reuso, a reentrega confere, nesta ordem, a consulta do
+     * próprio {@code workRef} (foi
+     * líder), o {@code CONSUMED} do pedido (já resolvido) e o registro como
+     * seguidor na cadeia corrente (§8).
      */
     void handle(QueuedMessage message) {
         EnrichmentRequest request = json.detail(message.body(), EnrichmentRequest.class);
@@ -88,7 +92,8 @@ class EnrichmentRequestHandler {
             return;
         }
         if (ledger.isConsumed(EnrichmentResolutions.consumedId(request.workRef()))) {
-            LOGGER.info("Enrichment request already resolved: workRef={} quoteId={}", request.workRef(), request.quoteId());
+            LOGGER.info("Enrichment request already resolved: workRef={} quoteId={}", request.workRef(),
+                    request.quoteId());
             return;
         }
         String queryKey = QueryKeys.compute(queryKeySecret.value(), request.organizationId(), request.provider(),
@@ -107,9 +112,12 @@ class EnrichmentRequestHandler {
         plan(request, queryId, queryKey, leadership, message);
     }
 
-    /** Releituras com {@code ConsistentRead} até o pedido usar, esperar ou liderar a consulta da {@code queryKey}. */
+    /**
+     * Releituras com {@code ConsistentRead} até o pedido usar, esperar ou liderar a
+     * consulta da {@code queryKey}.
+     */
     private void plan(EnrichmentRequest request, String queryId, String queryKey, Optional<Leadership> firstRead,
-                      QueuedMessage message) {
+            QueuedMessage message) {
         Optional<Leadership> leadership = firstRead;
         for (int round = 1; round <= MAX_PLAN_ROUNDS; round++) {
             Instant now = clock.instant();
@@ -136,7 +144,7 @@ class EnrichmentRequestHandler {
     }
 
     private boolean lead(EnrichmentRequest request, String queryId, String queryKey, ReusePlan.Lead lead,
-                         QueuedMessage message, Instant now) {
+            QueuedMessage message, Instant now) {
         QuotaReservation quota = QuotaReservation.of(properties, request.provider(), now);
         switch (ledger.lead(draft(request, queryId, queryKey), lead, quota, now)) {
             case LEADING -> {
@@ -160,8 +168,10 @@ class EnrichmentRequestHandler {
     }
 
     /**
-     * Registro como seguidor (§8). Cancelado o registro, a liderança é relida: concluída na versão em que o
-     * pedido tentou entrar, ele publica para si o resultado gravado, inclusive {@code NOT_FOUND} e {@code FAILED}.
+     * Registro como seguidor (§8). Cancelado o registro, a liderança é relida:
+     * concluída na versão em que o
+     * pedido tentou entrar, ele publica para si o resultado gravado, inclusive
+     * {@code NOT_FOUND} e {@code FAILED}.
      */
     private boolean join(EnrichmentRequest request, String queryKey, ReusePlan.Join join) {
         ReuseLedger.Registration registration = reuseLedger.register(queryKey, join.fencingVersion(), request,
@@ -185,7 +195,10 @@ class EnrichmentRequestHandler {
         redelivered(request, query, message);
     }
 
-    /** Seguidor já registrado: com a liderança concluída, publica para si; em voo, o fan-out o alcança. */
+    /**
+     * Seguidor já registrado: com a liderança concluída, publica para si; em voo, o
+     * fan-out o alcança.
+     */
     private void followerRedelivered(EnrichmentRequest request, Leadership leadership) {
         if (leadership.state() == Leadership.State.COMPLETED) {
             resolutions.publishRecorded(request, leadership);
@@ -235,7 +248,7 @@ class EnrichmentRequestHandler {
     }
 
     private void conclude(EnrichmentRequest request, String queryId, LeaderTerm term, int sequence,
-                          EnrichmentVerdict verdict, ProviderExchange<EnrichmentReply> exchange) {
+            EnrichmentVerdict verdict, ProviderExchange<EnrichmentReply> exchange) {
         Instant now = clock.instant();
         String receivedAt = Timestamps.format(now);
         Resolution resolution = switch (verdict) {
@@ -252,7 +265,7 @@ class EnrichmentRequestHandler {
             case EnrichmentVerdict.Unknown unknown -> new Resolution(QueryState.UNKNOWN, null, null,
                     EnrichmentResolved.Outcome.failed(unknown.errorClass()));
             case EnrichmentVerdict.Transient ignored ->
-                    throw new IllegalStateException("A transient failure does not conclude the query");
+                throw new IllegalStateException("A transient failure does not conclude the query");
         };
         String rawResponseRef = exchange.hasBody() ? rawResponses.store(queryId, sequence, exchange.rawBody()) : null;
         String outcomeName = resolution.state() == QueryState.UNKNOWN
@@ -276,7 +289,10 @@ class EnrichmentRequestHandler {
                 now);
     }
 
-    /** Conclui com {@code FAILED} depois das tentativas, que já foram encerradas uma a uma. */
+    /**
+     * Conclui com {@code FAILED} depois das tentativas, que já foram encerradas uma
+     * a uma.
+     */
     private void fail(EnrichmentRequest request, String queryId, LeaderTerm term, int lastSequence, String errorClass) {
         Instant now = clock.instant();
         resolutions.settle(request, queryId, null, QueryState.FAILED, null,
@@ -284,18 +300,24 @@ class EnrichmentRequestHandler {
                 EnrichmentResolved.Outcome.failed(errorClass), term, now);
     }
 
-    /** Prazo vencido ou quota esgotada antes da primeira chamada: a consulta nasce concluída, sem liderança. */
+    /**
+     * Prazo vencido ou quota esgotada antes da primeira chamada: a consulta nasce
+     * concluída, sem liderança.
+     */
     private void concludeWithoutCall(EnrichmentRequest request, String queryId, String queryKey, String errorClass,
-                                     Instant now) {
+            Instant now) {
         resolutions.settle(request, queryId, draft(request, queryId, queryKey), QueryState.FAILED, null,
                 failedEvidence(queryId, 0, errorClass, null, now), EnrichmentResolved.Outcome.failed(errorClass), null,
                 now);
     }
 
     /**
-     * Reentrega da própria consulta (§8): concluída, refaz o fan-out se liderou; em voo, nunca repete a chamada.
-     * Enquanto outra entrega pode estar viva, adia o pedido sem tocar a consulta. Depois disso, a consulta fica
-     * {@code UNKNOWN} (com tentativa aberta) ou {@code FAILED}, e a liderança conclui com {@code FAILED} se
+     * Reentrega da própria consulta (§8): concluída, refaz o fan-out se liderou; em
+     * voo, nunca repete a chamada.
+     * Enquanto outra entrega pode estar viva, adia o pedido sem tocar a consulta.
+     * Depois disso, a consulta fica
+     * {@code UNKNOWN} (com tentativa aberta) ou {@code FAILED}, e a liderança
+     * conclui com {@code FAILED} se
      * ainda for a dela.
      */
     private void redelivered(EnrichmentRequest request, QueryRecord query, QueuedMessage message) {
@@ -326,7 +348,7 @@ class EnrichmentRequestHandler {
     }
 
     private void quotaExhausted(EnrichmentRequest request, String queryId, String queryKey, QueuedMessage message,
-                                QuotaReservation quota, Instant now) {
+            QuotaReservation quota, Instant now) {
         long delay = quota.window().secondsUntilEnd(now) + 1;
         if (delay <= DelayedRedelivery.MAX_DELAY_SECONDS && now.plusSeconds(delay).isBefore(request.deadlineAt())) {
             redelivery.send(properties.enrichmentRequestsQueueUrl(), message, (int) delay);
@@ -337,14 +359,16 @@ class EnrichmentRequestHandler {
     }
 
     private EvidenceDraft failedEvidence(String queryId, int sequence, String errorClass, Long fencingVersion,
-                                         Instant now) {
+            Instant now) {
         return new EvidenceDraft(Identities.evidenceId(queryId, sequence), "FAILED", null, null, null,
                 Timestamps.format(now), null, null, errorClass, fencingVersion, reuse.policyVersion());
     }
 
     /**
-     * WHY: a idade da informação conta a partir do {@code observedAt} (RN05), mas um {@code observedAt} à frente
-     * do recebimento (relógio do provedor adiantado) estenderia a validade do {@code HIT} além do parâmetro.
+     * WHY: a idade da informação conta a partir do {@code observedAt} (RN05), mas
+     * um {@code observedAt} à frente
+     * do recebimento (relógio do provedor adiantado) estenderia a validade do
+     * {@code HIT} além do parâmetro.
      */
     private String reusableUntil(String observedAt, Instant receivedAt) {
         Instant observed = Timestamps.parse(observedAt);
@@ -371,6 +395,6 @@ class EnrichmentRequestHandler {
     }
 
     private record Resolution(QueryState state, String observedAt, String normalizedResult,
-                              EnrichmentResolved.Outcome outcome) {
+            EnrichmentResolved.Outcome outcome) {
     }
 }

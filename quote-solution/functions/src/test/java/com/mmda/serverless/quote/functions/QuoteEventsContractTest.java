@@ -28,8 +28,10 @@ import org.junit.jupiter.api.Test;
 import org.yaml.snakeyaml.Yaml;
 
 /**
- * Cada evento que a quote produz e os exemplos conferem com {@code contracts/quote-solution/asyncapi.yaml}, que
- * declara o que ela consome. Uma regra com filtro errado entregaria evento a quem não deveria (ADR 0013); o
+ * Cada evento que a quote produz e os exemplos conferem com
+ * {@code contracts/quote-solution/asyncapi.yaml}, que
+ * declara o que ela consome. Uma regra com filtro errado entregaria evento a
+ * quem não deveria (ADR 0013); o
  * contrato é o que os consumidores leem.
  */
 class QuoteEventsContractTest {
@@ -116,8 +118,10 @@ class QuoteEventsContractTest {
     }
 
     /**
-     * O que a quote consome está declarado no documento dela: operações {@code receive} nas filas {@code results} e
-     * {@code issues}, com mensagens que existem no AsyncAPI da provider. São os eventos que o {@code resume} e o
+     * O que a quote consome está declarado no documento dela: operações
+     * {@code receive} nas filas {@code results} e
+     * {@code issues}, com mensagens que existem no AsyncAPI da provider. São os
+     * eventos que o {@code resume} e o
      * {@code issue-projector} tratam.
      */
     @Test
@@ -170,7 +174,10 @@ class QuoteEventsContractTest {
         return asyncApi.at("/components/schemas/" + name);
     }
 
-    /** Subconjunto do JSON Schema usado no documento: tipos, obrigatórios, propriedades fechadas, const e enum. */
+    /**
+     * Subconjunto do JSON Schema usado no documento: tipos, obrigatórios,
+     * propriedades fechadas, const e enum.
+     */
     private static List<String> validate(JsonNode schema, JsonNode value, String path) {
         List<String> errors = new ArrayList<>();
         if (schema.has("$ref")) {
@@ -201,11 +208,13 @@ class QuoteEventsContractTest {
                 }
             }
             JsonNode properties = schema.path("properties");
-            for (Iterator<Map.Entry<String, JsonNode>> fields = value.fields(); fields.hasNext(); ) {
+            for (Iterator<Map.Entry<String, JsonNode>> fields = value.fields(); fields.hasNext();) {
                 Map.Entry<String, JsonNode> field = fields.next();
                 if (properties.has(field.getKey())) {
-                    errors.addAll(validate(properties.get(field.getKey()), field.getValue(), path + "." + field.getKey()));
-                } else if (schema.path("additionalProperties").isBoolean() && !schema.get("additionalProperties").asBoolean()) {
+                    errors.addAll(
+                            validate(properties.get(field.getKey()), field.getValue(), path + "." + field.getKey()));
+                } else if (schema.path("additionalProperties").isBoolean()
+                        && !schema.get("additionalProperties").asBoolean()) {
                     errors.add(path + "." + field.getKey() + " is not in the contract");
                 }
             }

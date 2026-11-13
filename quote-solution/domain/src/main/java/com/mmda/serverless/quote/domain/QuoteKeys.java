@@ -1,7 +1,8 @@
 package com.mmda.serverless.quote.domain;
 
 /**
- * Chaves e valores de índice da tabela {@code quote-solution-<stage>-quotes} (§4 do desenho e ADR 0015).
+ * Chaves e valores de índice da tabela {@code quote-solution-<stage>-quotes}
+ * (§4 do desenho e ADR 0015).
  * Só strings: o mapeamento para o SDK fica na api e nas functions.
  */
 public final class QuoteKeys {
@@ -20,20 +21,30 @@ public final class QuoteKeys {
     public static final String ACTIVE_VERSION = "ACTIVE_VERSION";
     public static final String OUTBOX_PENDING = "OUTBOX_PENDING";
     public static final String WAITER_RESUMING = "WAITER_RESUMING";
-    /** Waiter {@code EXPIRED} que o {@code reconciler} ainda não conferiu para o {@code TASK_EXPIRED} (M4). */
+    /**
+     * Waiter {@code EXPIRED} que o {@code reconciler} ainda não conferiu para o
+     * {@code TASK_EXPIRED} (M4).
+     */
     public static final String WAITER_EXPIRED = "WAITER_EXPIRED";
     /**
-     * Versão {@code TERMINAL} cujo resumo no {@code META} ainda não foi confirmado: gravado na consolidação e
-     * retirado pelo {@code refreshSummary} ou pelo reparo do {@code reconciler} (M4).
+     * Versão {@code TERMINAL} cujo resumo no {@code META} ainda não foi confirmado:
+     * gravado na consolidação e
+     * retirado pelo {@code refreshSummary} ou pelo reparo do {@code reconciler}
+     * (M4).
      */
     public static final String SUMMARY_PENDING = "SUMMARY_PENDING";
     /**
-     * Ocorrência da quote que se resolve sozinha ({@code STUCK_VERSION}), ainda aberta: o {@code reconciler} a
-     * revisa e a resolve quando a situação some (M5). As projetadas da provider nunca entram neste índice.
+     * Ocorrência da quote que se resolve sozinha ({@code STUCK_VERSION}), ainda
+     * aberta: o {@code reconciler} a
+     * revisa e a resolve quando a situação some (M5). As projetadas da provider
+     * nunca entram neste índice.
      */
     public static final String ISSUE_OPEN = "ISSUE_OPEN";
 
-    /** Valores do atributo {@code type}; o filtro do stream depende de {@code OUTBOX}. */
+    /**
+     * Valores do atributo {@code type}; o filtro do stream depende de
+     * {@code OUTBOX}.
+     */
     public static final String TYPE_QUOTE = "QUOTE";
     public static final String TYPE_VERSION = "VERSION";
     public static final String TYPE_RESULT = "RESULT";
@@ -45,9 +56,15 @@ public final class QuoteKeys {
     public static final String TYPE_WAITER = "WAITER";
     public static final String TYPE_OUTBOX = "OUTBOX";
     public static final String TYPE_CONSUMED = "CONSUMED";
-    /** Ocorrência ({@code ISSUE#}); o tipo da ocorrência fica em {@code issueType}, como na provider. */
+    /**
+     * Ocorrência ({@code ISSUE#}); o tipo da ocorrência fica em {@code issueType},
+     * como na provider.
+     */
     public static final String TYPE_ISSUE = "ISSUE";
-    /** Consulta conhecida da organização ({@code QUERYREF#}), que autoriza o {@code RECONCILE} (M5). */
+    /**
+     * Consulta conhecida da organização ({@code QUERYREF#}), que autoriza o
+     * {@code RECONCILE} (M5).
+     */
     public static final String TYPE_QUERYREF = "QUERYREF";
     /** Reconciliação manual pedida pela API ({@code OPERATION#}) (M5). */
     public static final String TYPE_OPERATION = "OPERATION";
@@ -90,7 +107,9 @@ public final class QuoteKeys {
         return versionSk(version) + "#EVIDENCE#" + workRef.value();
     }
 
-    /** Resultado tardio; {@code target} é o {@code insurerId} ou {@code ENRICHMENT}. */
+    /**
+     * Resultado tardio; {@code target} é o {@code insurerId} ou {@code ENRICHMENT}.
+     */
     public static String lateSk(int version, String target, String queryId) {
         return versionSk(version) + "#LATE#" + target + "#" + queryId;
     }
@@ -115,7 +134,10 @@ public final class QuoteKeys {
         return "ISSUE#" + issueId;
     }
 
-    /** {@code gsi1pk} das ocorrências de uma organização, lido pelo {@code GET /v1/operations/issues} (M5). */
+    /**
+     * {@code gsi1pk} das ocorrências de uma organização, lido pelo
+     * {@code GET /v1/operations/issues} (M5).
+     */
     public static String issuesIndexPk(String organizationId) {
         return "ISSUES#" + organizationId;
     }
@@ -129,8 +151,10 @@ public final class QuoteKeys {
     }
 
     /**
-     * Identificador da seleção: uma por versão (RN13). WHY: determinístico pela versão, então o
-     * {@code OfferSelected} de uma versão tem sempre o mesmo {@code eventId}, mesmo numa corrida de pedidos.
+     * Identificador da seleção: uma por versão (RN13). WHY: determinístico pela
+     * versão, então o
+     * {@code OfferSelected} de uma versão tem sempre o mesmo {@code eventId}, mesmo
+     * numa corrida de pedidos.
      */
     public static String selectionId(String quoteId, int version) {
         return "sel_" + Hashes.sha256Hex("selection|" + quoteId + "|" + version).substring(0, 32);
@@ -145,7 +169,10 @@ public final class QuoteKeys {
         return "q-" + quoteId + "-v" + version;
     }
 
-    /** Identificador da oferta: um por resultado de seguradora, estável na reentrega do resultado. */
+    /**
+     * Identificador da oferta: um por resultado de seguradora, estável na reentrega
+     * do resultado.
+     */
     public static String offerId(WorkRef workRef) {
         return "of_" + Hashes.sha256Hex("offer|" + workRef.value()).substring(0, 32);
     }

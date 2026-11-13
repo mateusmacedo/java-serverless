@@ -12,8 +12,10 @@ import java.util.List;
 import org.jboss.logging.Logger;
 
 /**
- * Consome a fila {@code results} ({@code EnrichmentResolved} e {@code InsurerResultRecorded}). Uma falha
- * devolve só a mensagem em {@code batchItemFailures}; depois do {@code maxReceiveCount}, ela vai para a DLQ.
+ * Consome a fila {@code results} ({@code EnrichmentResolved} e
+ * {@code InsurerResultRecorded}). Uma falha
+ * devolve só a mensagem em {@code batchItemFailures}; depois do
+ * {@code maxReceiveCount}, ela vai para a DLQ.
  */
 @Singleton
 @Named("resume")

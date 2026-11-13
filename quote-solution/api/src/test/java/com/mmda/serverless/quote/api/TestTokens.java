@@ -4,7 +4,8 @@ import io.smallrye.jwt.build.Jwt;
 import java.util.List;
 
 /**
- * Access tokens no formato do Cognito, assinados com a chave privada que o {@link JwtKeyResource} publica em
+ * Access tokens no formato do Cognito, assinados com a chave privada que o
+ * {@link JwtKeyResource} publica em
  * {@code smallrye.jwt.sign.key}. Só valem em testes que declaram esse recurso.
  */
 final class TestTokens {

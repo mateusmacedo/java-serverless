@@ -10,7 +10,8 @@ import java.util.UUID;
 public final class Hashes {
 
     /**
-     * Namespace dos UUIDv5 da quote-solution: o namespace URL da RFC 9562. O nome é o fato (por exemplo,
+     * Namespace dos UUIDv5 da quote-solution: o namespace URL da RFC 9562. O nome é
+     * o fato (por exemplo,
      * o {@code workRef}), então o mesmo fato sempre gera o mesmo {@code eventId}.
      */
     public static final UUID EVENT_NAMESPACE = UUID.fromString("6ba7b811-9dad-11d1-80b4-00c04fd430c8");
@@ -22,7 +23,10 @@ public final class Hashes {
         return HexFormat.of().formatHex(digest("SHA-256", value.getBytes(StandardCharsets.UTF_8)));
     }
 
-    /** UUID versão 5 (SHA-1, baseado em nome) de {@code name} no {@link #EVENT_NAMESPACE}. */
+    /**
+     * UUID versão 5 (SHA-1, baseado em nome) de {@code name} no
+     * {@link #EVENT_NAMESPACE}.
+     */
     public static UUID uuidV5(String name) {
         byte[] namespace = toBytes(EVENT_NAMESPACE);
         byte[] nameBytes = name.getBytes(StandardCharsets.UTF_8);

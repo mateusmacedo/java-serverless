@@ -15,8 +15,10 @@ public enum InsurerStatus {
     }
 
     /**
-     * Falha técnica na consolidação. WHY: o Map aguarda todos os itens, então um resultado ainda não
-     * terminal na consolidação só acontece quando o workflow falhou, e conta como falha técnica.
+     * Falha técnica na consolidação. WHY: o Map aguarda todos os itens, então um
+     * resultado ainda não
+     * terminal na consolidação só acontece quando o workflow falhou, e conta como
+     * falha técnica.
      */
     public boolean isTechnicalFailure() {
         return this == UNAVAILABLE || this == TIMED_OUT || !isTerminal();

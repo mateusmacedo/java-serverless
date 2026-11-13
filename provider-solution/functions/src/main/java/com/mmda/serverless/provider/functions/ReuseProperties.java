@@ -7,9 +7,12 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 
 /**
- * Política de reuso e liderança do enriquecimento (desenho, §12), dona da versão que vai na evidência, no
- * {@code REUSE#} e no {@code EnrichmentResolved}. A lease passa do timeout do worker (§9); o
- * {@code tombstoneSeconds} é o TTL da lápide do {@code INFLIGHT#} e dos {@code FOLLOWER#}.
+ * Política de reuso e liderança do enriquecimento (desenho, §12), dona da
+ * versão que vai na evidência, no
+ * {@code REUSE#} e no {@code EnrichmentResolved}. A lease passa do timeout do
+ * worker (§9); o
+ * {@code tombstoneSeconds} é o TTL da lápide do {@code INFLIGHT#} e dos
+ * {@code FOLLOWER#}.
  */
 @ConfigurationProperties(prefix = "provider.reuse")
 public record ReuseProperties(

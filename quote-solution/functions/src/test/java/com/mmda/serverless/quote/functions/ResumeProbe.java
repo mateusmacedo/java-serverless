@@ -33,8 +33,10 @@ import software.amazon.awssdk.services.dynamodb.model.Update;
 import software.amazon.awssdk.services.sfn.SfnClient;
 
 /**
- * {@link ResultResumer} de um pedido sobre DynamoDB e Step Functions simulados: o waiter do pedido fica
- * {@code WAITING}, as transações são aceitas e registradas para conferir o que o {@code resume} grava.
+ * {@link ResultResumer} de um pedido sobre DynamoDB e Step Functions simulados:
+ * o waiter do pedido fica
+ * {@code WAITING}, as transações são aceitas e registradas para conferir o que
+ * o {@code resume} grava.
  */
 final class ResumeProbe {
 
@@ -45,12 +47,18 @@ final class ResumeProbe {
     private final WorkRef workRef;
     private final ResultResumer resumer;
 
-    /** Waiter do enriquecimento de {@code quoteId}; {@code expiresAt} vencido leva o resultado a {@code LATE}. */
+    /**
+     * Waiter do enriquecimento de {@code quoteId}; {@code expiresAt} vencido leva o
+     * resultado a {@code LATE}.
+     */
     ResumeProbe(WorkRef workRef, String quoteId, int version, Instant expiresAt) {
         this(workRef, WorkRef.Kind.ENRICHMENT, null, quoteId, version, expiresAt);
     }
 
-    /** Waiter de um pedido do tipo {@code kind}; {@code insurerId} só existe no pedido de seguradora. */
+    /**
+     * Waiter de um pedido do tipo {@code kind}; {@code insurerId} só existe no
+     * pedido de seguradora.
+     */
     ResumeProbe(WorkRef workRef, WorkRef.Kind kind, String insurerId, String quoteId, int version, Instant expiresAt) {
         this.workRef = workRef;
         TokenCipher cipher = new TokenCipher(() -> "token-key");
@@ -85,7 +93,10 @@ final class ResumeProbe {
         return resumer.handle(body);
     }
 
-    /** Itens gravados com {@code Put} em qualquer transação, com o {@code type} informado. */
+    /**
+     * Itens gravados com {@code Put} em qualquer transação, com o {@code type}
+     * informado.
+     */
     List<Map<String, AttributeValue>> puts(String type) {
         return writes().stream()
                 .map(TransactWriteItem::put)
@@ -113,7 +124,10 @@ final class ResumeProbe {
         return updates.getFirst();
     }
 
-    /** {@code resumePayload} que a transação grava no waiter e o {@code SendTaskSuccess} devolve à máquina. */
+    /**
+     * {@code resumePayload} que a transação grava no waiter e o
+     * {@code SendTaskSuccess} devolve à máquina.
+     */
     JsonNode resumePayload() {
         Update update = writes().stream()
                 .map(TransactWriteItem::update)

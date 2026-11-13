@@ -6,7 +6,8 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * Permissões do contrato e os grupos do Cognito que as concedem (§11 do desenho). A organização vem do
+ * Permissões do contrato e os grupos do Cognito que as concedem (§11 do
+ * desenho). A organização vem do
  * grupo {@code org_<organizationId>}, nunca do body.
  */
 public enum Permission {
@@ -39,7 +40,8 @@ public enum Permission {
     }
 
     /**
-     * Organização do usuário. WHY: mais de um grupo de organização é configuração ambígua; sem decidir por
+     * Organização do usuário. WHY: mais de um grupo de organização é configuração
+     * ambígua; sem decidir por
      * ordem, o acesso é negado.
      */
     public static Optional<String> organizationFromGroups(Set<String> groups) {

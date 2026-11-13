@@ -19,8 +19,10 @@ import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 
 /**
- * Cotações e eventos da provider nos formatos reais. A cotação é gravada com os mesmos itens da
- * transação de criação da API: {@code META}, {@code V#0001} e o outbox {@code StartQuoteRequested} e
+ * Cotações e eventos da provider nos formatos reais. A cotação é gravada com os
+ * mesmos itens da
+ * transação de criação da API: {@code META}, {@code V#0001} e o outbox
+ * {@code StartQuoteRequested} e
  * {@code QuoteAccepted}.
  */
 final class QuoteFixtures {
@@ -41,7 +43,10 @@ final class QuoteFixtures {
                 "2026-12-01");
     }
 
-    /** Grava a cotação como a API; devolve os {@code eventId} do outbox (início e aceitação). */
+    /**
+     * Grava a cotação como a API; devolve os {@code eventId} do outbox (início e
+     * aceitação).
+     */
     static Created createQuote(DynamoDbClient dynamoDb, String quoteId, QuoteSnapshot snapshot, Instant acceptedAt)
             throws Exception {
         String now = acceptedAt.toString();
@@ -59,13 +64,15 @@ final class QuoteFixtures {
                 Map.entry("quoteId", s(quoteId)), Map.entry("version", n(1)),
                 Map.entry("snapshot", s(MAPPER.writeValueAsString(snapshot))), Map.entry("inputHash", s("hash")),
                 Map.entry("phase", s("RECEIVED")), Map.entry("revision", n(1)),
-                Map.entry("workflowVersion", s("it")), Map.entry("executionName", s(QuoteKeys.executionName(quoteId, 1))),
+                Map.entry("workflowVersion", s("it")),
+                Map.entry("executionName", s(QuoteKeys.executionName(quoteId, 1))),
                 Map.entry("deadlineAt", s(deadline)), Map.entry("createdAt", s(now)), Map.entry("updatedAt", s(now)),
                 Map.entry("gsi2pk", s("ACTIVE_VERSION")), Map.entry("gsi2sk", s(deadline))));
         String startEventId = UUID.randomUUID().toString();
         String acceptedEventId = UUID.randomUUID().toString();
         put(dynamoDb, outbox(startEventId, QuoteEvents.START_QUOTE_REQUESTED,
-                QuoteEvents.startQuoteRequested(startEventId, acceptedAt, quoteId, 1, "org-acme"), quoteId, acceptedAt));
+                QuoteEvents.startQuoteRequested(startEventId, acceptedAt, quoteId, 1, "org-acme"), quoteId,
+                acceptedAt));
         put(dynamoDb, outbox(acceptedEventId, QuoteEvents.QUOTE_ACCEPTED,
                 QuoteEvents.quoteAccepted(acceptedEventId, acceptedAt, quoteId, 1, "org-acme"), quoteId, acceptedAt));
         return new Created(startEventId, acceptedEventId);
@@ -75,10 +82,12 @@ final class QuoteFixtures {
     }
 
     /**
-     * Nova versão como a API a grava (§8 do desenho): {@code META} com {@code currentVersion = 2} e o resumo
+     * Nova versão como a API a grava (§8 do desenho): {@code META} com
+     * {@code currentVersion = 2} e o resumo
      * inicial, {@code supersededAt} na versão 1 e {@code V#0002} recebida.
      */
-    static void supersedeFirstVersion(DynamoDbClient dynamoDb, String quoteId, QuoteSnapshot snapshot, Instant acceptedAt)
+    static void supersedeFirstVersion(DynamoDbClient dynamoDb, String quoteId, QuoteSnapshot snapshot,
+            Instant acceptedAt)
             throws Exception {
         String now = acceptedAt.toString();
         String deadline = acceptedAt.plusSeconds(300).toString();
@@ -98,7 +107,8 @@ final class QuoteFixtures {
                 Map.entry("quoteId", s(quoteId)), Map.entry("version", n(2)),
                 Map.entry("snapshot", s(MAPPER.writeValueAsString(snapshot))), Map.entry("inputHash", s("hash-2")),
                 Map.entry("phase", s("RECEIVED")), Map.entry("revision", n(1)),
-                Map.entry("workflowVersion", s("it")), Map.entry("executionName", s(QuoteKeys.executionName(quoteId, 2))),
+                Map.entry("workflowVersion", s("it")),
+                Map.entry("executionName", s(QuoteKeys.executionName(quoteId, 2))),
                 Map.entry("deadlineAt", s(deadline)), Map.entry("createdAt", s(now)), Map.entry("updatedAt", s(now)),
                 Map.entry("gsi2pk", s("ACTIVE_VERSION")), Map.entry("gsi2sk", s(deadline))));
     }
@@ -121,15 +131,20 @@ final class QuoteFixtures {
         return item;
     }
 
-    /** {@code InsurerResultRecorded} da alpha como a provider publica, dentro do envelope do EventBridge. */
+    /**
+     * {@code InsurerResultRecorded} da alpha como a provider publica, dentro do
+     * envelope do EventBridge.
+     */
     static String insurerResult(String workRef, String quoteId, String status, String eventId) {
         return insurerResult(workRef, quoteId, Insurers.ALPHA, status, eventId, "q_" + workRef.substring(3),
                 "ATTEMPT#0001");
     }
 
     /**
-     * {@code InsurerResultRecorded} da seguradora informada, com o {@code queryId} e o {@code attemptRef} que a
-     * provider deriva do {@code workRef} (§5 do desenho). A beta, que responde por callback, publica o mesmo
+     * {@code InsurerResultRecorded} da seguradora informada, com o {@code queryId}
+     * e o {@code attemptRef} que a
+     * provider deriva do {@code workRef} (§5 do desenho). A beta, que responde por
+     * callback, publica o mesmo
      * contrato da alpha.
      */
     static String insurerResult(String workRef, String quoteId, String insurerId, String status, String eventId) {
@@ -137,12 +152,18 @@ final class QuoteFixtures {
         return insurerResult(workRef, quoteId, insurerId, status, eventId, queryId, queryId + "#0001");
     }
 
-    /** {@code queryId} que a provider grava para o pedido: {@code q_} + 32 hexadecimais do SHA-256 do {@code workRef}. */
+    /**
+     * {@code queryId} que a provider grava para o pedido: {@code q_} + 32
+     * hexadecimais do SHA-256 do {@code workRef}.
+     */
     static String providerQueryId(String workRef) {
         return "q_" + Hashes.sha256Hex(workRef).substring(0, 32);
     }
 
-    /** {@code eventId} do {@code InsurerResultRecorded}: UUIDv5 do {@code queryId}, igual em toda republicação. */
+    /**
+     * {@code eventId} do {@code InsurerResultRecorded}: UUIDv5 do {@code queryId},
+     * igual em toda republicação.
+     */
     static String insurerResultEventId(String workRef) {
         return Hashes.uuidV5(providerQueryId(workRef)).toString();
     }
@@ -186,14 +207,18 @@ final class QuoteFixtures {
         return envelope("InsurerResultRecorded", detail);
     }
 
-    /** {@code EnrichmentResolved} de um {@code MISS}, com o perfil normalizado do veículo e do condutor. */
+    /**
+     * {@code EnrichmentResolved} de um {@code MISS}, com o perfil normalizado do
+     * veículo e do condutor.
+     */
     static String enrichmentResult(String workRef, String quoteId, String resultType, int vehicleYear, String eventId) {
         return enrichmentResult(workRef, quoteId, eventId, EvidenceRef.miss(workRef), resultType, vehicleYear,
                 List.of("vehicleRef"));
     }
 
     /**
-     * {@code EnrichmentResolved} com a referência da evidência informada; um campo nulo de {@code evidence} fica
+     * {@code EnrichmentResolved} com a referência da evidência informada; um campo
+     * nulo de {@code evidence} fica
      * fora do evento. {@code notFoundRefs} só entra em {@code NOT_FOUND}.
      */
     static String enrichmentResult(String workRef, String quoteId, String eventId, EvidenceRef evidence,
@@ -227,7 +252,8 @@ final class QuoteFixtures {
     }
 
     /**
-     * Referência da evidência que a provider publica no {@code EnrichmentResolved}, com os identificadores
+     * Referência da evidência que a provider publica no {@code EnrichmentResolved},
+     * com os identificadores
      * derivados pelas regras do AsyncAPI dela.
      */
     record EvidenceRef(String queryId, String evidenceId, String reuseDecision, String policyVersion) {
@@ -239,7 +265,10 @@ final class QuoteFixtures {
             return shared(workRef, "MISS");
         }
 
-        /** Evidência da consulta de um líder, reusada ({@code HIT}) ou aguardada ({@code JOIN}) por outro pedido. */
+        /**
+         * Evidência da consulta de um líder, reusada ({@code HIT}) ou aguardada
+         * ({@code JOIN}) por outro pedido.
+         */
         static EvidenceRef shared(String leaderWorkRef, String reuseDecision) {
             String queryId = "q_" + Hashes.sha256Hex(leaderWorkRef).substring(0, 32);
             return new EvidenceRef(queryId, "ev_" + Hashes.sha256Hex(queryId + "|1").substring(0, 32), reuseDecision,

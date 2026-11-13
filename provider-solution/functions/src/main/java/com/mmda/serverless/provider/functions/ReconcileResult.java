@@ -3,9 +3,12 @@ package com.mmda.serverless.provider.functions;
 import java.util.List;
 
 /**
- * Resultado de um ciclo do {@code reconciler}. {@code pending}, {@code republished} e {@code failed} são do outbox
- * pendente, como no M1; os demais contam o que cada dever do M4 mudou no ciclo (desenho, §9), e
- * {@code failedDuties} nomeia os deveres que falharam e ficaram para o próximo ciclo.
+ * Resultado de um ciclo do {@code reconciler}. {@code pending},
+ * {@code republished} e {@code failed} são do outbox
+ * pendente, como no M1; os demais contam o que cada dever do M4 mudou no ciclo
+ * (desenho, §9), e
+ * {@code failedDuties} nomeia os deveres que falharam e ficaram para o próximo
+ * ciclo.
  */
 public record ReconcileResult(
         int pending,

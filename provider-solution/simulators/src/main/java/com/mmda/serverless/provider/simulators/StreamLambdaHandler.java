@@ -11,7 +11,8 @@ import java.io.InputStream;
 import java.io.OutputStream;
 
 /**
- * Entrada da Lambda {@code simulators}, atrás do API Gateway {@code /sim/{proxy+}}. O handler é estático
+ * Entrada da Lambda {@code simulators}, atrás do API Gateway
+ * {@code /sim/{proxy+}}. O handler é estático
  * para o contexto Spring ser criado uma vez por container.
  */
 public class StreamLambdaHandler implements RequestStreamHandler {

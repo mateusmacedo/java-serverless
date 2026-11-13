@@ -18,10 +18,14 @@ import software.amazon.awssdk.services.sqs.model.Message;
 import software.amazon.awssdk.services.sqs.model.MessageAttributeValue;
 
 /**
- * Reprocessamento das DLQs da provider no padrão do ADR 0007 (desenho, §9): abaixo de {@code dlqMaxAttempts} e
- * antes do {@code deadlineAt} do pedido, a mensagem volta à fila de origem com a tentativa seguinte no atributo
- * {@code dlqAttempt}; depois, é apagada com uma ocorrência {@code DEAD_LETTER}. INVARIANT: o reenvio não duplica
- * resultado nem chamada (T31), porque o worker relê a consulta pelo {@code workRef} e o pedido já atendido não faz
+ * Reprocessamento das DLQs da provider no padrão do ADR 0007 (desenho, §9):
+ * abaixo de {@code dlqMaxAttempts} e
+ * antes do {@code deadlineAt} do pedido, a mensagem volta à fila de origem com
+ * a tentativa seguinte no atributo
+ * {@code dlqAttempt}; depois, é apagada com uma ocorrência {@code DEAD_LETTER}.
+ * INVARIANT: o reenvio não duplica
+ * resultado nem chamada (T31), porque o worker relê a consulta pelo
+ * {@code workRef} e o pedido já atendido não faz
  * nada.
  */
 @Component
@@ -41,8 +45,8 @@ class DeadLetterReprocessor {
     private final OperationsProperties operations;
 
     DeadLetterReprocessor(SqsClient sqs, DeadLetterPolicy policy, OperationIssues issues,
-                          OperationLedger operationLedger, QueryLedger ledger, EventJson json,
-                          OperationsProperties operations) {
+            OperationLedger operationLedger, QueryLedger ledger, EventJson json,
+            OperationsProperties operations) {
         this.sqs = sqs;
         this.policy = policy;
         this.issues = issues;
@@ -80,14 +84,17 @@ class DeadLetterReprocessor {
 
     private Iterable<Message> receive(OperationsProperties.DeadLetterRoute route) {
         return sqs.receiveMessage(builder -> builder
-                        .queueUrl(route.deadLetterQueueUrl())
-                        .maxNumberOfMessages(MAX_MESSAGES)
-                        .waitTimeSeconds(0)
-                        .messageAttributeNames(ATTEMPT_ATTRIBUTE))
+                .queueUrl(route.deadLetterQueueUrl())
+                .maxNumberOfMessages(MAX_MESSAGES)
+                .waitTimeSeconds(0)
+                .messageAttributeNames(ATTEMPT_ATTRIBUTE))
                 .messages();
     }
 
-    /** {@code true} quando a mensagem voltou à fila de origem; {@code false} quando foi descartada. */
+    /**
+     * {@code true} quando a mensagem voltou à fila de origem; {@code false} quando
+     * foi descartada.
+     */
     private boolean reprocess(OperationsProperties.DeadLetterRoute route, Message message, Instant now) {
         int attempt = attempt(message);
         Payload payload = Payload.of(json.readOrNull(message.body(), Map.class), message.messageId());
@@ -122,8 +129,10 @@ class DeadLetterReprocessor {
     }
 
     /**
-     * A reconciliação manual descartada termina {@code FAILED}, com o {@code QueryReconciled}; sem isso, o
-     * {@code OPERATION#} ficaria {@code RUNNING} para sempre. Só muda a operação que ainda está {@code RUNNING}.
+     * A reconciliação manual descartada termina {@code FAILED}, com o
+     * {@code QueryReconciled}; sem isso, o
+     * {@code OPERATION#} ficaria {@code RUNNING} para sempre. Só muda a operação
+     * que ainda está {@code RUNNING}.
      */
     private void finishDiscardedReconciliation(Message message, Instant now) {
         try {
@@ -139,10 +148,14 @@ class DeadLetterReprocessor {
     }
 
     /**
-     * WHY: o par {@code queryId} e {@code organizationId} da ocorrência autoriza a reconciliação manual na quote
-     * ({@code QUERYREF#}). Fica fora dela a consulta de outra organização e, no pedido de reconciliação, a que não
-     * existe: o {@code reconcileWorker} trata as duas como inexistentes. No pedido de consulta, a consulta derivada do
-     * {@code workRef} é do próprio pedido, mesmo antes de existir. A cotação que a mensagem não traz, como no pedido
+     * WHY: o par {@code queryId} e {@code organizationId} da ocorrência autoriza a
+     * reconciliação manual na quote
+     * ({@code QUERYREF#}). Fica fora dela a consulta de outra organização e, no
+     * pedido de reconciliação, a que não
+     * existe: o {@code reconcileWorker} trata as duas como inexistentes. No pedido
+     * de consulta, a consulta derivada do
+     * {@code workRef} é do próprio pedido, mesmo antes de existir. A cotação que a
+     * mensagem não traz, como no pedido
      * de reconciliação, vem da {@code QUERY} da própria organização.
      */
     private Payload scoped(OperationsProperties.DeadLetterRoute route, Payload payload) {
@@ -178,7 +191,7 @@ class DeadLetterReprocessor {
     }
 
     private static String summary(OperationsProperties.DeadLetterRoute route, DeadLetterPolicy.Reason reason,
-                                  int attempt) {
+            int attempt) {
         return switch (reason) {
             case MAX_ATTEMPTS -> "Mensagem de %s descartada depois de %d tentativas".formatted(route.name(), attempt);
             case DEADLINE_EXCEEDED -> "Mensagem de %s descartada depois do prazo do pedido".formatted(route.name());
@@ -187,8 +200,10 @@ class DeadLetterReprocessor {
     }
 
     /**
-     * O que a mensagem diz do pedido: o envelope do EventBridge, nos pedidos, ou o callback agendado da beta. A
-     * {@code key} identifica o pedido lógico: o {@code queryId} derivado do {@code workRef}, o {@code operationId}
+     * O que a mensagem diz do pedido: o envelope do EventBridge, nos pedidos, ou o
+     * callback agendado da beta. A
+     * {@code key} identifica o pedido lógico: o {@code queryId} derivado do
+     * {@code workRef}, o {@code operationId}
      * ou o {@code externalEventId}.
      */
     private record Payload(String key, String organizationId, String queryId, String quoteId, Instant deadlineAt) {

@@ -11,9 +11,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
- * Outbox pendente (desenho, §7 e §9): republica o que tem {@code gsi2sk} mais antigo que
- * {@code outboxRepublishAfterSeconds}, desde o M1, e abre {@code STALE_OUTBOX} para o item que continua pendente
- * com o {@code createdAt} além do limiar. A idade do mais antigo vira a métrica {@code OutboxPendingAgeSeconds}.
+ * Outbox pendente (desenho, §7 e §9): republica o que tem {@code gsi2sk} mais
+ * antigo que
+ * {@code outboxRepublishAfterSeconds}, desde o M1, e abre {@code STALE_OUTBOX}
+ * para o item que continua pendente
+ * com o {@code createdAt} além do limiar. A idade do mais antigo vira a métrica
+ * {@code OutboxPendingAgeSeconds}.
  */
 @Component
 class OutboxReconciliation {
@@ -29,7 +32,7 @@ class OutboxReconciliation {
     private final OperationsProperties operations;
 
     OutboxReconciliation(OutboxStore outbox, OutboxPublisher publisher, OperationIssues issues, QueryLedger ledger,
-                         EventJson json, ProviderProperties properties, OperationsProperties operations) {
+            EventJson json, ProviderProperties properties, OperationsProperties operations) {
         this.outbox = outbox;
         this.publisher = publisher;
         this.issues = issues;
@@ -39,7 +42,10 @@ class OutboxReconciliation {
         this.operations = operations;
     }
 
-    /** @param oldestAgeSeconds idade, pelo {@code createdAt}, do item mais antigo que continua pendente */
+    /**
+     * @param oldestAgeSeconds idade, pelo {@code createdAt}, do item mais antigo
+     *                         que continua pendente
+     */
     record Report(int pending, int republished, int failed, int stale, long oldestAgeSeconds) {
     }
 
@@ -79,8 +85,10 @@ class OutboxReconciliation {
     }
 
     /**
-     * Evento de ocorrência, que não abre {@code STALE_OUTBOX}. WHY: com o barramento fora do ar, cada ocorrência
-     * gravaria outro evento pendente, em cadeia; a idade dele já está no alarme {@code OutboxPendingAgeSeconds}.
+     * Evento de ocorrência, que não abre {@code STALE_OUTBOX}. WHY: com o
+     * barramento fora do ar, cada ocorrência
+     * gravaria outro evento pendente, em cadeia; a idade dele já está no alarme
+     * {@code OutboxPendingAgeSeconds}.
      */
     private static boolean isIssueEvent(OutboxStore.PendingOutbox item) {
         return item.entry() != null && (OperationIssue.RAISED.equals(item.entry().detailType())

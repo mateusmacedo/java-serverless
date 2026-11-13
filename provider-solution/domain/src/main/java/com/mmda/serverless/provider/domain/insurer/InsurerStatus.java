@@ -4,8 +4,10 @@ import com.mmda.serverless.provider.domain.CallOutcome;
 import com.mmda.serverless.provider.domain.ErrorClasses;
 
 /**
- * Situação de um pedido na API de situação de uma seguradora assíncrona ({@code GET /sim/insurers/beta/quotes/
- * {ref}}, desenho, §10), consultada pela reconciliação de uma consulta {@code UNKNOWN} sem repetir a chamada. O
+ * Situação de um pedido na API de situação de uma seguradora assíncrona
+ * ({@code GET /sim/insurers/beta/quotes/
+ * {ref}}, desenho, §10), consultada pela reconciliação de uma consulta
+ * {@code UNKNOWN} sem repetir a chamada. O
  * {@code result}, em {@code COMPLETED}, tem o formato do callback.
  */
 public record InsurerStatus(
@@ -27,11 +29,16 @@ public record InsurerStatus(
     public record Completed(InsurerVerdict verdict, String completedAt) implements Verdict {
     }
 
-    /** A seguradora ainda processa; a consulta continua {@code UNKNOWN} até o próximo ciclo. */
+    /**
+     * A seguradora ainda processa; a consulta continua {@code UNKNOWN} até o
+     * próximo ciclo.
+     */
     public record Pending() implements Verdict {
     }
 
-    /** A seguradora não conhece a referência: nenhuma conclusão automática é segura. */
+    /**
+     * A seguradora não conhece a referência: nenhuma conclusão automática é segura.
+     */
     public record Unrecognized() implements Verdict {
     }
 

@@ -22,8 +22,10 @@ import software.amazon.awssdk.services.dynamodb.model.ReturnValue;
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItem;
 
 /**
- * {@code INBOX#} e {@code CORR#} do lado do worker (§5, §8): a metade do encontro depois do {@code 202} e a
- * conclusão das pendências que a API de callbacks guardou antes dela. O formato dos itens é o mesmo que o
+ * {@code INBOX#} e {@code CORR#} do lado do worker (§5, §8): a metade do
+ * encontro depois do {@code 202} e a
+ * conclusão das pendências que a API de callbacks guardou antes dela. O formato
+ * dos itens é o mesmo que o
  * {@code provider-api} grava.
  */
 @Component
@@ -43,7 +45,7 @@ class CallbackLedger {
     private final ProviderProperties properties;
 
     CallbackLedger(DynamoDbClient dynamoDb, Transactions transactions, QueryLedger ledger, OutboxStore outbox,
-                   ProviderProperties properties) {
+            ProviderProperties properties) {
         this.dynamoDb = dynamoDb;
         this.transactions = transactions;
         this.ledger = ledger;
@@ -53,17 +55,22 @@ class CallbackLedger {
 
     enum Processing {
         SETTLED,
-        /** A consulta já estava concluída: só a inbox passou a {@code PROCESSED}, sem outbox. */
+        /**
+         * A consulta já estava concluída: só a inbox passou a {@code PROCESSED}, sem
+         * outbox.
+         */
         INBOX_ONLY,
         ALREADY_PROCESSED
     }
 
     record InboxEntry(String externalEventId, String payload, String providerRequestId, String receivedAt,
-                      String processingStatus, String provider, String clientReference) {
+            String processingStatus, String provider, String clientReference) {
 
         /**
-         * Ainda sem resultado gravado. WHY: o {@code UNMATCHED} continua processável, porque a correlação pode
-         * aparecer depois, como a metade do worker no {@code CORR#} gravada após o prazo (§8).
+         * Ainda sem resultado gravado. WHY: o {@code UNMATCHED} continua processável,
+         * porque a correlação pode
+         * aparecer depois, como a metade do worker no {@code CORR#} gravada após o
+         * prazo (§8).
          */
         boolean received() {
             return RECEIVED.equals(processingStatus) || UNMATCHED.equals(processingStatus);
@@ -71,33 +78,36 @@ class CallbackLedger {
     }
 
     /**
-     * Resultado de um callback para a consulta; {@code attempt} é nulo quando a tentativa já estava encerrada.
+     * Resultado de um callback para a consulta; {@code attempt} é nulo quando a
+     * tentativa já estava encerrada.
      */
     record CallbackSettlement(String provider, String externalEventId, String queryId, QueryState finalState,
-                              Settlement.AttemptResult attempt, EvidenceDraft evidence, Settlement.OutboxEvent event,
-                              String consumedEventId, String workRef) {
+            Settlement.AttemptResult attempt, EvidenceDraft evidence, Settlement.OutboxEvent event,
+            String consumedEventId, String workRef) {
     }
 
     /**
-     * Metade do worker: {@code SET queryId} com {@code ALL_NEW}. Vazio quando o {@code providerRequestId} já
-     * está ligado a outra consulta, o que só um fornecedor que repete identificadores provoca.
+     * Metade do worker: {@code SET queryId} com {@code ALL_NEW}. Vazio quando o
+     * {@code providerRequestId} já
+     * está ligado a outra consulta, o que só um fornecedor que repete
+     * identificadores provoca.
      */
     Optional<Correlation> joinAsWorker(String provider, String providerRequestId, String queryId, Instant now) {
         try {
             Map<String, AttributeValue> image = dynamoDb.updateItem(builder -> builder
-                            .tableName(properties.tableName())
-                            .key(Items.key(Items.correlationPk(provider, providerRequestId), META))
-                            .updateExpression("SET queryId = :queryId, #type = :type, #provider = :provider, "
-                                    + "providerRequestId = :requestId, updatedAt = :now")
-                            .conditionExpression("attribute_not_exists(queryId) OR queryId = :queryId")
-                            .expressionAttributeNames(Map.of("#type", Items.TYPE, "#provider", "provider"))
-                            .expressionAttributeValues(Map.of(
-                                    ":queryId", s(queryId),
-                                    ":type", s(Items.TYPE_CORRELATION),
-                                    ":provider", s(provider),
-                                    ":requestId", s(providerRequestId),
-                                    ":now", s(Timestamps.format(now))))
-                            .returnValues(ReturnValue.ALL_NEW))
+                    .tableName(properties.tableName())
+                    .key(Items.key(Items.correlationPk(provider, providerRequestId), META))
+                    .updateExpression("SET queryId = :queryId, #type = :type, #provider = :provider, "
+                            + "providerRequestId = :requestId, updatedAt = :now")
+                    .conditionExpression("attribute_not_exists(queryId) OR queryId = :queryId")
+                    .expressionAttributeNames(Map.of("#type", Items.TYPE, "#provider", "provider"))
+                    .expressionAttributeValues(Map.of(
+                            ":queryId", s(queryId),
+                            ":type", s(Items.TYPE_CORRELATION),
+                            ":provider", s(provider),
+                            ":requestId", s(providerRequestId),
+                            ":now", s(Timestamps.format(now))))
+                    .returnValues(ReturnValue.ALL_NEW))
                     .attributes();
             AttributeValue pending = image.get("pendingEvents");
             return Optional.of(new Correlation(Items.string(image, "queryId").orElse(null),
@@ -109,9 +119,9 @@ class CallbackLedger {
 
     Optional<InboxEntry> loadInbox(String provider, String externalEventId) {
         Map<String, AttributeValue> item = dynamoDb.getItem(builder -> builder
-                        .tableName(properties.tableName())
-                        .consistentRead(true)
-                        .key(Items.key(Items.inboxPk(provider, externalEventId), META)))
+                .tableName(properties.tableName())
+                .consistentRead(true)
+                .key(Items.key(Items.inboxPk(provider, externalEventId), META)))
                 .item();
         if (item.isEmpty()) {
             return Optional.empty();
@@ -120,26 +130,29 @@ class CallbackLedger {
     }
 
     /**
-     * Callbacks com {@code processingStatus} do índice ({@code INBOX_RECEIVED} ou {@code INBOX_UNMATCHED}), recebidos
+     * Callbacks com {@code processingStatus} do índice ({@code INBOX_RECEIVED} ou
+     * {@code INBOX_UNMATCHED}), recebidos
      * antes de {@code receivedBefore}, mais antigos primeiro.
      */
     List<InboxEntry> inboxIndexed(String gsi2pk, Instant receivedBefore, int limit) {
         return dynamoDb.query(builder -> builder
-                        .tableName(properties.tableName())
-                        .indexName(Items.GSI2)
-                        .keyConditionExpression("gsi2pk = :status AND gsi2sk < :before")
-                        .expressionAttributeValues(Map.of(
-                                ":status", s(gsi2pk),
-                                ":before", s(Timestamps.format(receivedBefore))))
-                        .limit(limit))
+                .tableName(properties.tableName())
+                .indexName(Items.GSI2)
+                .keyConditionExpression("gsi2pk = :status AND gsi2sk < :before")
+                .expressionAttributeValues(Map.of(
+                        ":status", s(gsi2pk),
+                        ":before", s(Timestamps.format(receivedBefore))))
+                .limit(limit))
                 .items().stream()
                 .map(item -> inboxEntry(item, null))
                 .toList();
     }
 
     /**
-     * Callback sem correlação depois de {@code unmatchedCallbackAfterSeconds} (§8): sai do índice dos recebidos e
-     * entra no {@code INBOX_UNMATCHED}, com o mesmo {@code receivedAt}, para o reconciler e o alarme.
+     * Callback sem correlação depois de {@code unmatchedCallbackAfterSeconds} (§8):
+     * sai do índice dos recebidos e
+     * entra no {@code INBOX_UNMATCHED}, com o mesmo {@code receivedAt}, para o
+     * reconciler e o alarme.
      */
     boolean markUnmatched(String provider, String externalEventId, Instant now) {
         try {
@@ -160,8 +173,10 @@ class CallbackLedger {
     }
 
     /**
-     * Leva o callback que continua {@code UNMATCHED} para o fim do índice; o {@code receivedAt} não muda. WHY: o
-     * índice é lido em ordem e com limite; sem isso, os órfãos ocupariam o lote, e o que encontrou a consulta depois
+     * Leva o callback que continua {@code UNMATCHED} para o fim do índice; o
+     * {@code receivedAt} não muda. WHY: o
+     * índice é lido em ordem e com limite; sem isso, os órfãos ocupariam o lote, e
+     * o que encontrou a consulta depois
      * não seria processado.
      */
     void deferUnmatched(String provider, String externalEventId, Instant now) {
@@ -180,12 +195,15 @@ class CallbackLedger {
         }
     }
 
-    /** {@code queryId} da metade do worker no {@code CORR#}, quando ela já foi gravada. */
+    /**
+     * {@code queryId} da metade do worker no {@code CORR#}, quando ela já foi
+     * gravada.
+     */
     Optional<String> correlatedQuery(String provider, String providerRequestId) {
         Map<String, AttributeValue> item = dynamoDb.getItem(builder -> builder
-                        .tableName(properties.tableName())
-                        .consistentRead(true)
-                        .key(Items.key(Items.correlationPk(provider, providerRequestId), META)))
+                .tableName(properties.tableName())
+                .consistentRead(true)
+                .key(Items.key(Items.correlationPk(provider, providerRequestId), META)))
                 .item();
         return Items.string(item, "queryId");
     }
@@ -201,9 +219,12 @@ class CallbackLedger {
     }
 
     /**
-     * Uma transação passa a inbox de {@code RECEIVED} para {@code PROCESSED} e grava a consulta concluída, a
-     * evidência, o outbox, o {@code CONSUMED} do pedido e, se aberta, a tentativa (§8). Com a consulta já
-     * concluída, só a inbox muda. Se só o outbox, o {@code CONSUMED} ou a tentativa já existiam, a conclusão é
+     * Uma transação passa a inbox de {@code RECEIVED} para {@code PROCESSED} e
+     * grava a consulta concluída, a
+     * evidência, o outbox, o {@code CONSUMED} do pedido e, se aberta, a tentativa
+     * (§8). Com a consulta já
+     * concluída, só a inbox muda. Se só o outbox, o {@code CONSUMED} ou a tentativa
+     * já existiam, a conclusão é
      * refeita sem eles, como na conclusão síncrona.
      */
     Processing settle(CallbackSettlement settlement, Instant now) {
@@ -240,7 +261,10 @@ class CallbackLedger {
         throw new IllegalStateException("The callback " + settlement.externalEventId() + " could not be settled");
     }
 
-    /** Só a inbox, para ela não ficar parada em {@code RECEIVED} quando a consulta já estava concluída. */
+    /**
+     * Só a inbox, para ela não ficar parada em {@code RECEIVED} quando a consulta
+     * já estava concluída.
+     */
     boolean markProcessed(String provider, String externalEventId, String queryId, Instant now) {
         return transactions.write(List.of(processed(provider, externalEventId, queryId, now))).committed();
     }
@@ -263,7 +287,8 @@ class CallbackLedger {
     }
 
     /**
-     * WHY: além de {@code IN_FLIGHT}, aceita {@code UNKNOWN}: o callback é a resposta que faltava a uma chamada
+     * WHY: além de {@code IN_FLIGHT}, aceita {@code UNKNOWN}: o callback é a
+     * resposta que faltava a uma chamada
      * sem resposta depois do envio, e concluir por ele evita a reconciliação.
      */
     private TransactWriteItem settleQuery(String queryId, QueryState state, Instant now) {

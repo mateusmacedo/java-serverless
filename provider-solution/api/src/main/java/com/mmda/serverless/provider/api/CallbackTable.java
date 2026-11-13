@@ -20,8 +20,10 @@ import software.amazon.awssdk.services.dynamodb.model.ReturnValue;
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItem;
 
 /**
- * {@code INBOX#}, {@code CORR#} e a conclusão de consultas por callback na tabela da provider (§5, §8). Os itens
- * de consulta, tentativa, evidência, outbox e {@code CONSUMED} têm o formato que os workers gravam.
+ * {@code INBOX#}, {@code CORR#} e a conclusão de consultas por callback na
+ * tabela da provider (§5, §8). Os itens
+ * de consulta, tentativa, evidência, outbox e {@code CONSUMED} têm o formato
+ * que os workers gravam.
  */
 @Component
 class CallbackTable {
@@ -46,16 +48,20 @@ class CallbackTable {
 
     enum Processing {
         SETTLED,
-        /** A consulta já estava concluída: só a inbox passou a {@code PROCESSED}, sem outbox. */
+        /**
+         * A consulta já estava concluída: só a inbox passou a {@code PROCESSED}, sem
+         * outbox.
+         */
         INBOX_ONLY,
         ALREADY_PROCESSED
     }
 
     record InboxEntry(String externalEventId, String payload, String providerRequestId, String receivedAt,
-                      String processingStatus) {
+            String processingStatus) {
 
         /**
-         * Ainda sem resultado gravado. WHY: o reconciler marca {@code UNMATCHED} o callback sem correlação, e a
+         * Ainda sem resultado gravado. WHY: o reconciler marca {@code UNMATCHED} o
+         * callback sem correlação, e a
          * repetição dele refaz o encontro em vez de responder como já processado (M4).
          */
         boolean received() {
@@ -67,10 +73,11 @@ class CallbackTable {
     }
 
     record QueryView(String queryId, QueryState state, String insurerId, String providerRequestId, String workRef,
-                     String quoteId, int version, String requestEventId, List<Attempt> attempts) {
+            String quoteId, int version, String requestEventId, List<Attempt> attempts) {
 
         /**
-         * Tentativa que o callback conclui: a do {@code 202} com o mesmo {@code providerRequestId}; sem ela, como
+         * Tentativa que o callback conclui: a do {@code 202} com o mesmo
+         * {@code providerRequestId}; sem ela, como
          * no callback que chega antes da gravação do {@code 202}, a última aberta.
          */
         Optional<Attempt> callbackAttempt(String callbackProviderRequestId) {
@@ -88,15 +95,21 @@ class CallbackTable {
         }
     }
 
-    /** Resultado de um callback para a consulta; {@code attemptSequence} nulo quando a tentativa já estava encerrada. */
+    /**
+     * Resultado de um callback para a consulta; {@code attemptSequence} nulo quando
+     * a tentativa já estava encerrada.
+     */
     record CallbackSettlement(String provider, String externalEventId, String queryId, QueryState finalState,
-                              Integer attemptSequence, String attemptOutcome, String attemptErrorClass,
-                              String providerRequestId,
-                              Map<String, AttributeValue> evidence, String eventId, String detailType, String detail,
-                              String consumedEventId, String workRef) {
+            Integer attemptSequence, String attemptOutcome, String attemptErrorClass,
+            String providerRequestId,
+            Map<String, AttributeValue> evidence, String eventId, String detailType, String detail,
+            String consumedEventId, String workRef) {
     }
 
-    /** Grava o callback recebido; {@code false} quando o {@code externalEventId} já estava na inbox. */
+    /**
+     * Grava o callback recebido; {@code false} quando o {@code externalEventId} já
+     * estava na inbox.
+     */
     boolean putInbox(String provider, CallbackEnvelope callback, String payload, Instant now) {
         String receivedAt = Timestamps.format(now);
         Map<String, AttributeValue> item = item(inboxPk(provider, callback.externalEventId()), "INBOX");
@@ -122,9 +135,9 @@ class CallbackTable {
 
     Optional<InboxEntry> loadInbox(String provider, String externalEventId) {
         Map<String, AttributeValue> item = dynamoDb.getItem(builder -> builder
-                        .tableName(properties.tableName())
-                        .consistentRead(true)
-                        .key(key(inboxPk(provider, externalEventId), META)))
+                .tableName(properties.tableName())
+                .consistentRead(true)
+                .key(key(inboxPk(provider, externalEventId), META)))
                 .item();
         if (item.isEmpty()) {
             return Optional.empty();
@@ -133,21 +146,24 @@ class CallbackTable {
                 string(item, "receivedAt"), string(item, "processingStatus")));
     }
 
-    /** Metade da API: {@code ADD pendingEvents}, criando o item se faltar, com {@code ALL_NEW}. */
+    /**
+     * Metade da API: {@code ADD pendingEvents}, criando o item se faltar, com
+     * {@code ALL_NEW}.
+     */
     Correlation addPending(String provider, String providerRequestId, String externalEventId, Instant now) {
         Map<String, AttributeValue> image = dynamoDb.updateItem(builder -> builder
-                        .tableName(properties.tableName())
-                        .key(key("CORR#" + provider + "#" + providerRequestId, META))
-                        .updateExpression("ADD pendingEvents :event SET #type = :type, #provider = :provider, "
-                                + "providerRequestId = :requestId, updatedAt = :now")
-                        .expressionAttributeNames(Map.of("#type", "type", "#provider", "provider"))
-                        .expressionAttributeValues(Map.of(
-                                ":event", AttributeValue.fromSs(List.of(externalEventId)),
-                                ":type", s("CORRELATION"),
-                                ":provider", s(provider),
-                                ":requestId", s(providerRequestId),
-                                ":now", s(Timestamps.format(now))))
-                        .returnValues(ReturnValue.ALL_NEW))
+                .tableName(properties.tableName())
+                .key(key("CORR#" + provider + "#" + providerRequestId, META))
+                .updateExpression("ADD pendingEvents :event SET #type = :type, #provider = :provider, "
+                        + "providerRequestId = :requestId, updatedAt = :now")
+                .expressionAttributeNames(Map.of("#type", "type", "#provider", "provider"))
+                .expressionAttributeValues(Map.of(
+                        ":event", AttributeValue.fromSs(List.of(externalEventId)),
+                        ":type", s("CORRELATION"),
+                        ":provider", s(provider),
+                        ":requestId", s(providerRequestId),
+                        ":now", s(Timestamps.format(now))))
+                .returnValues(ReturnValue.ALL_NEW))
                 .attributes();
         AttributeValue pending = image.get("pendingEvents");
         return new Correlation(string(image, "queryId"), pending == null ? null : Set.copyOf(pending.ss()));
@@ -155,10 +171,10 @@ class CallbackTable {
 
     Optional<QueryView> loadQuery(String queryId) {
         List<Map<String, AttributeValue>> items = dynamoDb.query(builder -> builder
-                        .tableName(properties.tableName())
-                        .consistentRead(true)
-                        .keyConditionExpression("pk = :pk")
-                        .expressionAttributeValues(Map.of(":pk", s("QUERY#" + queryId))))
+                .tableName(properties.tableName())
+                .consistentRead(true)
+                .keyConditionExpression("pk = :pk")
+                .expressionAttributeValues(Map.of(":pk", s("QUERY#" + queryId))))
                 .items();
         Map<String, AttributeValue> meta = null;
         List<Attempt> attempts = new ArrayList<>();
@@ -183,9 +199,12 @@ class CallbackTable {
     }
 
     /**
-     * Uma transação passa a inbox de {@code RECEIVED} para {@code PROCESSED} e grava a consulta concluída, a
-     * evidência, o outbox, o {@code CONSUMED} do pedido e, se aberta, a tentativa (§8). Com a consulta já
-     * concluída, só a inbox muda. Se só o outbox, o {@code CONSUMED} ou a tentativa já existiam, a conclusão é
+     * Uma transação passa a inbox de {@code RECEIVED} para {@code PROCESSED} e
+     * grava a consulta concluída, a
+     * evidência, o outbox, o {@code CONSUMED} do pedido e, se aberta, a tentativa
+     * (§8). Com a consulta já
+     * concluída, só a inbox muda. Se só o outbox, o {@code CONSUMED} ou a tentativa
+     * já existiam, a conclusão é
      * refeita sem eles, como na conclusão dos workers.
      */
     Processing settle(CallbackSettlement settlement, Instant now) {
@@ -222,15 +241,21 @@ class CallbackTable {
         throw new IllegalStateException("The callback " + settlement.externalEventId() + " could not be settled");
     }
 
-    /** Só a inbox, para ela não ficar parada em {@code RECEIVED} quando a consulta já estava concluída. */
+    /**
+     * Só a inbox, para ela não ficar parada em {@code RECEIVED} quando a consulta
+     * já estava concluída.
+     */
     boolean markProcessed(String provider, String externalEventId, String queryId, Instant now) {
         return transactions.write(List.of(processed(provider, externalEventId, queryId, now))).committed();
     }
 
-    /** Evidência imutável da consulta, como a dos workers ({@code EVIDENCE#<evidenceId>}). */
+    /**
+     * Evidência imutável da consulta, como a dos workers
+     * ({@code EVIDENCE#<evidenceId>}).
+     */
     static Map<String, AttributeValue> evidence(String queryId, String evidenceId, String resultType,
-                                                String normalizedResult, String rawResponseRef, String receivedAt,
-                                                String checksum, String errorClass) {
+            String normalizedResult, String rawResponseRef, String receivedAt,
+            String checksum, String errorClass) {
         Map<String, AttributeValue> item = item("QUERY#" + queryId, "EVIDENCE#" + evidenceId, "EVIDENCE");
         item.put("evidenceId", s(evidenceId));
         item.put("queryId", s(queryId));
@@ -262,7 +287,8 @@ class CallbackTable {
     }
 
     /**
-     * WHY: além de {@code IN_FLIGHT}, aceita {@code UNKNOWN}: o callback é a resposta que faltava a uma chamada
+     * WHY: além de {@code IN_FLIGHT}, aceita {@code UNKNOWN}: o callback é a
+     * resposta que faltava a uma chamada
      * sem resposta depois do envio, e concluir por ele evita a reconciliação.
      */
     private TransactWriteItem settleQuery(String queryId, QueryState state, Instant now) {

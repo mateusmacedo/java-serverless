@@ -2,7 +2,10 @@ package com.mmda.serverless.quote.domain;
 
 import java.util.Map;
 
-/** Tabela {@code path → label} dos campos pendentes, exibida pelo frontend sem tradução própria. */
+/**
+ * Tabela {@code path → label} dos campos pendentes, exibida pelo frontend sem
+ * tradução própria.
+ */
 public final class MissingFieldLabels {
 
     private static final Map<String, String> LABELS = Map.of(

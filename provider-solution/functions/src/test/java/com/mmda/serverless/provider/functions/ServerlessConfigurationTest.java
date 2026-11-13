@@ -27,18 +27,26 @@ import org.yaml.snakeyaml.nodes.ScalarNode;
 import org.yaml.snakeyaml.nodes.SequenceNode;
 
 /**
- * Invariantes de tempo do §9 do desenho, conferidas no serverless.yml de cada stage. O Floci aceita
- * visibilidade menor que o timeout da função e a AWS rejeita o ESM (§13), então este teste é a defesa.
+ * Invariantes de tempo do §9 do desenho, conferidas no serverless.yml de cada
+ * stage. O Floci aceita
+ * visibilidade menor que o timeout da função e a AWS rejeita o ESM (§13), então
+ * este teste é a defesa.
  */
 class ServerlessConfigurationTest {
 
     private static final Pattern PARAM = Pattern.compile("\\$\\{param:([A-Za-z]+)}");
-    /** Referência a parâmetro com ou sem fallback, como {@code ${param:x}} e {@code ${param:x, null}}. */
+    /**
+     * Referência a parâmetro com ou sem fallback, como {@code ${param:x}} e
+     * {@code ${param:x, null}}.
+     */
     private static final Pattern PARAM_REFERENCE = Pattern.compile("\\$\\{param:([A-Za-z]+)(,[^}]*)?}");
     private static final List<String> WORKERS = List.of("enrichmentWorker", "insurerWorker");
-    private static final List<String> QUEUE_CONSUMERS =
-            List.of("enrichmentWorker", "insurerWorker", "reconcileWorker", "simCallbackSender");
-    /** Fila de trabalho, a DLQ dela e as variáveis com que o reconciler reprocessa a DLQ (ADR 0007). */
+    private static final List<String> QUEUE_CONSUMERS = List.of("enrichmentWorker", "insurerWorker", "reconcileWorker",
+            "simCallbackSender");
+    /**
+     * Fila de trabalho, a DLQ dela e as variáveis com que o reconciler reprocessa a
+     * DLQ (ADR 0007).
+     */
     private static final List<List<String>> DEAD_LETTER_ROUTES = List.of(
             List.of("EnrichmentRequestsQueue", "EnrichmentRequestsDeadLetterQueue", "ENRICHMENT_REQUESTS_QUEUE_URL",
                     "ENRICHMENT_REQUESTS_DLQ_URL"),
@@ -69,7 +77,7 @@ class ServerlessConfigurationTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"local", "dev"})
+    @ValueSource(strings = { "local", "dev" })
     void workerTimeoutCoversEveryAttemptAndBackoff(String stage) {
         Map<String, Object> params = params(stage);
         int perCall = integer(params, "providerHttpTimeoutSeconds");
@@ -84,7 +92,7 @@ class ServerlessConfigurationTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"local", "dev"})
+    @ValueSource(strings = { "local", "dev" })
     void workersKnowTheirOwnTimeoutToTellALiveDuplicateFromAnInterruptedOne(String stage) {
         Map<String, Object> params = params(stage);
         Map<String, Object> environment = map(map(serverless.get("provider")).get("environment"));
@@ -97,7 +105,7 @@ class ServerlessConfigurationTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"local", "dev"})
+    @ValueSource(strings = { "local", "dev" })
     void enrichmentLeaseOutlivesTheEnrichmentWorker(String stage) {
         Map<String, Object> params = params(stage);
 
@@ -105,7 +113,7 @@ class ServerlessConfigurationTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"local", "dev"})
+    @ValueSource(strings = { "local", "dev" })
     void enrichmentWorkerSeesALeaseLongerThanItsOwnTimeout(String stage) {
         Map<String, Object> params = params(stage);
 
@@ -115,11 +123,12 @@ class ServerlessConfigurationTest {
     }
 
     /**
-     * WHY: a reentrega do líder refaz o fan-out pela lápide do {@code INFLIGHT#}, então ela dura mais que todas
+     * WHY: a reentrega do líder refaz o fan-out pela lápide do {@code INFLIGHT#},
+     * então ela dura mais que todas
      * as entregas de um pedido na fila; o TTL da tabela é que a expira.
      */
     @ParameterizedTest
-    @ValueSource(strings = {"local", "dev"})
+    @ValueSource(strings = { "local", "dev" })
     void inflightTombstoneOutlivesEveryDeliveryOfTheLeaderAndExpiresByTheTableTtl(String stage) {
         Map<String, Object> params = params(stage);
         int tombstone = resolveInt(environment().get("INFLIGHT_TOMBSTONE_SECONDS"), params);
@@ -136,7 +145,7 @@ class ServerlessConfigurationTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"local", "dev"})
+    @ValueSource(strings = { "local", "dev" })
     void reusePolicyVersionIsAProviderParameterSeenByTheWorkers(String stage) {
         Object value = environment().get("REUSE_POLICY_VERSION");
         Matcher matcher = PARAM.matcher(String.valueOf(value));
@@ -149,7 +158,7 @@ class ServerlessConfigurationTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"local", "dev"})
+    @ValueSource(strings = { "local", "dev" })
     void everyConsumedQueueHidesMessagesLongerThanItsConsumerRunsAndHasItsOwnReceiveLimit(String stage) {
         Map<String, Object> params = params(stage);
 
@@ -167,9 +176,12 @@ class ServerlessConfigurationTest {
         }
     }
 
-    /** §12: a {@code sim-callbacks} esconde a mensagem por 6 vezes o timeout do consumidor e tem DLQ (§9). */
+    /**
+     * §12: a {@code sim-callbacks} esconde a mensagem por 6 vezes o timeout do
+     * consumidor e tem DLQ (§9).
+     */
     @ParameterizedTest
-    @ValueSource(strings = {"local", "dev"})
+    @ValueSource(strings = { "local", "dev" })
     void simCallbacksQueueHasADeadLetterQueueAndHidesMessagesSixTimesTheSenderTimeout(String stage) {
         Map<String, Object> params = params(stage);
         Map<String, Object> queue = properties(logicalId(sqsEvent("simCallbackSender").get("arn")));
@@ -189,11 +201,13 @@ class ServerlessConfigurationTest {
     }
 
     /**
-     * WHY: só o {@code vehicle-beta-late} pode chegar depois da espera da seguradora na quote; os demais
-     * callbacks chegam dentro dela. A espera vem do serverless.yml da quote, no mesmo stage.
+     * WHY: só o {@code vehicle-beta-late} pode chegar depois da espera da
+     * seguradora na quote; os demais
+     * callbacks chegam dentro dela. A espera vem do serverless.yml da quote, no
+     * mesmo stage.
      */
     @ParameterizedTest
-    @ValueSource(strings = {"local", "dev"})
+    @ValueSource(strings = { "local", "dev" })
     void onlyTheLateBetaCallbackArrivesAfterTheInsurerWaitOfTheQuote(String stage) {
         Map<String, Object> params = params(stage);
         Object insurerWait = quoteParams(stage).get("insurerTimeoutSeconds");
@@ -214,7 +228,8 @@ class ServerlessConfigurationTest {
         assertThat(http.get("path")).isEqualTo("v1/providers/{provider}/callbacks");
         assertThat(http.get("method")).isEqualTo("post");
         assertThat(map(map(serverless.get("functions")).get("api")).get("role")).isEqualTo("CallbacksApiRole");
-        assertThat(functionEnvironment("api").get("CALLBACK_SECRET_ID")).isEqualTo("${self:custom.names.callbackSecret}");
+        assertThat(functionEnvironment("api").get("CALLBACK_SECRET_ID"))
+                .isEqualTo("${self:custom.names.callbackSecret}");
         assertThat(functionEnvironment("simCallbackSender").get("CALLBACK_SECRET_ID"))
                 .isEqualTo("${self:custom.names.callbackSecret}");
         assertThat(map(map(serverless.get("functions")).get("simCallbackSender")).get("role"))
@@ -228,7 +243,10 @@ class ServerlessConfigurationTest {
                 .doesNotContain("CallbackSecret");
     }
 
-    /** Menor privilégio: os papéis próprios do fluxo de callbacks têm exatamente as ações que o código usa. */
+    /**
+     * Menor privilégio: os papéis próprios do fluxo de callbacks têm exatamente as
+     * ações que o código usa.
+     */
     @Test
     void callbackRolesGrantOnlyWhatTheirCodeAndTheQueueConsumerUse() {
         assertThat(rolePolicy("SimCallbackSenderRole").stream().map(statement -> statement.split("=")[0]))
@@ -241,9 +259,12 @@ class ServerlessConfigurationTest {
                         "secretsmanager:GetSecretValue");
     }
 
-    /** T21: a quota de cada provedor é um parâmetro por stage, comum a todos os workflows. */
+    /**
+     * T21: a quota de cada provedor é um parâmetro por stage, comum a todos os
+     * workflows.
+     */
     @ParameterizedTest
-    @ValueSource(strings = {"local", "dev"})
+    @ValueSource(strings = { "local", "dev" })
     void everyProviderQuotaIsAStageParameterSeenByTheWorkers(String stage) {
         Map<String, Object> params = params(stage);
         Map<String, Object> environment = environment();
@@ -256,9 +277,12 @@ class ServerlessConfigurationTest {
         }
     }
 
-    /** A credencial compõe a chave do {@code QUOTA#}; fora da stack, a quota seria sempre a da credencial padrão. */
+    /**
+     * A credencial compõe a chave do {@code QUOTA#}; fora da stack, a quota seria
+     * sempre a da credencial padrão.
+     */
     @ParameterizedTest
-    @ValueSource(strings = {"local", "dev"})
+    @ValueSource(strings = { "local", "dev" })
     void quotaCredentialIsAStageParameterSeenByTheWorkers(String stage) {
         Matcher matcher = PARAM.matcher(String.valueOf(environment().get("PROVIDER_CREDENTIAL_REF")));
 
@@ -282,9 +306,12 @@ class ServerlessConfigurationTest {
                 "dynamodb", Map.of("NewImage", Map.of("type", Map.of("S", List.of("OUTBOX")))))));
     }
 
-    /** §2 e §12: a {@code reconcile-requests} tem o orçamento das filas de pedidos, DLQ e a regra da quote. */
+    /**
+     * §2 e §12: a {@code reconcile-requests} tem o orçamento das filas de pedidos,
+     * DLQ e a regra da quote.
+     */
     @ParameterizedTest
-    @ValueSource(strings = {"local", "dev"})
+    @ValueSource(strings = { "local", "dev" })
     void reconcileRequestsQueueHasTheBudgetOfTheRequestQueuesItsDeadLetterQueueAndTheQuoteRule(String stage) {
         Map<String, Object> params = params(stage);
         Map<String, Object> sqs = sqsEvent("reconcileWorker");
@@ -310,7 +337,8 @@ class ServerlessConfigurationTest {
     }
 
     /**
-     * §9: toda fila de trabalho tem DLQ com retenção de 14 dias, e o reconciler conhece as duas URLs e pode ler a
+     * §9: toda fila de trabalho tem DLQ com retenção de 14 dias, e o reconciler
+     * conhece as duas URLs e pode ler a
      * DLQ e devolver a mensagem à fila de origem.
      */
     @Test
@@ -327,7 +355,8 @@ class ServerlessConfigurationTest {
                     .isEqualTo(deadLetter);
             assertThat(properties(deadLetter).get("MessageRetentionPeriod")).isEqualTo(1209600);
             assertThat(environment.get(route.get(2))).as("%s seen by the reconciler", route.get(2)).isEqualTo(origin);
-            assertThat(reconciler.get(route.get(3))).as("%s seen by the reconciler", route.get(3)).isEqualTo(deadLetter);
+            assertThat(reconciler.get(route.get(3))).as("%s seen by the reconciler", route.get(3))
+                    .isEqualTo(deadLetter);
             assertThat(role).as("the reconciler sends back to %s and reads %s", origin, deadLetter)
                     .contains(origin + ".Arn", deadLetter + ".Arn");
         }
@@ -336,9 +365,12 @@ class ServerlessConfigurationTest {
                 .doesNotContain("sqs:GetQueueAttributes");
     }
 
-    /** §9 e §12: as idades do reconciler respeitam o timeout da api, o ciclo de 1 min e a lápide da liderança. */
+    /**
+     * §9 e §12: as idades do reconciler respeitam o timeout da api, o ciclo de 1
+     * min e a lápide da liderança.
+     */
     @ParameterizedTest
-    @ValueSource(strings = {"local", "dev"})
+    @ValueSource(strings = { "local", "dev" })
     void reconcilerWaitsLongerThanEveryLiveInvocationBeforeActingAndBeforeOpeningIssues(String stage) {
         Map<String, Object> params = params(stage);
         Map<String, Object> reconciler = functionEnvironment("reconciler");
@@ -365,12 +397,16 @@ class ServerlessConfigurationTest {
         assertThat(environment().get("METRICS_NAMESPACE")).isEqualTo("${self:custom.metricsNamespace}");
     }
 
-    /** §9 e §12: idade e volume de cada DLQ e da {@code stream-failures}, com os limiares do stage. */
+    /**
+     * §9 e §12: idade e volume de cada DLQ e da {@code stream-failures}, com os
+     * limiares do stage.
+     */
     @ParameterizedTest
-    @ValueSource(strings = {"local", "dev"})
+    @ValueSource(strings = { "local", "dev" })
     void everyDeadLetterQueueAndTheStreamFailuresQueueHaveAgeAndVolumeAlarms(String stage) {
         Map<String, Object> params = params(stage);
-        List<String> queues = new java.util.ArrayList<>(DEAD_LETTER_ROUTES.stream().map(route -> route.get(1)).toList());
+        List<String> queues = new java.util.ArrayList<>(
+                DEAD_LETTER_ROUTES.stream().map(route -> route.get(1)).toList());
         queues.add("StreamFailuresQueue");
 
         for (String queue : queues) {
@@ -391,9 +427,12 @@ class ServerlessConfigurationTest {
         }
     }
 
-    /** §9: as métricas EMF da outbox, dos callbacks {@code UNMATCHED}, das {@code UNKNOWN} e das falhas por provedor. */
+    /**
+     * §9: as métricas EMF da outbox, dos callbacks {@code UNMATCHED}, das
+     * {@code UNKNOWN} e das falhas por provedor.
+     */
     @ParameterizedTest
-    @ValueSource(strings = {"local", "dev"})
+    @ValueSource(strings = { "local", "dev" })
     void ownMetricsHaveAlarmsInTheNamespaceTheFunctionsWriteWithTheStageThresholds(String stage) {
         Map<String, Object> params = params(stage);
         Object namespace = map(serverless.get("custom")).get("metricsNamespace");
@@ -410,7 +449,8 @@ class ServerlessConfigurationTest {
             assertThat(alarm.get("Dimensions")).isEqualTo(List.of(Map.of("Name", "Stage", "Value", "${sls:stage}")));
             assertThat(resolveInt(alarm.get("Threshold"), params)).isEqualTo(thresholds.get(entry.getKey()));
         }
-        assertThat(integer(params, "staleOutboxAfterSeconds")).as("the outbox alarm and STALE_OUTBOX share the threshold")
+        assertThat(integer(params, "staleOutboxAfterSeconds"))
+                .as("the outbox alarm and STALE_OUTBOX share the threshold")
                 .isEqualTo(120);
         for (String provider : PROVIDERS) {
             Map<String, Object> alarm = map(resources().values().stream()
@@ -429,9 +469,12 @@ class ServerlessConfigurationTest {
         }
     }
 
-    /** O Serverless falha na resolução de um {@code ${param:x}} sem valor no stage e sem fallback. */
+    /**
+     * O Serverless falha na resolução de um {@code ${param:x}} sem valor no stage e
+     * sem fallback.
+     */
     @ParameterizedTest
-    @ValueSource(strings = {"local", "dev"})
+    @ValueSource(strings = { "local", "dev" })
     void everyReferencedParameterHasAValueInTheStage(String stage) {
         Map<String, Object> params = params(stage);
         Set<String> referenced = new TreeSet<>();
@@ -448,7 +491,8 @@ class ServerlessConfigurationTest {
     }
 
     /**
-     * WHY: o SDK lê {@code AWS_ENDPOINT_URL} e {@code AWS_ENDPOINT_URL_S3} sozinho e trataria um valor vazio como
+     * WHY: o SDK lê {@code AWS_ENDPOINT_URL} e {@code AWS_ENDPOINT_URL_S3} sozinho
+     * e trataria um valor vazio como
      * endpoint, então fora do Floci a condição tira as duas variáveis.
      */
     @Test
@@ -463,7 +507,8 @@ class ServerlessConfigurationTest {
         }
         assertThat(map(map(serverless.get("resources")).get("Conditions")).get("HasAwsEndpointUrl"))
                 .isEqualTo(List.of(List.of("${param:awsEndpointUrl}", "")));
-        assertThat(local).containsEntry("awsEndpointUrl", "http://floci:4566").containsEntry("s3PathStyleAccess", "true");
+        assertThat(local).containsEntry("awsEndpointUrl", "http://floci:4566").containsEntry("s3PathStyleAccess",
+                "true");
         assertThat(dev).containsEntry("awsEndpointUrl", "").containsEntry("s3PathStyleAccess", "false")
                 .containsEntry("providersBaseUrl",
                         "https://${ApiGatewayRestApi}.execute-api.${aws:region}.amazonaws.com/${sls:stage}");
@@ -483,8 +528,9 @@ class ServerlessConfigurationTest {
 
         assertThat(map(resources.get("AlarmsTopic")).get("Type")).isEqualTo("AWS::SNS::Topic");
         assertThat(properties("AlarmsTopic").get("TopicName")).isEqualTo("${self:service}-${sls:stage}-alarms");
-        assertThat(alarms).as("the 16 alarms of §2").hasSize(16).allSatisfy(alarm -> assertThat(alarm.get("AlarmActions"))
-                .as("AlarmActions of %s", alarm.get("AlarmName")).isEqualTo(List.of("AlarmsTopic")));
+        assertThat(alarms).as("the 16 alarms of §2").hasSize(16)
+                .allSatisfy(alarm -> assertThat(alarm.get("AlarmActions"))
+                        .as("AlarmActions of %s", alarm.get("AlarmName")).isEqualTo(List.of("AlarmsTopic")));
         assertThat(subscription).containsEntry("Type", "AWS::SNS::Subscription")
                 .containsEntry("Condition", "HasAlarmEmail");
         assertThat(map(subscription.get("Properties"))).containsEntry("TopicArn", "AlarmsTopic")
@@ -594,7 +640,10 @@ class ServerlessConfigurationTest {
         return (Map<String, Object>) value;
     }
 
-    /** Lê as tags curtas do CloudFormation ({@code !Ref}, {@code !GetAtt}, {@code !Join}) como valores comuns. */
+    /**
+     * Lê as tags curtas do CloudFormation ({@code !Ref}, {@code !GetAtt},
+     * {@code !Join}) como valores comuns.
+     */
     private static final class CloudFormationTags extends SafeConstructor {
 
         CloudFormationTags() {

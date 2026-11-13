@@ -21,8 +21,10 @@ import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItem;
 
 /**
- * Índice de reuso ({@code REUSE#}), liderança ({@code INFLIGHT#}) e seguidores ({@code FOLLOWER#}) do
- * enriquecimento (desenho, §5 e §8). Líder e seguidores escrevem ou conferem o mesmo {@code INFLIGHT#}, então
+ * Índice de reuso ({@code REUSE#}), liderança ({@code INFLIGHT#}) e seguidores
+ * ({@code FOLLOWER#}) do
+ * enriquecimento (desenho, §5 e §8). Líder e seguidores escrevem ou conferem o
+ * mesmo {@code INFLIGHT#}, então
  * nenhum seguidor fica sem resposta (ADR 0015).
  */
 @Component
@@ -38,7 +40,7 @@ class ReuseLedger {
     private final ReuseProperties reuse;
 
     ReuseLedger(DynamoDbClient dynamoDb, Transactions transactions, ProviderProperties properties,
-                ReuseProperties reuse) {
+            ReuseProperties reuse) {
         this.dynamoDb = dynamoDb;
         this.transactions = transactions;
         this.properties = properties;
@@ -53,7 +55,10 @@ class ReuseLedger {
         LEADERSHIP_CHANGED
     }
 
-    /** Seguidor registrado numa versão da liderança, com o necessário para receber o fan-out. */
+    /**
+     * Seguidor registrado numa versão da liderança, com o necessário para receber o
+     * fan-out.
+     */
     record Follower(String workRef, String quoteId, int version, long fencingVersion) {
     }
 
@@ -88,7 +93,9 @@ class ReuseLedger {
                 Items.string(item, "resultType").map(EnrichmentResultType::valueOf).orElse(null)));
     }
 
-    /** O pedido está registrado como seguidor numa das versões da cadeia corrente. */
+    /**
+     * O pedido está registrado como seguidor numa das versões da cadeia corrente.
+     */
     boolean isFollower(String queryKey, Leadership leadership, String workRef) {
         for (long version = leadership.fencingVersion(); version >= leadership.firstFencingVersion(); version--) {
             if (!get(Items.inflightPk(queryKey), Items.followerSk(version, workRef)).isEmpty()) {
@@ -98,16 +105,19 @@ class ReuseLedger {
         return false;
     }
 
-    /** Seguidores das versões {@code from} a {@code to}, lidos com {@code ConsistentRead}. */
+    /**
+     * Seguidores das versões {@code from} a {@code to}, lidos com
+     * {@code ConsistentRead}.
+     */
     List<Follower> followers(String queryKey, long from, long to) {
         return dynamoDb.queryPaginator(builder -> builder
-                        .tableName(properties.tableName())
-                        .consistentRead(true)
-                        .keyConditionExpression("pk = :pk AND sk BETWEEN :from AND :to")
-                        .expressionAttributeValues(Map.of(
-                                ":pk", s(Items.inflightPk(queryKey)),
-                                ":from", s(Items.followerPrefix(from)),
-                                ":to", s(Items.followerPrefix(to) + "~"))))
+                .tableName(properties.tableName())
+                .consistentRead(true)
+                .keyConditionExpression("pk = :pk AND sk BETWEEN :from AND :to")
+                .expressionAttributeValues(Map.of(
+                        ":pk", s(Items.inflightPk(queryKey)),
+                        ":from", s(Items.followerPrefix(from)),
+                        ":to", s(Items.followerPrefix(to) + "~"))))
                 .items().stream()
                 .map(item -> new Follower(
                         Items.string(item, "workRef").orElseThrow(),
@@ -118,7 +128,8 @@ class ReuseLedger {
     }
 
     /**
-     * Registro do seguidor (§8): {@code ConditionCheck} na liderança em voo da versão lida e Put do
+     * Registro do seguidor (§8): {@code ConditionCheck} na liderança em voo da
+     * versão lida e Put do
      * {@code FOLLOWER#<v>#<workRef>}, numa transação.
      */
     Registration register(String queryKey, long fencingVersion, EnrichmentRequest request, Instant now) {
@@ -154,8 +165,10 @@ class ReuseLedger {
     }
 
     /**
-     * Aquisição da liderança (§8), condicionada ao estado lido: item ausente, ou a mesma versão com
-     * {@code state = COMPLETED OR leaseUntil < :agora}. Reabrir uma lápide tira o TTL dela.
+     * Aquisição da liderança (§8), condicionada ao estado lido: item ausente, ou a
+     * mesma versão com
+     * {@code state = COMPLETED OR leaseUntil < :agora}. Reabrir uma lápide tira o
+     * TTL dela.
      */
     TransactWriteItem lead(String queryKey, ReusePlan.Lead plan, String workRef, String queryId, Instant now) {
         Map<String, AttributeValue> values = new HashMap<>();
@@ -190,7 +203,8 @@ class ReuseLedger {
     }
 
     /**
-     * WHY: um pedido que leu o índice antes da conclusão de outro líder e tenta a liderança depois dela
+     * WHY: um pedido que leu o índice antes da conclusão de outro líder e tenta a
+     * liderança depois dela
      * repetiria a chamada; a revisão lida tem de continuar a mesma.
      */
     TransactWriteItem reuseUnchanged(String queryKey, Long expectedRevision) {
@@ -208,8 +222,10 @@ class ReuseLedger {
     }
 
     /**
-     * Conclusão da liderança como lápide com TTL, só com a própria {@code fencingVersion} (§8, T15). WHY: a
-     * versão recomeça em 1 numa cadeia nova depois que o TTL apaga a lápide; o {@code queryId} impede que a
+     * Conclusão da liderança como lápide com TTL, só com a própria
+     * {@code fencingVersion} (§8, T15). WHY: a
+     * versão recomeça em 1 numa cadeia nova depois que o TTL apaga a lápide; o
+     * {@code queryId} impede que a
      * consulta de uma cadeia antiga conclua a liderança atual.
      */
     TransactWriteItem complete(LeaderTerm term, String queryId, String evidenceId, String resultType, Instant now) {
@@ -262,9 +278,9 @@ class ReuseLedger {
 
     private Map<String, AttributeValue> get(String pk, String sk) {
         return dynamoDb.getItem(builder -> builder
-                        .tableName(properties.tableName())
-                        .consistentRead(true)
-                        .key(Items.key(pk, sk)))
+                .tableName(properties.tableName())
+                .consistentRead(true)
+                .key(Items.key(pk, sk)))
                 .item();
     }
 }

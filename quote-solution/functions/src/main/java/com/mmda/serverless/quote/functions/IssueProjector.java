@@ -24,9 +24,12 @@ import software.amazon.awssdk.services.dynamodb.model.TransactWriteItem;
 import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledException;
 
 /**
- * Projeta os eventos operacionais da provider (§3, §4 e §7 do desenho, M5): ocorrências no {@code ISSUE#}, com o
- * {@code type} do evento em {@code issueType} e o {@code QUERYREF#} que autoriza o {@code RECONCILE}, e
- * reconciliações no {@code OPERATION#}. Idempotente pelo {@code CONSUMED#<eventId>} da mesma transação e pela
+ * Projeta os eventos operacionais da provider (§3, §4 e §7 do desenho, M5):
+ * ocorrências no {@code ISSUE#}, com o
+ * {@code type} do evento em {@code issueType} e o {@code QUERYREF#} que
+ * autoriza o {@code RECONCILE}, e
+ * reconciliações no {@code OPERATION#}. Idempotente pelo
+ * {@code CONSUMED#<eventId>} da mesma transação e pela
  * {@code revision}.
  */
 @ApplicationScoped
@@ -49,13 +52,21 @@ public class IssueProjector {
         PROJECTED,
         /** Evento já consumido ou revisão anterior à gravada: nada muda. */
         DISCARDED,
-        /** Resultado de reconciliação com outra organização que a da operação gravada: nada muda, e vai ao log. */
+        /**
+         * Resultado de reconciliação com outra organização que a da operação gravada:
+         * nada muda, e vai ao log.
+         */
         FOREIGN_ORGANIZATION,
-        /** Origem ou tipo fora do que a fila {@code issues} recebe: só registra no log. */
+        /**
+         * Origem ou tipo fora do que a fila {@code issues} recebe: só registra no log.
+         */
         IGNORED
     }
 
-    /** Mensagem malformada lança {@link IllegalArgumentException}: volta à fila e, no limite, vai para a DLQ. */
+    /**
+     * Mensagem malformada lança {@link IllegalArgumentException}: volta à fila e,
+     * no limite, vai para a DLQ.
+     */
     Disposition handle(String body) {
         JsonNode envelope = read(body);
         String source = envelope.path("source").asText(null);
@@ -157,7 +168,8 @@ public class IssueProjector {
                 ":r", n(revision),
                 ":updatedAt", s(occurredAt)));
         List<TransactWriteItem> writes = new ArrayList<>();
-        // INVARIANT: o OPERATION# gravado pela API guarda a organização do operador; um resultado de outra
+        // INVARIANT: o OPERATION# gravado pela API guarda a organização do operador; um
+        // resultado de outra
         // organização não o toca
         writes.add(table.update(QuoteKeys.operationPk(operationId), QuoteKeys.META,
                 "SET #type = :type, operationId = :operationId, queryId = if_not_exists(queryId, :queryId), "
@@ -171,9 +183,12 @@ public class IssueProjector {
     }
 
     /**
-     * A consulta passa a ser conhecida da organização, só pelo par de uma ocorrência. WHY: no
-     * {@code QueryReconciled}, o par é o do pedido e não prova que a consulta é da organização (AsyncAPI da
-     * provider); sem condição e com {@code if_not_exists}, a gravação nunca derruba a projeção e nunca troca a
+     * A consulta passa a ser conhecida da organização, só pelo par de uma
+     * ocorrência. WHY: no
+     * {@code QueryReconciled}, o par é o do pedido e não prova que a consulta é da
+     * organização (AsyncAPI da
+     * provider); sem condição e com {@code if_not_exists}, a gravação nunca derruba
+     * a projeção e nunca troca a
      * organização de uma consulta já conhecida.
      */
     private void addQueryRef(List<TransactWriteItem> writes, String queryId, String organizationId, Instant now) {
@@ -207,7 +222,8 @@ public class IssueProjector {
                 throw canceled;
             }
             String why = reasons.size() > 1 && "ConditionalCheckFailed".equals(reasons.get(1))
-                    ? "event already consumed" : "revision not newer than the projected one";
+                    ? "event already consumed"
+                    : "revision not newer than the projected one";
             LOG.infof("event %s discarded (%s): %s", eventId, why, subject);
             return Disposition.DISCARDED;
         }
@@ -238,7 +254,10 @@ public class IssueProjector {
         return value == null || !value.isTextual() || value.asText().isBlank() ? null : value.asText();
     }
 
-    /** Instante normalizado para o formato do {@code Instant}, que ordena o {@code gsi1sk}. */
+    /**
+     * Instante normalizado para o formato do {@code Instant}, que ordena o
+     * {@code gsi1sk}.
+     */
     private static String instant(JsonNode detail, String field) {
         try {
             return Instant.parse(required(detail, field)).toString();

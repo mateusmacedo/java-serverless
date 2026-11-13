@@ -3,9 +3,6 @@ package com.mmda.serverless.quote.e2e;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -42,14 +39,22 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
+
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
+
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+
 import software.amazon.awssdk.services.apigateway.ApiGatewayClient;
 import software.amazon.awssdk.services.apigateway.model.RestApi;
 import software.amazon.awssdk.services.cloudwatchlogs.CloudWatchLogsClient;
+import software.amazon.awssdk.services.cloudwatchlogs.model.FilteredLogEvent;
 import software.amazon.awssdk.services.cognitoidentityprovider.CognitoIdentityProviderClient;
 import software.amazon.awssdk.services.cognitoidentityprovider.model.AdminListGroupsForUserResponse;
 import software.amazon.awssdk.services.cognitoidentityprovider.model.AuthFlowType;
@@ -70,14 +75,17 @@ import software.amazon.awssdk.services.sfn.model.ExecutionListItem;
 import software.amazon.awssdk.services.sfn.model.ExecutionStatus;
 import software.amazon.awssdk.services.sfn.model.StateMachineListItem;
 import software.amazon.awssdk.services.sqs.SqsClient;
-import software.amazon.awssdk.services.cloudwatchlogs.model.FilteredLogEvent;
 import software.amazon.awssdk.services.sqs.model.QueueAttributeName;
 
 /**
- * Ponta a ponta do M1 ao M5 (§14) no Floci, com as esperas no orçamento do stage (§9). Cada caso usa um par
- * veículo/condutor próprio, porque a {@code queryKey} só depende dele (§5), e apaga o reuso do par (§10); os do M4
- * e do M5 apagam também, no {@code finally}, o estado que fabricaram e esperam os reconcilers pelo agendamento real.
- * Toda troca com a API da quote passa pelo {@link ContractClient}, que a confere contra o contrato (T22).
+ * Ponta a ponta do M1 ao M5 (§14) no Floci, com as esperas no orçamento do
+ * stage (§9). Cada caso usa um par
+ * veículo/condutor próprio, porque a {@code queryKey} só depende dele (§5), e
+ * apaga o reuso do par (§10); os do M4
+ * e do M5 apagam também, no {@code finally}, o estado que fabricaram e esperam
+ * os reconcilers pelo agendamento real.
+ * Toda troca com a API da quote passa pelo {@link ContractClient}, que a
+ * confere contra o contrato (T22).
  */
 class QuoteFlowE2E {
 
@@ -90,9 +98,12 @@ class QuoteFlowE2E {
 
     private static final String USERNAME = "e2e-acme-writer";
     private static final String PASSWORD = "E2e-Quote-Passw0rd!";
-    /** {@code perm_offers_select} desde o M4: o T17 confere que só a versão atual oferece {@code SELECT_OFFER}. */
-    private static final List<String> GROUPS =
-            List.of("org_org-acme", "perm_quotes_read", "perm_quotes_write", "perm_offers_select");
+    /**
+     * {@code perm_offers_select} desde o M4: o T17 confere que só a versão atual
+     * oferece {@code SELECT_OFFER}.
+     */
+    private static final List<String> GROUPS = List.of("org_org-acme", "perm_quotes_read", "perm_quotes_write",
+            "perm_offers_select");
     private static final User WRITER = new User(USERNAME, GROUPS);
     /** Operador da Acme com as cinco permissões do contrato. */
     private static final User OPERATOR = new User("e2e-acme-operator", List.of("org_org-acme", "perm_quotes_read",
@@ -100,7 +111,10 @@ class QuoteFlowE2E {
     /** Acme sem {@code offers:select} nem {@code operations:reconcile} (T30). */
     private static final User VIEWER = new User("e2e-acme-viewer",
             List.of("org_org-acme", "perm_quotes_read", "perm_quotes_write", "perm_operations_read"));
-    /** Operador da Globex com as cinco permissões: o 404 dele vem da organização, não da permissão (T18). */
+    /**
+     * Operador da Globex com as cinco permissões: o 404 dele vem da organização,
+     * não da permissão (T18).
+     */
     private static final User GLOBEX = new User("e2e-globex-operator", List.of("org_org-globex", "perm_quotes_read",
             "perm_quotes_write", "perm_offers_select", "perm_operations_read", "perm_operations_reconcile"));
     private static final List<User> USERS = List.of(WRITER, OPERATOR, VIEWER, GLOBEX);
@@ -151,33 +165,57 @@ class QuoteFlowE2E {
     private static final Path QUOTE_SERVERLESS = Path.of("../serverless.yml");
     /** Namespace dos UUIDv5 das duas soluções, o URL da RFC 9562 (§3). */
     private static final UUID EVENT_ID_NAMESPACE = UUID.fromString("6ba7b811-9dad-11d1-80b4-00c04fd430c8");
-    /** Token que a decifração da quote recusa: só serve para fazer a retomada cair depois de gravar (T13). */
+    /**
+     * Token que a decifração da quote recusa: só serve para fazer a retomada cair
+     * depois de gravar (T13).
+     */
     private static final String UNREADABLE_TOKEN = "e2e-t13-unreadable-token";
-    /** T20: o dispatch da beta logo antes do ciclo seguinte do reconciler, que vem 60 ou 70 s depois (§13). */
+    /**
+     * T20: o dispatch da beta logo antes do ciclo seguinte do reconciler, que vem
+     * 60 ou 70 s depois (§13).
+     */
     private static final Duration T20_DISPATCH_AFTER_CYCLE = Duration.ofSeconds(51);
     private static final int T20_ATTEMPTS = 3;
-    /** Credencial padrão da provider ({@code PROVIDER_CREDENTIAL_REF}), parte da chave {@code QUOTA#} (§5). */
+    /**
+     * Credencial padrão da provider ({@code PROVIDER_CREDENTIAL_REF}), parte da
+     * chave {@code QUOTA#} (§5).
+     */
     private static final String CREDENTIAL_REF = "default";
-    private static final DateTimeFormatter QUOTA_WINDOW =
-            DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss").withZone(ZoneOffset.UTC);
-    /** Partes fixas da {@code queryKey} (§5), como a quote as envia no {@code EnrichmentRequested} (§3). */
+    private static final DateTimeFormatter QUOTA_WINDOW = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss")
+            .withZone(ZoneOffset.UTC);
+    /**
+     * Partes fixas da {@code queryKey} (§5), como a quote as envia no
+     * {@code EnrichmentRequested} (§3).
+     */
     private static final List<String> ENRICHMENT_REQUEST = List.of("enrichment-sim", "VEHICLE_DRIVER_PROFILE", "1");
     private static final String QUERY_KEY_SECRET = "provider-solution/" + STAGE + "/query-key-secret";
     private static final int CONCURRENT_QUOTES = Integer.getInteger("e2e.concurrentQuotes", 12);
     private static final String DECIMAL = "^\\d+(\\.\\d+)?$";
     private static final String ORGANIZATION = "org-acme";
-    /** Dois disparos de {@code rate(1 minute)} e a publicação; o Floci dispara a cada 60 a 70 s. */
+    /**
+     * Dois disparos de {@code rate(1 minute)} e a publicação; o Floci dispara a
+     * cada 60 a 70 s.
+     */
     private static final Duration RECONCILER_BUDGET = Duration.ofMinutes(3);
-    /** Ida e volta da reconciliação manual: relay, barramento, filas e as duas Lambdas, sem agendamento. */
+    /**
+     * Ida e volta da reconciliação manual: relay, barramento, filas e as duas
+     * Lambdas, sem agendamento.
+     */
     private static final Duration RECONCILE_BUDGET = Duration.ofMinutes(1);
-    /** Pedidos de cada lado por rodada do T29, e rodadas antes de selecionar sem disputa. */
+    /**
+     * Pedidos de cada lado por rodada do T29, e rodadas antes de selecionar sem
+     * disputa.
+     */
     private static final int T29_CONTENDERS = 3;
     private static final int T29_ROUNDS = 3;
-    private static final DateTimeFormatter SECONDS =
-            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
-    /** Formato do {@code Timestamps} da provider, comparado como texto no {@code gsi2sk}. */
-    private static final DateTimeFormatter PROVIDER_TIMESTAMP =
-            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC);
+    private static final DateTimeFormatter SECONDS = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+            .withZone(ZoneOffset.UTC);
+    /**
+     * Formato do {@code Timestamps} da provider, comparado como texto no
+     * {@code gsi2sk}.
+     */
+    private static final DateTimeFormatter PROVIDER_TIMESTAMP = DateTimeFormatter
+            .ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC);
 
     private static final Logger LOG = Logger.getLogger(QuoteFlowE2E.class.getName());
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -305,8 +343,10 @@ class QuoteFlowE2E {
     }
 
     /**
-     * T19 com o agendamento real: um outbox pendente que o stream nunca entregou (gravado sem o {@code type}
-     * {@code OUTBOX} no {@code INSERT}, que é o filtro da relay) só é publicado pelo {@code reconciler}
+     * T19 com o agendamento real: um outbox pendente que o stream nunca entregou
+     * (gravado sem o {@code type}
+     * {@code OUTBOX} no {@code INSERT}, que é o filtro da relay) só é publicado
+     * pelo {@code reconciler}
      * disparado pelo {@code rate(1 minute)}, nas duas soluções.
      */
     @Test
@@ -355,8 +395,10 @@ class QuoteFlowE2E {
     }
 
     /**
-     * T04: a segunda cotação equivalente usa a evidência válida do índice de reuso ({@code HIT}). A provider não
-     * abre consulta de enriquecimento para ela, e a evidência usada aponta a mesma evidência da provider, com a
+     * T04: a segunda cotação equivalente usa a evidência válida do índice de reuso
+     * ({@code HIT}). A provider não
+     * abre consulta de enriquecimento para ela, e a evidência usada aponta a mesma
+     * evidência da provider, com a
      * política de reuso que a produziu.
      */
     @Test
@@ -394,8 +436,10 @@ class QuoteFlowE2E {
     }
 
     /**
-     * T05: com o {@code reusableUntil} do índice envelhecido pelo harness, a cotação equivalente abre outra consulta
-     * na provider, numa liderança nova, e a consulta anterior, com tentativa e evidência, fica como estava.
+     * T05: com o {@code reusableUntil} do índice envelhecido pelo harness, a
+     * cotação equivalente abre outra consulta
+     * na provider, numa liderança nova, e a consulta anterior, com tentativa e
+     * evidência, fica como estava.
      */
     @Test
     void t05_expiredEnrichmentStartsNewQuery() throws Exception {
@@ -433,11 +477,16 @@ class QuoteFlowE2E {
     }
 
     /**
-     * T06 no Floci com {@code e2e.concurrentQuotes} cotações equivalentes disparadas juntas: um só pedido lidera a
-     * consulta ({@code MISS}), os demais esperam por ela ({@code JOIN}) ou já encontram a evidência no índice
-     * ({@code HIT}), e todos terminam com a mesma evidência, depois de uma única chamada ao provedor. NOTE: o ESM de
-     * SQS do Floci entrega cerca de 1 mensagem por segundo, então aqui os demais tendem a {@code HIT} (§13), a espera
-     * cresce 1 s por cotação, e um N que passe do prazo do enriquecimento termina em {@code TECHNICAL_FAILURE} por
+     * T06 no Floci com {@code e2e.concurrentQuotes} cotações equivalentes
+     * disparadas juntas: um só pedido lidera a
+     * consulta ({@code MISS}), os demais esperam por ela ({@code JOIN}) ou já
+     * encontram a evidência no índice
+     * ({@code HIT}), e todos terminam com a mesma evidência, depois de uma única
+     * chamada ao provedor. NOTE: o ESM de
+     * SQS do Floci entrega cerca de 1 mensagem por segundo, então aqui os demais
+     * tendem a {@code HIT} (§13), a espera
+     * cresce 1 s por cotação, e um N que passe do prazo do enriquecimento termina
+     * em {@code TECHNICAL_FAILURE} por
      * limite do Floci, não por defeito de reuso.
      */
     @Test
@@ -565,7 +614,8 @@ class QuoteFlowE2E {
     }
 
     /**
-     * T01 com as duas seguradoras: a alpha responde na chamada e a beta por callback. Cada oferta aponta a consulta e
+     * T01 com as duas seguradoras: a alpha responde na chamada e a beta por
+     * callback. Cada oferta aponta a consulta e
      * a evidência da provider, e o callback da beta fica processado na inbox.
      */
     @Test
@@ -605,7 +655,10 @@ class QuoteFlowE2E {
         logInsurerChain("T01", accepted.quoteId());
     }
 
-    /** T07: a beta recusa e a alpha oferece; a versão conclui com uma oferta e o motivo da recusa da beta. */
+    /**
+     * T07: a beta recusa e a alpha oferece; a versão conclui com uma oferta e o
+     * motivo da recusa da beta.
+     */
     @Test
     void t07_insurerDeclinesAndTheOtherOfferCompletesTheQuote() throws Exception {
         Accepted accepted = create(newKey(), JSON.writeValueAsString(request(BETA_DECLINES, "PERSONAL", DRIVER)));
@@ -626,8 +679,10 @@ class QuoteFlowE2E {
     }
 
     /**
-     * T08: a beta aceita o pedido e não responde ({@code vehicle-beta-silent}). A oferta da alpha aparece no GET
-     * enquanto a beta está em processamento, e a versão termina {@code PARTIAL}, com a mesma oferta.
+     * T08: a beta aceita o pedido e não responde ({@code vehicle-beta-silent}). A
+     * oferta da alpha aparece no GET
+     * enquanto a beta está em processamento, e a versão termina {@code PARTIAL},
+     * com a mesma oferta.
      */
     @Test
     void t08_offerIsVisibleBeforeTheOtherInsurerTimesOut() throws Exception {
@@ -657,9 +712,12 @@ class QuoteFlowE2E {
     }
 
     /**
-     * T11: a beta entrega o mesmo callback duas vezes ({@code vehicle-beta-duplicate}); depois da conclusão, o
-     * harness reenvia o callback assinado e publica de novo o {@code InsurerResultRecorded}. A inbox reconhece a
-     * repetição, a retomada descarta o evento repetido (o descarte só deixa a linha de log com o {@code eventId}),
+     * T11: a beta entrega o mesmo callback duas vezes
+     * ({@code vehicle-beta-duplicate}); depois da conclusão, o
+     * harness reenvia o callback assinado e publica de novo o
+     * {@code InsurerResultRecorded}. A inbox reconhece a
+     * repetição, a retomada descarta o evento repetido (o descarte só deixa a linha
+     * de log com o {@code eventId}),
      * e nada muda na cotação nem na consulta.
      */
     @Test
@@ -696,9 +754,12 @@ class QuoteFlowE2E {
     }
 
     /**
-     * T12: a beta agenda o callback sem atraso e só com o {@code providerRequestId} ({@code vehicle-beta-early}); ele
-     * só é associado pelo encontro no {@code CORR#} (§8), e a oferta chega sem perda. NOTE: o ESM do Floci entrega o
-     * callback cerca de 1 s depois, já depois do {@code 202}; a ordem inversa fica na integração da provider.
+     * T12: a beta agenda o callback sem atraso e só com o {@code providerRequestId}
+     * ({@code vehicle-beta-early}); ele
+     * só é associado pelo encontro no {@code CORR#} (§8), e a oferta chega sem
+     * perda. NOTE: o ESM do Floci entrega o
+     * callback cerca de 1 s depois, já depois do {@code 202}; a ordem inversa fica
+     * na integração da provider.
      */
     @Test
     void t12_callbackBeforeCorrelationIsNotLost() throws Exception {
@@ -718,8 +779,8 @@ class QuoteFlowE2E {
         assertThat(callback).as("the early callback carries only the providerRequestId")
                 .doesNotContainKey("clientReference");
         assertThat(string(callback, "providerRequestId")).isEqualTo(providerRequestId);
-        Map<String, AttributeValue> correlation =
-                single(queryByPrefix(QUERIES_TABLE, "CORR#" + BETA + "#" + providerRequestId, "META"));
+        Map<String, AttributeValue> correlation = single(
+                queryByPrefix(QUERIES_TABLE, "CORR#" + BETA + "#" + providerRequestId, "META"));
         assertThat(string(correlation, "queryId")).as("the worker half").isEqualTo(queryId);
         assertThat(correlation.get("pendingEvents").ss()).as("the API half")
                 .contains(string(callback, "externalEventId"));
@@ -727,9 +788,12 @@ class QuoteFlowE2E {
     }
 
     /**
-     * T21: a quota da alpha é uma só para todos os workflows (§9). Com a janela corrente reservada até sobrarem
-     * {@code granted} chamadas e a seguinte esgotada, as cotações simultâneas fazem só essas chamadas; as demais
-     * terminam sem chamada, com {@code QUOTA_EXHAUSTED}, e nenhuma janela passa do limite.
+     * T21: a quota da alpha é uma só para todos os workflows (§9). Com a janela
+     * corrente reservada até sobrarem
+     * {@code granted} chamadas e a seguinte esgotada, as cotações simultâneas fazem
+     * só essas chamadas; as demais
+     * terminam sem chamada, com {@code QUOTA_EXHAUSTED}, e nenhuma janela passa do
+     * limite.
      */
     @Test
     void t21_insurerQuotaIsGlobalAcrossWorkflows() throws Exception {
@@ -771,10 +835,14 @@ class QuoteFlowE2E {
     }
 
     /**
-     * T26: o veículo anterior a 2000 não tem seguradora aplicável (§10): {@code NO_OFFER}, sem pedido, com a
-     * seleção feita depois do enriquecimento. NOTE: no {@code vehicle-classic-1998} o ano do catálogo e o do
-     * enriquecimento coincidem; que a regra usa o ano enriquecido, e não o de entrada, é provado no
-     * {@code QuoteFunctionsFlociIT} ({@code selectionUsesTheEnrichedVehicleYearInsteadOfTheInputYear}).
+     * T26: o veículo anterior a 2000 não tem seguradora aplicável (§10):
+     * {@code NO_OFFER}, sem pedido, com a
+     * seleção feita depois do enriquecimento. NOTE: no {@code vehicle-classic-1998}
+     * o ano do catálogo e o do
+     * enriquecimento coincidem; que a regra usa o ano enriquecido, e não o de
+     * entrada, é provado no
+     * {@code QuoteFunctionsFlociIT}
+     * ({@code selectionUsesTheEnrichedVehicleYearInsteadOfTheInputYear}).
      */
     @Test
     void t26_noApplicableInsurerEndsWithoutOffers() throws Exception {
@@ -796,12 +864,15 @@ class QuoteFlowE2E {
     }
 
     /**
-     * T09: com uso {@code COMMERCIAL} só a alpha é aplicável, e ela recusa ({@code vehicle-alpha-declines}):
-     * {@code NO_OFFER} com {@code ALL_INSURERS_DECLINED}, depois de uma única chamada, sem retry comercial.
+     * T09: com uso {@code COMMERCIAL} só a alpha é aplicável, e ela recusa
+     * ({@code vehicle-alpha-declines}):
+     * {@code NO_OFFER} com {@code ALL_INSURERS_DECLINED}, depois de uma única
+     * chamada, sem retry comercial.
      */
     @Test
     void t09_everyApplicableInsurerDeclinesEndsWithNoOfferAfterOneCall() throws Exception {
-        // NOTE: nenhum veículo faz a alpha e a beta recusarem juntas (§10); a recusa da beta ao lado da oferta da
+        // NOTE: nenhum veículo faz a alpha e a beta recusarem juntas (§10); a recusa da
+        // beta ao lado da oferta da
         // alpha é o T07
         forgetEnrichmentReuse(ALPHA_DECLINES, DRIVER);
         try {
@@ -825,8 +896,10 @@ class QuoteFlowE2E {
     }
 
     /**
-     * T10: a única seguradora aplicável está fora do ar ({@code vehicle-alpha-down}, 503): {@code TECHNICAL_FAILURE}
-     * com {@code INSURER_TECHNICAL_FAILURE}, nunca {@code NO_OFFER}, depois da chamada e dos {@code workerRetries}.
+     * T10: a única seguradora aplicável está fora do ar
+     * ({@code vehicle-alpha-down}, 503): {@code TECHNICAL_FAILURE}
+     * com {@code INSURER_TECHNICAL_FAILURE}, nunca {@code NO_OFFER}, depois da
+     * chamada e dos {@code workerRetries}.
      */
     @Test
     void t10_everyApplicableInsurerUnavailableIsTechnicalFailureAndNotNoOffer() throws Exception {
@@ -852,15 +925,21 @@ class QuoteFlowE2E {
     }
 
     /**
-     * T13: o {@code resume} grava o resultado da beta e cai antes do {@code SendTaskSuccess}; a versão termina com o
-     * resultado gravado, o {@code reconciler} retoma o waiter parado em {@code RESUMING} e nenhuma chamada se repete.
+     * T13: o {@code resume} grava o resultado da beta e cai antes do
+     * {@code SendTaskSuccess}; a versão termina com o
+     * resultado gravado, o {@code reconciler} retoma o waiter parado em
+     * {@code RESUMING} e nenhuma chamada se repete.
      */
     @Test
     void t13_savedResultWhoseResumeFailedIsRecoveredWithoutCallingTheInsurerAgain() throws Exception {
-        // NOTE: estado fabricado, como o QUOTA# do T21: o token do waiter da beta fica ilegível enquanto ele espera,
-        // então o resume grava RESUMING, resumePayload, RESULT, OFFER e CONSUMED e cai na decifração. No local, a
-        // espera da beta (20 s) acaba antes do resumingRetryAfterSeconds (30 s): a consolidação usa o resultado
-        // gravado, e a retomada do reconciler termina EXPIRED com o resultado entregue, sem TASK_EXPIRED (§8)
+        // NOTE: estado fabricado, como o QUOTA# do T21: o token do waiter da beta fica
+        // ilegível enquanto ele espera,
+        // então o resume grava RESUMING, resumePayload, RESULT, OFFER e CONSUMED e cai
+        // na decifração. No local, a
+        // espera da beta (20 s) acaba antes do resumingRetryAfterSeconds (30 s): a
+        // consolidação usa o resultado
+        // gravado, e a retomada do reconciler termina EXPIRED com o resultado entregue,
+        // sem TASK_EXPIRED (§8)
         forgetEnrichmentReuse(HATCH, DRIVER);
         Map<String, AttributeValue> waiterKey = null;
         String originalToken = null;
@@ -881,7 +960,8 @@ class QuoteFlowE2E {
             String eventId = string(resuming, "resultEventId");
             Map<String, AttributeValue> savedResult = single(quoteItems(accepted.quoteId(), "V#0001#RESULT#" + BETA));
             List<Map<String, AttributeValue>> savedOffers = quoteItems(accepted.quoteId(), "V#0001#OFFER#");
-            // NOTE: a reentrega da fila results só vem depois do expiresAt do waiter e é descartada pelo CONSUMED,
+            // NOTE: a reentrega da fila results só vem depois do expiresAt do waiter e é
+            // descartada pelo CONSUMED,
             // sem SendTaskSuccess; quem retoma o RESUMING é o reconciler
             awaitLogEvent(RESUME_LOG, "failed and will be redelivered", resumingAt.minusSeconds(1),
                     Duration.ofSeconds(60));
@@ -921,8 +1001,10 @@ class QuoteFlowE2E {
     }
 
     /**
-     * T14: a beta aceita e nunca responde ({@code vehicle-beta-silent}). Depois do prazo, o {@code reconciler} da
-     * provider deixa a consulta {@code UNKNOWN} e a conclui pelo GET de situação, sem nova chamada; o resultado chega
+     * T14: a beta aceita e nunca responde ({@code vehicle-beta-silent}). Depois do
+     * prazo, o {@code reconciler} da
+     * provider deixa a consulta {@code UNKNOWN} e a conclui pelo GET de situação,
+     * sem nova chamada; o resultado chega
      * à quote como evidência tardia, e a cotação terminal não reabre.
      */
     @Test
@@ -939,7 +1021,8 @@ class QuoteFlowE2E {
             Map<String, AttributeValue> late = awaitLate(accepted.quoteId(), BETA, betaQuery);
 
             assertThat(version.path("outcome").asText()).isEqualTo("PARTIAL");
-            assertThat(statusByInsurer(version)).containsExactly(Map.entry(ALPHA, "QUOTED"), Map.entry(BETA, "TIMED_OUT"));
+            assertThat(statusByInsurer(version)).containsExactly(Map.entry(ALPHA, "QUOTED"),
+                    Map.entry(BETA, "TIMED_OUT"));
             assertLog(PROVIDER_RECONCILER_LOG, "left UNKNOWN: queryId=" + betaQuery, terminalAt.minusSeconds(60));
             assertLog(PROVIDER_RECONCILER_LOG, "concluded by the status API, without a new call: queryId=" + betaQuery,
                     terminalAt.minusSeconds(60));
@@ -964,8 +1047,10 @@ class QuoteFlowE2E {
     }
 
     /**
-     * T16: o callback da beta chega depois do prazo final da espera ({@code vehicle-beta-late}): a versão termina
-     * {@code PARTIAL}, o resultado entra como evidência tardia ({@code LATE}), e a versão, o resumo e as ofertas não
+     * T16: o callback da beta chega depois do prazo final da espera
+     * ({@code vehicle-beta-late}): a versão termina
+     * {@code PARTIAL}, o resultado entra como evidência tardia ({@code LATE}), e a
+     * versão, o resumo e as ofertas não
      * mudam.
      */
     @Test
@@ -981,7 +1066,8 @@ class QuoteFlowE2E {
             Map<String, AttributeValue> late = awaitLate(accepted.quoteId(), BETA, betaQuery);
 
             assertThat(version.path("outcome").asText()).isEqualTo("PARTIAL");
-            assertThat(statusByInsurer(version)).containsExactly(Map.entry(ALPHA, "QUOTED"), Map.entry(BETA, "TIMED_OUT"));
+            assertThat(statusByInsurer(version)).containsExactly(Map.entry(ALPHA, "QUOTED"),
+                    Map.entry(BETA, "TIMED_OUT"));
             assertThat(insurerResult(version, BETA).path("reasonCode").asText()).isEqualTo("STEP_TIMEOUT");
             assertThat(string(late, "reason")).isEqualTo("LATE");
             assertThat(string(late, "status")).isEqualTo("QUOTED");
@@ -998,9 +1084,12 @@ class QuoteFlowE2E {
     }
 
     /**
-     * T17: a versão 2 é criada enquanto a versão 1 ainda consulta. Os resultados da versão 1 chegam depois da troca e
-     * ficam nela; a versão substituída fica sem ações e com as ofertas não selecionáveis, e só a atual oferece
-     * {@code SELECT_OFFER}. O reenvio da chave devolve a mesma versão e a versão lida antiga recebe 409.
+     * T17: a versão 2 é criada enquanto a versão 1 ainda consulta. Os resultados da
+     * versão 1 chegam depois da troca e
+     * ficam nela; a versão substituída fica sem ações e com as ofertas não
+     * selecionáveis, e só a atual oferece
+     * {@code SELECT_OFFER}. O reenvio da chave devolve a mesma versão e a versão
+     * lida antiga recebe 409.
      */
     @Test
     void t17_newVersionDuringTheOldQueryKeepsResultsApartAndBlocksSelectionOnTheOldVersion() throws Exception {
@@ -1036,7 +1125,8 @@ class QuoteFlowE2E {
             assertThat(oldVersion.path("supersededAt").asText()).isNotBlank();
             assertThat(oldVersion.path("allowedActions")).as("no SELECT_OFFER on the superseded version").isEmpty();
             assertThat(oldVersion.at("/snapshot/risk/vehicleRef").asText()).isEqualTo(SEDAN);
-            assertThat(statusByInsurer(oldVersion)).containsExactly(Map.entry(ALPHA, "QUOTED"), Map.entry(BETA, "QUOTED"));
+            assertThat(statusByInsurer(oldVersion)).containsExactly(Map.entry(ALPHA, "QUOTED"),
+                    Map.entry(BETA, "QUOTED"));
             Map<String, JsonNode> oldOffers = offersByInsurer(first);
             assertThat(oldOffers).containsOnlyKeys(ALPHA, BETA);
             assertThat(oldOffers.values()).allSatisfy(offer -> {
@@ -1047,7 +1137,8 @@ class QuoteFlowE2E {
             assertThat(newVersion.path("outcome").asText()).isEqualTo("COMPLETED");
             assertThat(newVersion.path("supersededAt").isNull()).isTrue();
             assertThat(newVersion.at("/snapshot/risk/vehicleRef").asText()).isEqualTo(BETA_DECLINES);
-            assertThat(texts(newVersion.path("allowedActions"))).containsExactlyInAnyOrder("CREATE_VERSION", "SELECT_OFFER");
+            assertThat(texts(newVersion.path("allowedActions"))).containsExactlyInAnyOrder("CREATE_VERSION",
+                    "SELECT_OFFER");
             assertThat(statusByInsurer(newVersion)).containsExactly(Map.entry(ALPHA, "QUOTED"),
                     Map.entry(BETA, "DECLINED"));
             Map<String, JsonNode> newOffers = offersByInsurer(second);
@@ -1057,7 +1148,8 @@ class QuoteFlowE2E {
             Instant replacedAt = Instant.parse(string(versionItem(first.quoteId(), 2), "createdAt"));
             for (int version : List.of(1, 2)) {
                 assertThat(quoteItems(first.quoteId(), "V#%04d#LATE#".formatted(version))).isEmpty();
-                for (Map<String, AttributeValue> result : quoteItems(first.quoteId(), "V#%04d#RESULT#".formatted(version))) {
+                for (Map<String, AttributeValue> result : quoteItems(first.quoteId(),
+                        "V#%04d#RESULT#".formatted(version))) {
                     Map<String, AttributeValue> query = providerQuery(string(result, "queryRef"));
                     assertThat(number(query, "version")).as("the query of %s", string(result, "sk")).isEqualTo(version);
                     if (version == 1) {
@@ -1080,22 +1172,29 @@ class QuoteFlowE2E {
     }
 
     /**
-     * T20: a execução é interrompida ({@code StopExecution}) com a oferta da alpha gravada e a beta em processamento.
-     * O {@code reconciler} da quote encontra a execução {@code ABORTED}, finaliza a versão com os resultados
+     * T20: a execução é interrompida ({@code StopExecution}) com a oferta da alpha
+     * gravada e a beta em processamento.
+     * O {@code reconciler} da quote encontra a execução {@code ABORTED}, finaliza a
+     * versão com os resultados
      * existentes, mantém a oferta e grava a ocorrência {@code WORKFLOW_FAILED}.
      */
     @Test
     void t20_abortedExecutionIsFinalizedByTheReconcilerKeepingTheOffers() throws Exception {
-        // NOTE: no Floci, o StopExecution marca ABORTED, mas o interpretador segue os estados sem registrá-los no
-        // histórico: a espera da beta acaba e o ConsolidateQuote consolida cerca de 21 s depois do dispatch. O
-        // reconciler só finaliza se um ciclo dele cair entre o StopExecution e essa consolidação, então o caso põe o
-        // dispatch T20_DISPATCH_AFTER_CYCLE depois de um ciclo (o seguinte vem 60 ou 70 s depois dele) e repete com
+        // NOTE: no Floci, o StopExecution marca ABORTED, mas o interpretador segue os
+        // estados sem registrá-los no
+        // histórico: a espera da beta acaba e o ConsolidateQuote consolida cerca de 21
+        // s depois do dispatch. O
+        // reconciler só finaliza se um ciclo dele cair entre o StopExecution e essa
+        // consolidação, então o caso põe o
+        // dispatch T20_DISPATCH_AFTER_CYCLE depois de um ciclo (o seguinte vem 60 ou 70
+        // s depois dele) e repete com
         // outra cotação quando a continuação do Floci consolida antes
         forgetEnrichmentReuse(BETA_LATE, DRIVER_ANA);
         try {
             Duration dispatchLatency = Duration.ofSeconds(5);
-            for (int attempt = 1; ; attempt++) {
-                // NOTE: cada tentativa é um MISS, no mesmo regime da latência medida na anterior
+            for (int attempt = 1;; attempt++) {
+                // NOTE: cada tentativa é um MISS, no mesmo regime da latência medida na
+                // anterior
                 forgetEnrichmentReuse(BETA_LATE, DRIVER_ANA);
                 Instant cycle = awaitReconcilerCycle();
                 Instant postAt = cycle.plus(T20_DISPATCH_AFTER_CYCLE).minus(dispatchLatency);
@@ -1132,7 +1231,8 @@ class QuoteFlowE2E {
                         tried, quoteId, Duration.between(cycle, dispatched).toMillis(),
                         Duration.between(cycle, stopped).toMillis(), betaReason));
                 if (!"WORKFLOW_ABORTED".equals(betaReason)) {
-                    // INVARIANT: a consolidação que ganhou a corrida mantém as ofertas e é a única transição a
+                    // INVARIANT: a consolidação que ganhou a corrida mantém as ofertas e é a única
+                    // transição a
                     // TERMINAL; sem a finalização do reconciler, não há WORKFLOW_FAILED
                     assertThat(quoteItems(quoteId, "V#0001#OFFER#")).as("the Floci continuation keeps the offers")
                             .containsExactlyInAnyOrderElementsOf(offersWhenStopped);
@@ -1155,11 +1255,13 @@ class QuoteFlowE2E {
                 assertThat(quoteItems(quoteId, "V#0001#OFFER#")).as("the finalization keeps the offers")
                         .containsExactlyInAnyOrderElementsOf(offersWhenStopped);
                 assertThat(offersByInsurer(accepted)).containsOnlyKeys(ALPHA);
-                // WHY: a versão já fica TERMINAL com gsi2pk = SUMMARY_PENDING; o refreshSummary tira o atributo
+                // WHY: a versão já fica TERMINAL com gsi2pk = SUMMARY_PENDING; o refreshSummary
+                // tira o atributo
                 // depois do commit da finalização, na mesma invocação do reconciler
                 await().atMost(Duration.ofSeconds(stage.stepsMarginSeconds())).pollInterval(Duration.ofMillis(250))
                         .untilAsserted(() -> assertThat(versionItem(quoteId, 1))
-                                .as("out of the ACTIVE_VERSION and SUMMARY_PENDING indexes").doesNotContainKey("gsi2pk"));
+                                .as("out of the ACTIVE_VERSION and SUMMARY_PENDING indexes")
+                                .doesNotContainKey("gsi2pk"));
                 Map<String, AttributeValue> issue = quoteIssue("WORKFLOW_FAILED", quoteId + "|1").orElseThrow();
                 assertThat(string(issue, "type")).as("the item type (ADR 0015)").isEqualTo("ISSUE");
                 assertThat(string(issue, "issueType")).isEqualTo("WORKFLOW_FAILED");
@@ -1180,15 +1282,20 @@ class QuoteFlowE2E {
     }
 
     /**
-     * T31 nas DLQs implantadas: entregas de uma cotação concluída, postas na DLQ como se tivessem esgotado o
-     * {@code maxReceiveCount}, são reenviadas como a tentativa 2, sem duplicar resultado, oferta ou chamada
-     * (ADR 0007). O resultado volta à retomada mesmo com a versão fora do prazo; o pedido com chamada externa
+     * T31 nas DLQs implantadas: entregas de uma cotação concluída, postas na DLQ
+     * como se tivessem esgotado o
+     * {@code maxReceiveCount}, são reenviadas como a tentativa 2, sem duplicar
+     * resultado, oferta ou chamada
+     * (ADR 0007). O resultado volta à retomada mesmo com a versão fora do prazo; o
+     * pedido com chamada externa
      * fora do prazo é descartado com {@code DEAD_LETTER}.
      */
     @Test
     void t31_deadLettersAreReprocessedWithoutDuplicatingResultsOrCalls() throws Exception {
-        // NOTE: a passagem pela RedrivePolicy com as visibilidades do stage (90 s × 5 na results, 150 s × 3 na
-        // provider) passa de 7 min por mensagem; ela está no QuoteFunctionsFlociIT e no DeadLetterReprocessingIT,
+        // NOTE: a passagem pela RedrivePolicy com as visibilidades do stage (90 s × 5
+        // na results, 150 s × 3 na
+        // provider) passa de 7 min por mensagem; ela está no QuoteFunctionsFlociIT e no
+        // DeadLetterReprocessingIT,
         // com visibilidade de 1 s, e aqui o harness confere a RedrivePolicy implantada
         assertRedrivePolicy(RESULTS_QUEUE, RESULTS_DLQ, StageParameters.number(QUOTE_SERVERLESS, STAGE,
                 "resultsMaxReceiveCount"));
@@ -1201,7 +1308,8 @@ class QuoteFlowE2E {
             JsonNode version = awaitTerminal(accepted, stage.withInsurers(1));
             Map<String, AttributeValue> query = insurerQuery(accepted.quoteId(), ALPHA);
             String queryId = string(query, "queryId");
-            // NOTE: com a versão fora do prazo, o resultado da results-dlq volta à retomada mesmo assim (§9)
+            // NOTE: com a versão fora do prazo, o resultado da results-dlq volta à retomada
+            // mesmo assim (§9)
             DYNAMO_DB.updateItem(builder -> builder.tableName(QUOTES_TABLE)
                     .key(Map.of("pk", AttributeValue.fromS("QUOTE#" + accepted.quoteId()),
                             "sk", AttributeValue.fromS("V#0001")))
@@ -1212,8 +1320,8 @@ class QuoteFlowE2E {
             List<Map<String, AttributeValue>> queryBefore = providerHistory(queryId);
             String resultEventId = string(waiterOf(accepted.quoteId(), ALPHA), "resultEventId");
             Map<String, AttributeValue> request = outbox(QUOTES_TABLE, string(query, "requestEventId"));
-            Instant requestDeadline =
-                    Instant.parse(JSON.readTree(string(request, "detail")).path("deadlineAt").asText());
+            Instant requestDeadline = Instant
+                    .parse(JSON.readTree(string(request, "detail")).path("deadlineAt").asText());
             String operationId = "op_" + UUID.randomUUID().toString().replace("-", "");
             Instant since = Instant.now();
 
@@ -1223,16 +1331,19 @@ class QuoteFlowE2E {
                     .until(() -> Instant.now().isAfter(requestDeadline));
             sendToDeadLetterQueue(INSURER_REQUESTS_QUEUE + "-dlq", envelope("mmda.quote", request));
 
-            awaitLog(QUOTE_RECONCILER_LOG, "dead letter " + resultEventId + " (InsurerResultRecorded) redriven as attempt 2",
+            awaitLog(QUOTE_RECONCILER_LOG,
+                    "dead letter " + resultEventId + " (InsurerResultRecorded) redriven as attempt 2",
                     since, RECONCILER_BUDGET);
             awaitLog(RESUME_LOG, "result " + resultEventId + " already consumed, discarded", since, RECONCILER_BUDGET);
             awaitLog(PROVIDER_RECONCILER_LOG, "queue=reconcile-requests attempt=2 target=" + operationId, since,
                     RECONCILER_BUDGET);
-            Map<String, AttributeValue> operation = await().atMost(RECONCILER_BUDGET).pollInterval(Duration.ofSeconds(5))
+            Map<String, AttributeValue> operation = await().atMost(RECONCILER_BUDGET)
+                    .pollInterval(Duration.ofSeconds(5))
                     .until(() -> item(QUERIES_TABLE, metaKey("OPERATION#" + operationId)),
                             found -> found.containsKey("status") && !"RUNNING".equals(string(found, "status")));
             String deadLetterTarget = "insurer-requests|" + queryId;
-            Map<String, AttributeValue> deadLetter = await().atMost(RECONCILER_BUDGET).pollInterval(Duration.ofSeconds(5))
+            Map<String, AttributeValue> deadLetter = await().atMost(RECONCILER_BUDGET)
+                    .pollInterval(Duration.ofSeconds(5))
                     .until(() -> providerIssue("DEAD_LETTER", deadLetterTarget), Optional::isPresent)
                     .orElseThrow();
 
@@ -1252,8 +1363,8 @@ class QuoteFlowE2E {
             assertThat(string(deadLetter, "status")).isEqualTo("OPEN");
             assertThat(string(deadLetter, "queryId")).isEqualTo(queryId);
             assertThat(string(deadLetter, "quoteId")).isEqualTo(accepted.quoteId());
-            Map<String, AttributeValue> raised =
-                    outbox(QUERIES_TABLE, uuidV5(string(deadLetter, "issueId") + "|" + number(deadLetter, "revision")));
+            Map<String, AttributeValue> raised = outbox(QUERIES_TABLE,
+                    uuidV5(string(deadLetter, "issueId") + "|" + number(deadLetter, "revision")));
             assertThat(string(raised, "detailType")).isIn("OperationIssueRaised", "OperationIssueUpdated");
         } finally {
             forgetEnrichmentReuse(VAN, DRIVER_ANA);
@@ -1261,9 +1372,12 @@ class QuoteFlowE2E {
     }
 
     /**
-     * T18: a oferta expirada e a oferta de outra organização são recusadas sem gravar intenção de proposta: nem
-     * {@code SELECTION}, nem {@code selectionId} no {@code META}, nem idempotência, nem {@code OfferSelected}. A
-     * expiração é fabricada no {@code validUntil} da oferta e desfeita no {@code finally}.
+     * T18: a oferta expirada e a oferta de outra organização são recusadas sem
+     * gravar intenção de proposta: nem
+     * {@code SELECTION}, nem {@code selectionId} no {@code META}, nem idempotência,
+     * nem {@code OfferSelected}. A
+     * expiração é fabricada no {@code validUntil} da oferta e desfeita no
+     * {@code finally}.
      */
     @Test
     void t18_expiredOfferOrOfferOfAnotherOrganizationIsRejectedWithoutRecordingAnIntent() throws Exception {
@@ -1289,7 +1403,8 @@ class QuoteFlowE2E {
             String writerKey = newKey();
             HttpResponse<String> expired = select(WRITER, accepted, writerKey, offerId);
 
-            assertThat(statusByInsurer(version)).containsExactly(Map.entry(ALPHA, "DECLINED"), Map.entry(BETA, "QUOTED"));
+            assertThat(statusByInsurer(version)).containsExactly(Map.entry(ALPHA, "DECLINED"),
+                    Map.entry(BETA, "QUOTED"));
             assertThat(offer.path("selectable").asBoolean()).as("valid when the other organization tried").isTrue();
             assertError(ofAnotherOrganization, 404, "NOT_FOUND");
             assertError(readByAnotherOrganization, 404, "NOT_FOUND");
@@ -1311,9 +1426,12 @@ class QuoteFlowE2E {
     }
 
     /**
-     * T22 na API implantada: cada operação do contrato é exercitada e conferida contra o {@code openapi.yaml}, com
-     * erros, {@code PARTIAL} com pendência e {@code NEEDS_INFORMATION} do enriquecimento. O catálogo servido, os
-     * erros e a pendência da beta são os das fixtures, e as coberturas das ofertas são as do {@code catalog.json}.
+     * T22 na API implantada: cada operação do contrato é exercitada e conferida
+     * contra o {@code openapi.yaml}, com
+     * erros, {@code PARTIAL} com pendência e {@code NEEDS_INFORMATION} do
+     * enriquecimento. O catálogo servido, os
+     * erros e a pendência da beta são os das fixtures, e as coberturas das ofertas
+     * são as do {@code catalog.json}.
      */
     @Test
     void t22_everyContractOperationAnswersTheSharedSchemaWithErrorsAndPartialResults() throws Exception {
@@ -1383,7 +1501,8 @@ class QuoteFlowE2E {
             assertThat(alpha.path("coverages")).as("the coverage profile of catalog.json, read by the simulators")
                     .isEqualTo(coverageProfile("COMPREHENSIVE").path("coverages"));
             assertThat(alpha.path("deductibles")).singleElement()
-                    .satisfies(deductible -> assertThat(deductible.path("coverageCode").asText()).isEqualTo("COLLISION"));
+                    .satisfies(
+                            deductible -> assertThat(deductible.path("coverageCode").asText()).isEqualTo("COLLISION"));
 
             JsonNode expectedVehicleNotFound = fixture("quote-needs-information.json")
                     .at("/exchanges/1/response/body/missingFields/0");
@@ -1419,8 +1538,10 @@ class QuoteFlowE2E {
             assertThat(selectedVersion.path("allowedActions")).isEmpty();
             assertThat(api.exercised()).as("operations of contracts/openapi.yaml exercised by the e2e")
                     .containsAll(api.operationIds());
-            // NOTE: aqui a nova versão só recebe 409 e a reconciliação, 404; o 2xx delas é conferido contra o contrato
-            // no T17 e no T29 (nova versão) e no m5_manual (reconciliação aceita e acompanhada)
+            // NOTE: aqui a nova versão só recebe 409 e a reconciliação, 404; o 2xx delas é
+            // conferido contra o contrato
+            // no T17 e no T29 (nova versão) e no m5_manual (reconciliação aceita e
+            // acompanhada)
             Set<String> successElsewhere = Set.of("createQuoteVersion", "reconcileQuery", "getOperation");
             assertThat(api.succeeded()).as("operations whose 2xx response T22 itself checks against the contract")
                     .containsAll(api.operationIds().stream().filter(id -> !successElsewhere.contains(id)).toList());
@@ -1431,8 +1552,10 @@ class QuoteFlowE2E {
     }
 
     /**
-     * T28: a mesma oferta devolve a seleção existente, com a mesma chave ou com outra; outra oferta recebe 409
-     * {@code SELECTION_ALREADY_EXISTS}, e a chave reutilizada com outra oferta, 409 {@code IDEMPOTENCY_CONFLICT}. Fica
+     * T28: a mesma oferta devolve a seleção existente, com a mesma chave ou com
+     * outra; outra oferta recebe 409
+     * {@code SELECTION_ALREADY_EXISTS}, e a chave reutilizada com outra oferta, 409
+     * {@code IDEMPOTENCY_CONFLICT}. Fica
      * uma única {@code SELECTION} e um único {@code OfferSelected}.
      */
     @Test
@@ -1484,9 +1607,12 @@ class QuoteFlowE2E {
     }
 
     /**
-     * T29: seleções e novas versões disputam a mesma versão atual, e só um dos lados vence. Se a nova versão vence, a
-     * disputa se repete na versão criada. Depois da seleção, a nova versão recebe 409 {@code QUOTE_ALREADY_SELECTED},
-     * e a pendência da beta ({@code NEEDS_INFORMATION}), lida depois da seleção, não oferece {@code CREATE_VERSION}.
+     * T29: seleções e novas versões disputam a mesma versão atual, e só um dos
+     * lados vence. Se a nova versão vence, a
+     * disputa se repete na versão criada. Depois da seleção, a nova versão recebe
+     * 409 {@code QUOTE_ALREADY_SELECTED},
+     * e a pendência da beta ({@code NEEDS_INFORMATION}), lida depois da seleção,
+     * não oferece {@code CREATE_VERSION}.
      */
     @Test
     void t29_selectionAndNewVersionRaceHasOneWinnerAndASelectedQuoteTakesNoNewVersion() throws Exception {
@@ -1504,24 +1630,25 @@ class QuoteFlowE2E {
                         .filter(response -> response.statusCode() == 201).toList();
                 List<HttpResponse<String>> created = race.versions().stream()
                         .filter(response -> response.statusCode() == 202).toList();
-                String summary = "T29 round=%d quoteId=%s version=%d phase=%s selections=%s versions=%s".formatted(round,
+                String summary = "T29 round=%d quoteId=%s version=%d phase=%s selections=%s versions=%s".formatted(
+                        round,
                         current.quoteId(), current.version(), phase, statuses(race.selections()),
                         statuses(race.versions()));
                 LOG.info(summary);
 
                 assertThat(selected.isEmpty()).as("only one side wins the race").isNotEqualTo(created.isEmpty());
                 if (!selected.isEmpty()) {
-                    assertThat(race.selections()).allSatisfy(response ->
-                            assertThat(response.statusCode()).as(response.body()).isEqualTo(201));
+                    assertThat(race.selections()).allSatisfy(
+                            response -> assertThat(response.statusCode()).as(response.body()).isEqualTo(201));
                     assertThat(race.selections().stream().map(response -> selectionIdOf(response)).distinct())
                             .hasSize(1);
-                    assertThat(race.versions()).allSatisfy(response ->
-                            assertError(response, 409, "QUOTE_ALREADY_SELECTED"));
+                    assertThat(race.versions())
+                            .allSatisfy(response -> assertError(response, 409, "QUOTE_ALREADY_SELECTED"));
                     selection = JSON.readTree(selected.getFirst().body());
                 } else {
                     assertThat(created).hasSize(1);
-                    assertThat(race.selections()).allSatisfy(response ->
-                            assertError(response, 409, "VERSION_SUPERSEDED"));
+                    assertThat(race.selections())
+                            .allSatisfy(response -> assertError(response, 409, "VERSION_SUPERSEDED"));
                     assertThat(race.versions().stream().filter(response -> response.statusCode() != 202))
                             .allSatisfy(response -> assertError(response, 409, "VERSION_CONFLICT"));
                     current = accepted(created.getFirst());
@@ -1567,9 +1694,12 @@ class QuoteFlowE2E {
     }
 
     /**
-     * T30: sem {@code offers:select}, a seleção de uma oferta válida recebe 403; sem {@code operations:reconcile},
-     * a reconciliação de uma consulta da organização também. Nada é gravado, e as ações oferecidas seguem as
-     * permissões do usuário. Sem {@code operations:read}, a listagem de ocorrências recebe 403.
+     * T30: sem {@code offers:select}, a seleção de uma oferta válida recebe 403;
+     * sem {@code operations:reconcile},
+     * a reconciliação de uma consulta da organização também. Nada é gravado, e as
+     * ações oferecidas seguem as
+     * permissões do usuário. Sem {@code operations:read}, a listagem de ocorrências
+     * recebe 403.
      */
     @Test
     void t30_userWithoutPermissionGets403OnSelectionAndReconciliation() throws Exception {
@@ -1590,7 +1720,8 @@ class QuoteFlowE2E {
 
             assertThat(statusByInsurer(version)).containsEntry(ALPHA, "UNAVAILABLE").containsEntry(BETA, "QUOTED");
             assertThat(offer.path("selectable").asBoolean()).isTrue();
-            assertThat(texts(version.path("allowedActions"))).containsExactlyInAnyOrder("CREATE_VERSION", "SELECT_OFFER");
+            assertThat(texts(version.path("allowedActions"))).containsExactlyInAnyOrder("CREATE_VERSION",
+                    "SELECT_OFFER");
             assertError(selection, 403, "FORBIDDEN");
             assertError(reconciliation, 403, "FORBIDDEN");
             assertError(writerReconciliation, 403, "FORBIDDEN");
@@ -1607,10 +1738,14 @@ class QuoteFlowE2E {
     }
 
     /**
-     * Reconciliação manual ponta a ponta (§8 do desenho): uma {@code UNKNOWN_QUERY} publicada pelo e2e em nome da
-     * provider torna conhecida uma consulta concluída. O {@code reconcile} vai à provider pelo
-     * {@code QueryReconcileRequested} e volta pelo {@code QueryReconciled} e pelo {@code issue-projector} até o
-     * {@code GET /v1/operations/{operationId}}; a listagem mostra só ocorrências da organização, sem dado bruto.
+     * Reconciliação manual ponta a ponta (§8 do desenho): uma {@code UNKNOWN_QUERY}
+     * publicada pelo e2e em nome da
+     * provider torna conhecida uma consulta concluída. O {@code reconcile} vai à
+     * provider pelo
+     * {@code QueryReconcileRequested} e volta pelo {@code QueryReconciled} e pelo
+     * {@code issue-projector} até o
+     * {@code GET /v1/operations/{operationId}}; a listagem mostra só ocorrências da
+     * organização, sem dado bruto.
      */
     @Test
     void m5_manualReconciliationOfAConcludedQueryRoundTripsThroughTheProviderAndTheIssueProjector()
@@ -1696,8 +1831,10 @@ class QuoteFlowE2E {
     }
 
     /**
-     * Catálogo e listagem (§11): cada rota do catálogo, paginada pelo cursor, devolve o {@code catalog.json} da
-     * organização, com busca sem acento nem maiúscula; a listagem de cotações vai da mais nova para a mais antiga,
+     * Catálogo e listagem (§11): cada rota do catálogo, paginada pelo cursor,
+     * devolve o {@code catalog.json} da
+     * organização, com busca sem acento nem maiúscula; a listagem de cotações vai
+     * da mais nova para a mais antiga,
      * filtra por fase, resultado e janela de criação e não mistura organizações.
      */
     @Test
@@ -1757,7 +1894,10 @@ class QuoteFlowE2E {
         assertError(call(WRITER, "GET", "/v1/quotes?cursor=bm90LWEtY3Vyc29y", null, null), 400, "VALIDATION_ERROR");
     }
 
-    /** Evidência usada do enriquecimento na quote, com a consulta e a evidência correspondentes na provider. */
+    /**
+     * Evidência usada do enriquecimento na quote, com a consulta e a evidência
+     * correspondentes na provider.
+     */
     private static void assertEnrichmentEvidence(String quoteId) {
         Map<String, AttributeValue> used = single(quoteItems(quoteId, "V#0001#EVIDENCE#"));
         assertThat(string(used, "resultType")).isEqualTo("FOUND");
@@ -1769,7 +1909,10 @@ class QuoteFlowE2E {
         assertThat(string(evidence, "resultType")).isEqualTo("FOUND");
     }
 
-    /** A oferta aponta a consulta da provider, cuja evidência guarda a resposta bruta no bucket de payloads. */
+    /**
+     * A oferta aponta a consulta da provider, cuja evidência guarda a resposta
+     * bruta no bucket de payloads.
+     */
     private static void assertInsurerEvidence(String quoteId, String offerId) {
         Map<String, AttributeValue> offer = single(quoteItems(quoteId, "V#0001#OFFER#" + offerId));
         String queryId = string(offer, "queryId");
@@ -1783,41 +1926,50 @@ class QuoteFlowE2E {
         assertThat(string(result, "queryRef")).isEqualTo(queryId);
     }
 
-    /** T23 e T24: nenhum pedido saiu da quote e a provider não abriu consulta para a cotação. */
+    /**
+     * T23 e T24: nenhum pedido saiu da quote e a provider não abriu consulta para a
+     * cotação.
+     */
     private static void assertNoExternalQuery(String quoteId) {
         assertThat(quoteItems(quoteId, "V#0001#")).isEmpty();
         assertThat(DYNAMO_DB.scanPaginator(builder -> builder.tableName(QUOTES_TABLE)
-                        .filterExpression("begins_with(pk, :waiter) AND quoteId = :quoteId")
-                        .expressionAttributeValues(Map.of(":waiter", AttributeValue.fromS("WAITER#"),
-                                ":quoteId", AttributeValue.fromS(quoteId))))
+                .filterExpression("begins_with(pk, :waiter) AND quoteId = :quoteId")
+                .expressionAttributeValues(Map.of(":waiter", AttributeValue.fromS("WAITER#"),
+                        ":quoteId", AttributeValue.fromS(quoteId))))
                 .items().stream().count()).as("waiters").isZero();
         assertThat(DYNAMO_DB.scanPaginator(builder -> builder.tableName(QUERIES_TABLE)
-                        .filterExpression("quoteId = :quoteId")
-                        .expressionAttributeValues(Map.of(":quoteId", AttributeValue.fromS(quoteId))))
+                .filterExpression("quoteId = :quoteId")
+                .expressionAttributeValues(Map.of(":quoteId", AttributeValue.fromS(quoteId))))
                 .items().stream().count()).as("provider queries").isZero();
     }
 
-    /** T25 e T27: a versão não pediu cotação a nenhuma seguradora, e a provider não abriu consulta de seguradora. */
+    /**
+     * T25 e T27: a versão não pediu cotação a nenhuma seguradora, e a provider não
+     * abriu consulta de seguradora.
+     */
     private static void assertNoInsurerConsulted(String quoteId) {
         assertThat(quoteItems(quoteId, "V#0001#RESULT#")).isEmpty();
         assertThat(DYNAMO_DB.scanPaginator(builder -> builder.tableName(QUOTES_TABLE)
-                        .filterExpression("begins_with(pk, :waiter) AND quoteId = :quoteId AND kind = :insurer")
-                        .expressionAttributeValues(Map.of(":waiter", AttributeValue.fromS("WAITER#"),
-                                ":quoteId", AttributeValue.fromS(quoteId), ":insurer", AttributeValue.fromS("INSURER"))))
+                .filterExpression("begins_with(pk, :waiter) AND quoteId = :quoteId AND kind = :insurer")
+                .expressionAttributeValues(Map.of(":waiter", AttributeValue.fromS("WAITER#"),
+                        ":quoteId", AttributeValue.fromS(quoteId), ":insurer", AttributeValue.fromS("INSURER"))))
                 .items().stream().count()).as("insurer waiters").isZero();
         assertThat(providerQueriesOf(quoteId, "QUOTE")).as("insurer queries").isEmpty();
     }
 
     /**
-     * Apaga o {@code REUSE#} e a partição {@code INFLIGHT#} ({@code META} e {@code FOLLOWER#}) da {@code queryKey}
-     * do par veículo e condutor (§10) e devolve a {@code queryKey}. As consultas e evidências anteriores ficam.
+     * Apaga o {@code REUSE#} e a partição {@code INFLIGHT#} ({@code META} e
+     * {@code FOLLOWER#}) da {@code queryKey}
+     * do par veículo e condutor (§10) e devolve a {@code queryKey}. As consultas e
+     * evidências anteriores ficam.
      */
     private static String forgetEnrichmentReuse(String vehicleRef, String driverRef) {
         String queryKey = queryKey(vehicleRef, driverRef);
-        List<Map<String, AttributeValue>> items = new ArrayList<>(queryByPrefix(QUERIES_TABLE, "REUSE#" + queryKey, "META"));
+        List<Map<String, AttributeValue>> items = new ArrayList<>(
+                queryByPrefix(QUERIES_TABLE, "REUSE#" + queryKey, "META"));
         items.addAll(DYNAMO_DB.queryPaginator(builder -> builder.tableName(QUERIES_TABLE).consistentRead(true)
-                        .keyConditionExpression("pk = :pk")
-                        .expressionAttributeValues(Map.of(":pk", AttributeValue.fromS("INFLIGHT#" + queryKey))))
+                .keyConditionExpression("pk = :pk")
+                .expressionAttributeValues(Map.of(":pk", AttributeValue.fromS("INFLIGHT#" + queryKey))))
                 .items().stream().toList());
         for (Map<String, AttributeValue> item : items) {
             DYNAMO_DB.deleteItem(builder -> builder.tableName(QUERIES_TABLE)
@@ -1826,7 +1978,10 @@ class QuoteFlowE2E {
         return queryKey;
     }
 
-    /** {@code queryKey} da provider (§5): HMAC-SHA256, com o segredo {@code query-key-secret}, das partes do pedido. */
+    /**
+     * {@code queryKey} da provider (§5): HMAC-SHA256, com o segredo
+     * {@code query-key-secret}, das partes do pedido.
+     */
     private static String queryKey(String vehicleRef, String driverRef) {
         List<String> parts = new ArrayList<>();
         parts.add(ORGANIZATION);
@@ -1847,7 +2002,10 @@ class QuoteFlowE2E {
         }
     }
 
-    /** T05: a validade do índice passa a ser um instante já vencido, como se o enriquecimento tivesse expirado. */
+    /**
+     * T05: a validade do índice passa a ser um instante já vencido, como se o
+     * enriquecimento tivesse expirado.
+     */
     private static void expireReuseIndex(String queryKey, String evidenceId) {
         DYNAMO_DB.updateItem(builder -> builder.tableName(QUERIES_TABLE)
                 .key(Map.of("pk", AttributeValue.fromS("REUSE#" + queryKey), "sk", AttributeValue.fromS("META")))
@@ -1865,21 +2023,24 @@ class QuoteFlowE2E {
     /** Consultas de enriquecimento da {@code queryKey}, de todas as execuções. */
     private static List<Map<String, AttributeValue>> enrichmentQueries(String queryKey) {
         return DYNAMO_DB.scanPaginator(builder -> builder.tableName(QUERIES_TABLE).consistentRead(true)
-                        .filterExpression("#type = :query AND queryKey = :queryKey")
-                        .expressionAttributeNames(Map.of("#type", "type"))
-                        .expressionAttributeValues(Map.of(":query", AttributeValue.fromS("QUERY"),
-                                ":queryKey", AttributeValue.fromS(queryKey))))
+                .filterExpression("#type = :query AND queryKey = :queryKey")
+                .expressionAttributeNames(Map.of("#type", "type"))
+                .expressionAttributeValues(Map.of(":query", AttributeValue.fromS("QUERY"),
+                        ":queryKey", AttributeValue.fromS(queryKey))))
                 .items().stream().toList();
     }
 
-    /** Consultas da provider abertas para a cotação; {@code operation} é {@code ENRICH} ou {@code QUOTE} (§5). */
+    /**
+     * Consultas da provider abertas para a cotação; {@code operation} é
+     * {@code ENRICH} ou {@code QUOTE} (§5).
+     */
     private static List<Map<String, AttributeValue>> providerQueriesOf(String quoteId, String operation) {
         return DYNAMO_DB.scanPaginator(builder -> builder.tableName(QUERIES_TABLE).consistentRead(true)
-                        .filterExpression("#type = :query AND quoteId = :quoteId AND operation = :operation")
-                        .expressionAttributeNames(Map.of("#type", "type"))
-                        .expressionAttributeValues(Map.of(":query", AttributeValue.fromS("QUERY"),
-                                ":quoteId", AttributeValue.fromS(quoteId),
-                                ":operation", AttributeValue.fromS(operation))))
+                .filterExpression("#type = :query AND quoteId = :quoteId AND operation = :operation")
+                .expressionAttributeNames(Map.of("#type", "type"))
+                .expressionAttributeValues(Map.of(":query", AttributeValue.fromS("QUERY"),
+                        ":quoteId", AttributeValue.fromS(quoteId),
+                        ":operation", AttributeValue.fromS(operation))))
                 .items().stream().toList();
     }
 
@@ -1907,9 +2068,12 @@ class QuoteFlowE2E {
     }
 
     /**
-     * Cadeia da versão 1 pelos instantes gravados pela quote: do {@code POST} ({@code createdAt} da versão) até
-     * {@code TERMINAL} ({@code updatedAt} da consolidação) e a espera do enriquecimento, da {@code dispatch}
-     * ({@code createdAt} do waiter) até a retomada ({@code receivedAt} da evidência usada).
+     * Cadeia da versão 1 pelos instantes gravados pela quote: do {@code POST}
+     * ({@code createdAt} da versão) até
+     * {@code TERMINAL} ({@code updatedAt} da consolidação) e a espera do
+     * enriquecimento, da {@code dispatch}
+     * ({@code createdAt} do waiter) até a retomada ({@code receivedAt} da evidência
+     * usada).
      */
     private static Chain chainOf(String quoteId) {
         Map<String, AttributeValue> version = versionItem(quoteId);
@@ -1917,8 +2081,10 @@ class QuoteFlowE2E {
         String workRef = string(used, "sk").substring("V#0001#EVIDENCE#".length());
         Map<String, AttributeValue> waiter = single(queryByPrefix(QUOTES_TABLE, "WAITER#" + workRef, "META"));
         return new Chain(
-                Duration.between(Instant.parse(string(version, "createdAt")), Instant.parse(string(version, "updatedAt"))),
-                Duration.between(Instant.parse(string(waiter, "createdAt")), Instant.parse(string(used, "receivedAt"))));
+                Duration.between(Instant.parse(string(version, "createdAt")),
+                        Instant.parse(string(version, "updatedAt"))),
+                Duration.between(Instant.parse(string(waiter, "createdAt")),
+                        Instant.parse(string(used, "receivedAt"))));
     }
 
     private static Map<String, AttributeValue> versionItem(String quoteId) {
@@ -1949,9 +2115,12 @@ class QuoteFlowE2E {
     }
 
     /**
-     * Cadeia de uma versão com seguradoras, pelos instantes gravados (§12): do {@code POST} a {@code TERMINAL} e à
-     * primeira oferta gravada, que o GET já mostra; por seguradora, da {@code dispatch} à chamada, ao {@code 202}, ao
-     * callback recebido e processado pela inbox e à retomada ({@code updatedAt} do {@code RESULT}).
+     * Cadeia de uma versão com seguradoras, pelos instantes gravados (§12): do
+     * {@code POST} a {@code TERMINAL} e à
+     * primeira oferta gravada, que o GET já mostra; por seguradora, da
+     * {@code dispatch} à chamada, ao {@code 202}, ao
+     * callback recebido e processado pela inbox e à retomada ({@code updatedAt} do
+     * {@code RESULT}).
      */
     private static void logInsurerChain(String label, String quoteId) {
         Map<String, AttributeValue> version = versionItem(quoteId);
@@ -1968,8 +2137,8 @@ class QuoteFlowE2E {
             line.append(" %s[dispatchToResume=%d ms".formatted(insurerId,
                     millisBetween(dispatched, string(result, "updatedAt"))));
             String queryId = stringOrNull(result, "queryRef");
-            List<Map<String, AttributeValue>> attempts =
-                    queryId == null ? List.of() : providerItems(queryId, "ATTEMPT#");
+            List<Map<String, AttributeValue>> attempts = queryId == null ? List.of()
+                    : providerItems(queryId, "ATTEMPT#");
             if (!attempts.isEmpty()) {
                 Map<String, AttributeValue> attempt = attempts.getFirst();
                 String started = string(attempt, "startedAt");
@@ -1997,15 +2166,15 @@ class QuoteFlowE2E {
     /** Status de cada seguradora no GET da versão, por {@code insurerId}. */
     private static Map<String, String> statusByInsurer(JsonNode version) {
         Map<String, String> statuses = new TreeMap<>();
-        version.path("insurerResults").forEach(result ->
-                statuses.put(result.path("insurerId").asText(), result.path("status").asText()));
+        version.path("insurerResults")
+                .forEach(result -> statuses.put(result.path("insurerId").asText(), result.path("status").asText()));
         return statuses;
     }
 
     private static Map<String, String> namesByInsurer(JsonNode version) {
         Map<String, String> names = new TreeMap<>();
-        version.path("insurerResults").forEach(result ->
-                names.put(result.path("insurerId").asText(), result.path("insurerName").asText()));
+        version.path("insurerResults")
+                .forEach(result -> names.put(result.path("insurerId").asText(), result.path("insurerName").asText()));
         return names;
     }
 
@@ -2018,7 +2187,10 @@ class QuoteFlowE2E {
         throw new AssertionError("the version has no result of " + insurerId + ": " + version);
     }
 
-    /** Ofertas da versão 1 no GET, por seguradora; cada seguradora tem no máximo uma. */
+    /**
+     * Ofertas da versão 1 no GET, por seguradora; cada seguradora tem no máximo
+     * uma.
+     */
     private static Map<String, JsonNode> offersByInsurer(Accepted accepted) throws Exception {
         Map<String, JsonNode> offers = new TreeMap<>();
         for (JsonNode offer : getOk(accepted.statusUrl() + "/offers").path("items")) {
@@ -2027,47 +2199,59 @@ class QuoteFlowE2E {
         return offers;
     }
 
-    /** Consulta de cotação ({@code operation = QUOTE}) que a provider abriu para a seguradora na cotação. */
+    /**
+     * Consulta de cotação ({@code operation = QUOTE}) que a provider abriu para a
+     * seguradora na cotação.
+     */
     private static Map<String, AttributeValue> insurerQuery(String quoteId, String insurerId) {
         return single(providerQueriesOf(quoteId, "QUOTE").stream()
                 .filter(query -> insurerId.equals(string(query, "insurerId")))
                 .toList());
     }
 
-    /** Callbacks da consulta na inbox da provider, pelo {@code queryId} que o processamento grava (§5). */
+    /**
+     * Callbacks da consulta na inbox da provider, pelo {@code queryId} que o
+     * processamento grava (§5).
+     */
     private static List<Map<String, AttributeValue>> inboxOf(String queryId) {
         return DYNAMO_DB.scanPaginator(builder -> builder.tableName(QUERIES_TABLE).consistentRead(true)
-                        .filterExpression("#type = :inbox AND queryId = :queryId")
-                        .expressionAttributeNames(Map.of("#type", "type"))
-                        .expressionAttributeValues(Map.of(":inbox", AttributeValue.fromS("INBOX"),
-                                ":queryId", AttributeValue.fromS(queryId))))
+                .filterExpression("#type = :inbox AND queryId = :queryId")
+                .expressionAttributeNames(Map.of("#type", "type"))
+                .expressionAttributeValues(Map.of(":inbox", AttributeValue.fromS("INBOX"),
+                        ":queryId", AttributeValue.fromS(queryId))))
                 .items().stream().toList();
     }
 
     private static Map<String, AttributeValue> waiterOf(String quoteId, String insurerId) {
         return single(DYNAMO_DB.scanPaginator(builder -> builder.tableName(QUOTES_TABLE).consistentRead(true)
-                        .filterExpression("begins_with(pk, :waiter) AND quoteId = :quoteId AND insurerId = :insurerId")
-                        .expressionAttributeValues(Map.of(":waiter", AttributeValue.fromS("WAITER#"),
-                                ":quoteId", AttributeValue.fromS(quoteId),
-                                ":insurerId", AttributeValue.fromS(insurerId))))
+                .filterExpression("begins_with(pk, :waiter) AND quoteId = :quoteId AND insurerId = :insurerId")
+                .expressionAttributeValues(Map.of(":waiter", AttributeValue.fromS("WAITER#"),
+                        ":quoteId", AttributeValue.fromS(quoteId),
+                        ":insurerId", AttributeValue.fromS(insurerId))))
                 .items().stream().toList());
     }
 
-    /** Callback assinado como o fornecedor assina (§8): {@code sha256=} e o HMAC-SHA256 dos bytes do corpo. */
+    /**
+     * Callback assinado como o fornecedor assina (§8): {@code sha256=} e o
+     * HMAC-SHA256 dos bytes do corpo.
+     */
     private static HttpResponse<String> postCallback(String provider, String body) throws Exception {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
         String signature = "sha256=" + HexFormat.of().formatHex(hmacSha256(callbackSecret, bytes));
         URI callbacks = URI.create(providerApiBase + "/v1/providers/" + provider + "/callbacks");
         return HTTP.send(HttpRequest.newBuilder(callbacks)
-                        .header("Content-Type", "application/json")
-                        .header("X-Signature", signature)
-                        .POST(HttpRequest.BodyPublishers.ofByteArray(bytes))
-                        .timeout(Duration.ofMinutes(1))
-                        .build(),
+                .header("Content-Type", "application/json")
+                .header("X-Signature", signature)
+                .POST(HttpRequest.BodyPublishers.ofByteArray(bytes))
+                .timeout(Duration.ofMinutes(1))
+                .build(),
                 HttpResponse.BodyHandlers.ofString());
     }
 
-    /** Publica de novo no barramento o evento gravado no outbox da provider, como uma entrega repetida. */
+    /**
+     * Publica de novo no barramento o evento gravado no outbox da provider, como
+     * uma entrega repetida.
+     */
     private static void republish(Map<String, AttributeValue> outbox) {
         PutEventsResponse response = EVENT_BRIDGE.putEvents(builder -> builder.entries(entry -> entry
                 .eventBusName(EVENT_BUS)
@@ -2078,23 +2262,27 @@ class QuoteFlowE2E {
     }
 
     /**
-     * Espera a retomada registrar o descarte do evento. NOTE: o descarte não grava nada na tabela, então só a linha
-     * de log com o {@code eventId} distingue o evento descartado do evento que nunca chegou.
+     * Espera a retomada registrar o descarte do evento. NOTE: o descarte não grava
+     * nada na tabela, então só a linha
+     * de log com o {@code eventId} distingue o evento descartado do evento que
+     * nunca chegou.
      */
     private static void awaitDiscarded(String eventId, Instant since) {
         String logGroup = "/aws/lambda/" + QUOTE_PREFIX + "-resume";
         String line = "result " + eventId + " already consumed, discarded";
-        await().atMost(Duration.ofSeconds(60)).pollInterval(Duration.ofSeconds(1)).untilAsserted(() ->
-                assertThat(LOGS.filterLogEvents(builder -> builder.logGroupName(logGroup)
-                                .startTime(since.minusSeconds(5).toEpochMilli()))
+        await().atMost(Duration.ofSeconds(60)).pollInterval(Duration.ofSeconds(1))
+                .untilAsserted(() -> assertThat(LOGS.filterLogEvents(builder -> builder.logGroupName(logGroup)
+                        .startTime(since.minusSeconds(5).toEpochMilli()))
                         .events())
                         .as("the resume discarded the republished %s", eventId)
                         .anySatisfy(event -> assertThat(event.message()).contains(line)));
     }
 
     /**
-     * Espera a fila ficar sem mensagens visíveis, em processamento ou atrasadas. NOTE: a primeira leitura espera
-     * 5 s, porque cada salto do barramento e do ESM no Floci leva cerca de 1 s (§13) e a fila ainda vazia não diz
+     * Espera a fila ficar sem mensagens visíveis, em processamento ou atrasadas.
+     * NOTE: a primeira leitura espera
+     * 5 s, porque cada salto do barramento e do ESM no Floci leva cerca de 1 s
+     * (§13) e a fila ainda vazia não diz
      * que a mensagem já passou.
      */
     private static void awaitDrained(String queueName) {
@@ -2105,15 +2293,17 @@ class QuoteFlowE2E {
 
     private static int pendingMessages(String queueUrl) {
         return SQS.getQueueAttributes(builder -> builder.queueUrl(queueUrl).attributeNames(
-                        QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES,
-                        QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES_NOT_VISIBLE,
-                        QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES_DELAYED))
+                QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES,
+                QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES_NOT_VISIBLE,
+                QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES_DELAYED))
                 .attributes().values().stream().mapToInt(Integer::parseInt).sum();
     }
 
     /**
-     * Início da janela de quota corrente (1 min, §12), esperando a virada quando já passaram 10 s dela: assim as
-     * cotações do T21 reservam na mesma janela, e a virada fica além do {@code deadlineAt} de cada pedido, então o
+     * Início da janela de quota corrente (1 min, §12), esperando a virada quando já
+     * passaram 10 s dela: assim as
+     * cotações do T21 reservam na mesma janela, e a virada fica além do
+     * {@code deadlineAt} de cada pedido, então o
      * pedido sem quota conclui sem ser adiado para a janela seguinte (§9).
      */
     private static Instant awaitFreshQuotaWindow() {
@@ -2124,11 +2314,14 @@ class QuoteFlowE2E {
 
     private static Map<String, AttributeValue> quotaKey(String provider, Instant window) {
         return Map.of("pk", AttributeValue.fromS("QUOTA#" + provider + "#" + CREDENTIAL_REF + "#"
-                        + QUOTA_WINDOW.format(window)),
+                + QUOTA_WINDOW.format(window)),
                 "sk", AttributeValue.fromS("META"));
     }
 
-    /** Contador {@code QUOTA#} da janela (§5), com o TTL que a provider usa: 1 h depois do fim da janela. */
+    /**
+     * Contador {@code QUOTA#} da janela (§5), com o TTL que a provider usa: 1 h
+     * depois do fim da janela.
+     */
     private static void putQuota(String provider, Instant window, int used) {
         Map<String, AttributeValue> item = new LinkedHashMap<>(quotaKey(provider, window));
         item.put("type", AttributeValue.fromS("QUOTA"));
@@ -2142,13 +2335,17 @@ class QuoteFlowE2E {
                 .key(quotaKey(provider, window))).item(), "used");
     }
 
-    /** Remove o contador que o T21 fabricou, para os casos seguintes terem a quota real da janela. */
+    /**
+     * Remove o contador que o T21 fabricou, para os casos seguintes terem a quota
+     * real da janela.
+     */
     private static void deleteQuota(String provider, Instant window) {
         DYNAMO_DB.deleteItem(builder -> builder.tableName(QUERIES_TABLE).key(quotaKey(provider, window)));
     }
 
     /**
-     * Espera um ciclo novo do {@code reconciler} da quote, pela linha {@code reconciler report} que ele registra em
+     * Espera um ciclo novo do {@code reconciler} da quote, pela linha
+     * {@code reconciler report} que ele registra em
      * todo ciclo, e devolve o instante dela.
      */
     private static Instant awaitReconcilerCycle() {
@@ -2169,7 +2366,8 @@ class QuoteFlowE2E {
     }
 
     private static void awaitLog(String logGroup, String text, Instant since, Duration budget) {
-        await().atMost(budget).pollInterval(Duration.ofSeconds(2)).untilAsserted(() -> assertLog(logGroup, text, since));
+        await().atMost(budget).pollInterval(Duration.ofSeconds(2))
+                .untilAsserted(() -> assertLog(logGroup, text, since));
     }
 
     private static void assertLog(String logGroup, String text, Instant since) {
@@ -2178,24 +2376,34 @@ class QuoteFlowE2E {
 
     private static List<FilteredLogEvent> logEvents(String logGroup, String text, Instant since) {
         return LOGS.filterLogEventsPaginator(builder -> builder.logGroupName(logGroup)
-                        .startTime(since.minusSeconds(5).toEpochMilli()))
+                .startTime(since.minusSeconds(5).toEpochMilli()))
                 .events().stream()
                 .filter(event -> event.message().contains(text))
                 .toList();
     }
 
-    /** {@code workRef} da quote (§3): {@code wr_} e 32 hexadecimais do SHA-256 de {@code quoteId|version|kind|insurerId}. */
+    /**
+     * {@code workRef} da quote (§3): {@code wr_} e 32 hexadecimais do SHA-256 de
+     * {@code quoteId|version|kind|insurerId}.
+     */
     private static String workRef(String quoteId, int version, String kind, String insurerId) {
-        return "wr_" + sha256Hex(String.join("|", quoteId, Integer.toString(version), kind, insurerId)).substring(0, 32);
+        return "wr_"
+                + sha256Hex(String.join("|", quoteId, Integer.toString(version), kind, insurerId)).substring(0, 32);
     }
 
-    /** Ocorrência própria da quote (§3), pelo {@code issueId} do {@code QuoteIssues}: {@code quote|tipo|alvo}. */
+    /**
+     * Ocorrência própria da quote (§3), pelo {@code issueId} do
+     * {@code QuoteIssues}: {@code quote|tipo|alvo}.
+     */
     private static Optional<Map<String, AttributeValue>> quoteIssue(String type, String target) {
         String issueId = "iss_" + sha256Hex("quote|" + type + "|" + target).substring(0, 32);
         return queryByPrefix(QUOTES_TABLE, "ISSUE#" + issueId, "META").stream().findFirst();
     }
 
-    /** Ocorrência da provider (§5), pelo {@code issueId} {@code is_} e o SHA-256 de {@code tipo|alvo}. */
+    /**
+     * Ocorrência da provider (§5), pelo {@code issueId} {@code is_} e o SHA-256 de
+     * {@code tipo|alvo}.
+     */
     private static Optional<Map<String, AttributeValue>> providerIssue(String type, String target) {
         String issueId = "is_" + sha256Hex(type + "|" + target).substring(0, 32);
         return queryByPrefix(QUERIES_TABLE, "ISSUE#" + issueId, "META").stream().findFirst();
@@ -2210,7 +2418,10 @@ class QuoteFlowE2E {
         }
     }
 
-    /** {@code eventId} determinístico das duas soluções (§3): UUIDv5 do nome no namespace URL da RFC 9562. */
+    /**
+     * {@code eventId} determinístico das duas soluções (§3): UUIDv5 do nome no
+     * namespace URL da RFC 9562.
+     */
     private static String uuidV5(String name) {
         try {
             MessageDigest sha1 = MessageDigest.getInstance("SHA-1");
@@ -2244,7 +2455,10 @@ class QuoteFlowE2E {
                         ":expected", AttributeValue.fromS(expected))));
     }
 
-    /** T13: devolve o token original se o caso parou com o token fabricado no waiter. */
+    /**
+     * T13: devolve o token original se o caso parou com o token fabricado no
+     * waiter.
+     */
     private static void restoreToken(Map<String, AttributeValue> waiterKey, String originalToken) {
         if (waiterKey == null) {
             return;
@@ -2256,14 +2470,21 @@ class QuoteFlowE2E {
         }
     }
 
-    /** Espera o resultado tardio da seguradora na versão 1 ({@code V#0001#LATE#<insurerId>#<queryId>}, §4). */
+    /**
+     * Espera o resultado tardio da seguradora na versão 1
+     * ({@code V#0001#LATE#<insurerId>#<queryId>}, §4).
+     */
     private static Map<String, AttributeValue> awaitLate(String quoteId, String insurerId, String queryId) {
         return await().atMost(RECONCILER_BUDGET).pollInterval(Duration.ofSeconds(5))
-                .until(() -> quoteItems(quoteId, "V#0001#LATE#" + insurerId + "#" + queryId), items -> items.size() == 1)
+                .until(() -> quoteItems(quoteId, "V#0001#LATE#" + insurerId + "#" + queryId),
+                        items -> items.size() == 1)
                 .getFirst();
     }
 
-    /** A cotação terminal não reabre: versão, resultados, ofertas e resumo como antes do resultado tardio (T14, T16). */
+    /**
+     * A cotação terminal não reabre: versão, resultados, ofertas e resumo como
+     * antes do resultado tardio (T14, T16).
+     */
     private static void assertTerminalUnchanged(Accepted accepted, JsonNode version, Map<String, JsonNode> offers,
             List<Map<String, AttributeValue>> versionBefore) throws Exception {
         assertThat(quoteItems(accepted.quoteId(), "V#0001").stream()
@@ -2277,23 +2498,33 @@ class QuoteFlowE2E {
         assertThat(offersByInsurer(accepted).keySet()).isEqualTo(offers.keySet());
     }
 
-    /** {@code RedrivePolicy} implantada: a fila leva à sua DLQ depois de {@code maxReceiveCount} recebimentos. */
+    /**
+     * {@code RedrivePolicy} implantada: a fila leva à sua DLQ depois de
+     * {@code maxReceiveCount} recebimentos.
+     */
     private static void assertRedrivePolicy(String queueName, String deadLetterQueueName, int maxReceiveCount)
             throws Exception {
         String queueUrl = SQS.getQueueUrl(builder -> builder.queueName(queueName)).queueUrl();
         JsonNode redrive = JSON.readTree(SQS.getQueueAttributes(builder -> builder.queueUrl(queueUrl)
-                .attributeNames(QueueAttributeName.REDRIVE_POLICY)).attributes().get(QueueAttributeName.REDRIVE_POLICY));
+                .attributeNames(QueueAttributeName.REDRIVE_POLICY)).attributes()
+                .get(QueueAttributeName.REDRIVE_POLICY));
         assertThat(redrive.path("deadLetterTargetArn").asText()).endsWith(":" + deadLetterQueueName);
         assertThat(redrive.path("maxReceiveCount").asText()).isEqualTo(Integer.toString(maxReceiveCount));
     }
 
-    /** Põe o corpo na DLQ como a {@code RedrivePolicy} o deixaria: a entrega original, sem {@code dlqAttempt}. */
+    /**
+     * Põe o corpo na DLQ como a {@code RedrivePolicy} o deixaria: a entrega
+     * original, sem {@code dlqAttempt}.
+     */
     private static void sendToDeadLetterQueue(String deadLetterQueueName, String body) {
         String queueUrl = SQS.getQueueUrl(builder -> builder.queueName(deadLetterQueueName)).queueUrl();
         SQS.sendMessage(builder -> builder.queueUrl(queueUrl).messageBody(body));
     }
 
-    /** Envelope que a regra do barramento entrega na fila, com o {@code detail} gravado no outbox. */
+    /**
+     * Envelope que a regra do barramento entrega na fila, com o {@code detail}
+     * gravado no outbox.
+     */
     private static String envelope(String source, Map<String, AttributeValue> outbox) throws Exception {
         Map<String, Object> envelope = new LinkedHashMap<>();
         envelope.put("version", "0");
@@ -2308,7 +2539,10 @@ class QuoteFlowE2E {
         return JSON.writeValueAsString(envelope);
     }
 
-    /** {@code QueryReconcileRequested} no contrato da quote (AsyncAPI), como a regra o entrega na provider. */
+    /**
+     * {@code QueryReconcileRequested} no contrato da quote (AsyncAPI), como a regra
+     * o entrega na provider.
+     */
     private static String reconcileRequested(String operationId, String queryId) throws Exception {
         Map<String, Object> detail = new LinkedHashMap<>();
         detail.put("eventId", UUID.randomUUID().toString());
@@ -2344,8 +2578,10 @@ class QuoteFlowE2E {
     }
 
     /**
-     * Item {@code OUTBOX_PENDING} antigo que a relay nunca vê: o {@code INSERT} sai com outro {@code type} e só o
-     * {@code MODIFY} seguinte o marca {@code OUTBOX}. O {@code detail-type} não tem regra no barramento.
+     * Item {@code OUTBOX_PENDING} antigo que a relay nunca vê: o {@code INSERT} sai
+     * com outro {@code type} e só o
+     * {@code MODIFY} seguinte o marca {@code OUTBOX}. O {@code detail-type} não tem
+     * regra no barramento.
      */
     private static String givenOutboxOutsideTheStream(String table, String createdAt) {
         String eventId = UUID.randomUUID().toString();
@@ -2372,14 +2608,17 @@ class QuoteFlowE2E {
         return single(queryByPrefix(table, "OUTBOX#" + eventId, "META"));
     }
 
-    /** {@code quoteId} das cotações da organização aceitas na janela, pelo {@code gsi1} ({@code createdAt#quoteId}). */
+    /**
+     * {@code quoteId} das cotações da organização aceitas na janela, pelo
+     * {@code gsi1} ({@code createdAt#quoteId}).
+     */
     private static List<String> quotesOfTheOrganizationCreatedBetween(Instant from, Instant to) {
         return DYNAMO_DB.queryPaginator(builder -> builder.tableName(QUOTES_TABLE).indexName("gsi1")
-                        .keyConditionExpression("gsi1pk = :organization AND gsi1sk BETWEEN :from AND :to")
-                        .expressionAttributeValues(Map.of(
-                                ":organization", AttributeValue.fromS("ORG#" + ORGANIZATION),
-                                ":from", AttributeValue.fromS(SECONDS.format(from.minusSeconds(2))),
-                                ":to", AttributeValue.fromS(SECONDS.format(to.plusSeconds(3))))))
+                .keyConditionExpression("gsi1pk = :organization AND gsi1sk BETWEEN :from AND :to")
+                .expressionAttributeValues(Map.of(
+                        ":organization", AttributeValue.fromS("ORG#" + ORGANIZATION),
+                        ":from", AttributeValue.fromS(SECONDS.format(from.minusSeconds(2))),
+                        ":to", AttributeValue.fromS(SECONDS.format(to.plusSeconds(3))))))
                 .items().stream()
                 .map(item -> item.get("gsi1sk").s())
                 .map(sortKey -> sortKey.substring(sortKey.indexOf('#') + 1))
@@ -2394,7 +2633,8 @@ class QuoteFlowE2E {
     private static ExecutionListItem awaitSingleExecution(String quoteId) {
         return await().atMost(Duration.ofSeconds(stage.stepsMarginSeconds())).pollInterval(Duration.ofSeconds(1))
                 .until(() -> executionsOf(quoteId),
-                        executions -> executions.size() == 1 && executions.getFirst().status() != ExecutionStatus.RUNNING)
+                        executions -> executions.size() == 1
+                                && executions.getFirst().status() != ExecutionStatus.RUNNING)
                 .getFirst();
     }
 
@@ -2451,7 +2691,10 @@ class QuoteFlowE2E {
         return request;
     }
 
-    /** O mesmo conteúdo em outra ordem de campos e com espaços: o hash é do JSON canônico (RFC 8785). */
+    /**
+     * O mesmo conteúdo em outra ordem de campos e com espaços: o hash é do JSON
+     * canônico (RFC 8785).
+     */
     @SuppressWarnings("unchecked")
     private static String reorderedAndIndented(Map<String, Object> request) throws Exception {
         Map<String, Object> reordered = new LinkedHashMap<>();
@@ -2471,7 +2714,10 @@ class QuoteFlowE2E {
         return JSON.copy().enable(SerializationFeature.INDENT_OUTPUT).writeValueAsString(reordered);
     }
 
-    /** Pedido completo da nova versão ({@code CreateVersionRequest} do OpenAPI), com a versão atual lida. */
+    /**
+     * Pedido completo da nova versão ({@code CreateVersionRequest} do OpenAPI), com
+     * a versão atual lida.
+     */
     private static Map<String, Object> versionRequest(int expectedVersion, String vehicleRef, String usage,
             String driverRef) {
         Map<String, Object> request = new LinkedHashMap<>();
@@ -2490,7 +2736,10 @@ class QuoteFlowE2E {
         return accepted(response);
     }
 
-    /** {@code QuoteAccepted} de um {@code 202}, com o {@code Location} igual ao {@code statusUrl}. */
+    /**
+     * {@code QuoteAccepted} de um {@code 202}, com o {@code Location} igual ao
+     * {@code statusUrl}.
+     */
     private static Accepted accepted(HttpResponse<String> response) throws Exception {
         JsonNode accepted = JSON.readTree(response.body());
         assertThat(response.headers().firstValue("Location")).contains(accepted.path("statusUrl").asText());
@@ -2506,7 +2755,10 @@ class QuoteFlowE2E {
         return okJson(WRITER, path);
     }
 
-    /** Troca com a API da quote como {@code user}, conferida contra o contrato pelo {@link ContractClient}. */
+    /**
+     * Troca com a API da quote como {@code user}, conferida contra o contrato pelo
+     * {@link ContractClient}.
+     */
     private static HttpResponse<String> call(User user, String method, String path, String idempotencyKey,
             String body) {
         Map<String, String> headers = new LinkedHashMap<>();
@@ -2526,7 +2778,10 @@ class QuoteFlowE2E {
         return JSON.readTree(response.body());
     }
 
-    /** Nenhuma resposta traz token, payload bruto ou atributo interno do item (§12 do PRD). */
+    /**
+     * Nenhuma resposta traz token, payload bruto ou atributo interno do item (§12
+     * do PRD).
+     */
     private static void assertNoRawData(String body) {
         assertThat(RAW_FIELDS).allSatisfy(field -> assertThat(body).doesNotContain("\"" + field + "\":"));
     }
@@ -2543,7 +2798,9 @@ class QuoteFlowE2E {
                 JSON.writeValueAsString(Map.of("reason", reason)));
     }
 
-    /** Erro padrão do contrato: o código, uma mensagem e o {@code correlationId}. */
+    /**
+     * Erro padrão do contrato: o código, uma mensagem e o {@code correlationId}.
+     */
     private static JsonNode assertError(HttpResponse<String> response, int status, String code) throws Exception {
         assertThat(response.statusCode()).as(response.body()).isEqualTo(status);
         JsonNode error = JSON.readTree(response.body());
@@ -2553,13 +2810,19 @@ class QuoteFlowE2E {
         return error;
     }
 
-    /** Primeira página de ofertas não vazia da versão, lida a cada 250 ms para medir o tempo até a oferta (§15). */
+    /**
+     * Primeira página de ofertas não vazia da versão, lida a cada 250 ms para medir
+     * o tempo até a oferta (§15).
+     */
     private static JsonNode awaitFirstOffer(Accepted accepted, Duration budget) {
         return await().atMost(budget).pollInterval(Duration.ofMillis(250))
                 .until(() -> getOk(accepted.statusUrl() + "/offers"), page -> !page.path("items").isEmpty());
     }
 
-    /** Itens de todas as páginas, seguindo o {@code nextCursor} com os mesmos filtros. */
+    /**
+     * Itens de todas as páginas, seguindo o {@code nextCursor} com os mesmos
+     * filtros.
+     */
     private static List<JsonNode> allItems(User user, String path) throws Exception {
         List<JsonNode> items = new ArrayList<>();
         String cursor = null;
@@ -2598,7 +2861,10 @@ class QuoteFlowE2E {
         throw new IllegalStateException("organization " + organizationId + " is not in catalog.json");
     }
 
-    /** {@code id} e {@code label} das entradas do {@code catalog.json}, na ordem do arquivo. */
+    /**
+     * {@code id} e {@code label} das entradas do {@code catalog.json}, na ordem do
+     * arquivo.
+     */
     private static List<JsonNode> idsAndLabels(JsonNode entries) {
         List<JsonNode> projected = new ArrayList<>();
         entries.forEach(entry -> projected.add(JSON.createObjectNode()
@@ -2606,12 +2872,16 @@ class QuoteFlowE2E {
         return projected;
     }
 
-    /** Entradas cujo rótulo ou id contém o termo, sem acento nem maiúscula, como a busca do catálogo (§11). */
+    /**
+     * Entradas cujo rótulo ou id contém o termo, sem acento nem maiúscula, como a
+     * busca do catálogo (§11).
+     */
     private static List<String> matching(JsonNode entries, String search) {
         String term = folded(search);
         List<String> found = new ArrayList<>();
         entries.forEach(entry -> {
-            if (folded(entry.path("label").asText()).contains(term) || folded(entry.path("id").asText()).contains(term)) {
+            if (folded(entry.path("label").asText()).contains(term)
+                    || folded(entry.path("id").asText()).contains(term)) {
                 found.add(entry.path("id").asText());
             }
         });
@@ -2631,7 +2901,10 @@ class QuoteFlowE2E {
         throw new IllegalStateException("coverage profile " + code + " is not in catalog.json");
     }
 
-    /** T18: troca o {@code validUntil} da oferta; o {@code finally} devolve o original. */
+    /**
+     * T18: troca o {@code validUntil} da oferta; o {@code finally} devolve o
+     * original.
+     */
     private static void setValidUntil(Map<String, AttributeValue> offerKey, String validUntil) {
         DYNAMO_DB.updateItem(builder -> builder.tableName(QUOTES_TABLE).key(offerKey)
                 .updateExpression("SET validUntil = :validUntil")
@@ -2639,12 +2912,18 @@ class QuoteFlowE2E {
                 .expressionAttributeValues(Map.of(":validUntil", AttributeValue.fromS(validUntil))));
     }
 
-    /** Chave do registro de idempotência da quote (§4): organização, operação, escopo e a chave do cliente. */
+    /**
+     * Chave do registro de idempotência da quote (§4): organização, operação,
+     * escopo e a chave do cliente.
+     */
     private static String idempotencyPk(String organizationId, String operation, String scope, String key) {
         return "IDEMPOTENCY#" + organizationId + "#" + operation + "#" + scope + "#" + key;
     }
 
-    /** Nenhuma intenção de proposta: sem {@code SELECTION}, {@code selectionId}, idempotência nem outbox. */
+    /**
+     * Nenhuma intenção de proposta: sem {@code SELECTION}, {@code selectionId},
+     * idempotência nem outbox.
+     */
     private static void assertNoSelectionRecorded(String quoteId, String... idempotencyPks) {
         assertThat(queryByPrefix(QUOTES_TABLE, "QUOTE#" + quoteId, "V#")).as("SELECTION items")
                 .noneMatch(item -> string(item, "sk").endsWith("#SELECTION"));
@@ -2658,25 +2937,28 @@ class QuoteFlowE2E {
     /** Outbox da quote com o {@code detailType} e o atributo pedidos. */
     private static List<Map<String, AttributeValue>> outboxOf(String detailType, String attribute, String value) {
         return DYNAMO_DB.scanPaginator(builder -> builder.tableName(QUOTES_TABLE).consistentRead(true)
-                        .filterExpression("begins_with(pk, :outbox) AND detailType = :type AND #attribute = :value")
-                        .expressionAttributeNames(Map.of("#attribute", attribute))
-                        .expressionAttributeValues(Map.of(":outbox", AttributeValue.fromS("OUTBOX#"),
-                                ":type", AttributeValue.fromS(detailType), ":value", AttributeValue.fromS(value))))
+                .filterExpression("begins_with(pk, :outbox) AND detailType = :type AND #attribute = :value")
+                .expressionAttributeNames(Map.of("#attribute", attribute))
+                .expressionAttributeValues(Map.of(":outbox", AttributeValue.fromS("OUTBOX#"),
+                        ":type", AttributeValue.fromS(detailType), ":value", AttributeValue.fromS(value))))
                 .items().stream().toList();
     }
 
     private static List<Map<String, AttributeValue>> operationsOfQuery(String queryId) {
         return DYNAMO_DB.scanPaginator(builder -> builder.tableName(QUOTES_TABLE).consistentRead(true)
-                        .filterExpression("begins_with(pk, :operation) AND queryId = :queryId")
-                        .expressionAttributeValues(Map.of(":operation", AttributeValue.fromS("OPERATION#"),
-                                ":queryId", AttributeValue.fromS(queryId))))
+                .filterExpression("begins_with(pk, :operation) AND queryId = :queryId")
+                .expressionAttributeValues(Map.of(":operation", AttributeValue.fromS("OPERATION#"),
+                        ":queryId", AttributeValue.fromS(queryId))))
                 .items().stream().toList();
     }
 
     private record Race(List<HttpResponse<String>> selections, List<HttpResponse<String>> versions) {
     }
 
-    /** T29: {@link #T29_CONTENDERS} seleções da mesma oferta e o mesmo número de novas versões, soltos juntos. */
+    /**
+     * T29: {@link #T29_CONTENDERS} seleções da mesma oferta e o mesmo número de
+     * novas versões, soltos juntos.
+     */
     private static Race race(ExecutorService executor, Accepted current, String offerId) throws Exception {
         CountDownLatch start = new CountDownLatch(1);
         String versionBody = JSON.writeValueAsString(
@@ -2722,8 +3004,10 @@ class QuoteFlowE2E {
     }
 
     /**
-     * {@code OperationIssueRaised} de uma {@code UNKNOWN_QUERY} no contrato da provider (AsyncAPI), publicado no
-     * barramento como a provider publica; é o estado fabricado da reconciliação manual.
+     * {@code OperationIssueRaised} de uma {@code UNKNOWN_QUERY} no contrato da
+     * provider (AsyncAPI), publicado no
+     * barramento como a provider publica; é o estado fabricado da reconciliação
+     * manual.
      */
     private static void publishProviderIssue(String eventId, String issueId, String queryId, String quoteId)
             throws Exception {
@@ -2767,7 +3051,8 @@ class QuoteFlowE2E {
                 .filter(api -> api.name().equals(apiName))
                 .map(RestApi::id)
                 .findFirst()
-                .orElseThrow(() -> new IllegalStateException("API " + apiName + " not found; deploy quote-solution first"));
+                .orElseThrow(
+                        () -> new IllegalStateException("API " + apiName + " not found; deploy quote-solution first"));
         String endpoint = System.getProperty("aws.endpointUrl");
         if (endpoint == null) {
             String region = apiGateway.serviceClientConfiguration().region().id();
@@ -2777,8 +3062,10 @@ class QuoteFlowE2E {
     }
 
     /**
-     * Garante cada usuário de teste exatamente nos grupos da organização e das permissões dele (APIs administrativas
-     * do Cognito) e guarda o access token obtido com {@code USER_PASSWORD_AUTH}, que só a Lambda da API valida.
+     * Garante cada usuário de teste exatamente nos grupos da organização e das
+     * permissões dele (APIs administrativas
+     * do Cognito) e guarda o access token obtido com {@code USER_PASSWORD_AUTH},
+     * que só a Lambda da API valida.
      */
     private static void signIn() {
         try (CognitoIdentityProviderClient cognito = CognitoIdentityProviderClient.create()) {
@@ -2816,17 +3103,23 @@ class QuoteFlowE2E {
                 user.groups().forEach(group -> cognito.adminAddUserToGroup(builder -> builder.userPoolId(poolId)
                         .username(user.username()).groupName(group)));
                 TOKENS.put(user, cognito.initiateAuth(builder -> builder.clientId(clientId)
-                                .authFlow(AuthFlowType.USER_PASSWORD_AUTH)
-                                .authParameters(Map.of("USERNAME", user.username(), "PASSWORD", PASSWORD)))
+                        .authFlow(AuthFlowType.USER_PASSWORD_AUTH)
+                        .authParameters(Map.of("USERNAME", user.username(), "PASSWORD", PASSWORD)))
                         .authenticationResult().accessToken());
             }
         }
     }
 
-    /** Usuário de teste; a organização vem do primeiro grupo, {@code org_<organizationId>}. */
+    /**
+     * Usuário de teste; a organização vem do primeiro grupo,
+     * {@code org_<organizationId>}.
+     */
     private record User(String username, List<String> groups) {
 
-        /** Permissões do contrato concedidas pelos grupos {@code perm_*} (§11 do desenho). */
+        /**
+         * Permissões do contrato concedidas pelos grupos {@code perm_*} (§11 do
+         * desenho).
+         */
         List<String> permissions() {
             return groups.stream().filter(group -> group.startsWith("perm_"))
                     .map(group -> group.substring("perm_".length()))
@@ -2840,7 +3133,10 @@ class QuoteFlowE2E {
 
     private record Accepted(String quoteId, int version, String statusUrl) {
 
-        /** Identidade devolvida pela API; a fase pode ter avançado entre um envio e outro. */
+        /**
+         * Identidade devolvida pela API; a fase pode ter avançado entre um envio e
+         * outro.
+         */
         String identity() {
             return quoteId + "#" + version + "#" + statusUrl;
         }

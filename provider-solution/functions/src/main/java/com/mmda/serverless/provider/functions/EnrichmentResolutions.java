@@ -21,8 +21,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
- * O {@code EnrichmentResolved} de cada pedido (desenho, §8): a conclusão do líder, com o índice de reuso e o
- * fan-out para os seguidores, o {@code HIT} e o {@code JOIN} de quem encontra a liderança já concluída.
+ * O {@code EnrichmentResolved} de cada pedido (desenho, §8): a conclusão do
+ * líder, com o índice de reuso e o
+ * fan-out para os seguidores, o {@code HIT} e o {@code JOIN} de quem encontra a
+ * liderança já concluída.
  */
 @Component
 class EnrichmentResolutions {
@@ -37,7 +39,7 @@ class EnrichmentResolutions {
     private final Clock clock;
 
     EnrichmentResolutions(QueryLedger ledger, ReuseLedger reuseLedger, EventJson json, ReuseProperties reuse,
-                          Clock clock) {
+            Clock clock) {
         this.ledger = ledger;
         this.reuseLedger = reuseLedger;
         this.json = json;
@@ -46,24 +48,29 @@ class EnrichmentResolutions {
     }
 
     /**
-     * Conclui a consulta com o outbox próprio ({@code MISS}); {@code newQuery} é a consulta criada já concluída,
-     * sem chamada. Com {@code term}, conclui também a liderança e responde aos seguidores; com a lease
-     * transferida, grava só a própria evidência e o próprio resultado, sem tocar índice nem liderança (T15).
+     * Conclui a consulta com o outbox próprio ({@code MISS}); {@code newQuery} é a
+     * consulta criada já concluída,
+     * sem chamada. Com {@code term}, conclui também a liderança e responde aos
+     * seguidores; com a lease
+     * transferida, grava só a própria evidência e o próprio resultado, sem tocar
+     * índice nem liderança (T15).
      */
     void settle(EnrichmentRequest request, String queryId, QueryDraft newQuery, QueryState state,
-                Settlement.AttemptResult attempt, EvidenceDraft evidence, EnrichmentResolved.Outcome outcome,
-                LeaderTerm term, Instant now) {
+            Settlement.AttemptResult attempt, EvidenceDraft evidence, EnrichmentResolved.Outcome outcome,
+            LeaderTerm term, Instant now) {
         settle(EnrichmentResolved.Recipient.of(request), queryId, newQuery, state, attempt, evidence, outcome, term,
                 now);
     }
 
     /**
-     * A mesma conclusão para o pedido de origem da consulta, sem a mensagem do pedido em mãos, como a do reconciler
-     * (§9). O pedido é deduplicado pelo {@code workRef}, então o {@code CONSUMED} é o mesmo.
+     * A mesma conclusão para o pedido de origem da consulta, sem a mensagem do
+     * pedido em mãos, como a do reconciler
+     * (§9). O pedido é deduplicado pelo {@code workRef}, então o {@code CONSUMED} é
+     * o mesmo.
      */
     void settle(EnrichmentResolved.Recipient request, String queryId, QueryDraft newQuery, QueryState state,
-                Settlement.AttemptResult attempt, EvidenceDraft evidence, EnrichmentResolved.Outcome outcome,
-                LeaderTerm term, Instant now) {
+            Settlement.AttemptResult attempt, EvidenceDraft evidence, EnrichmentResolved.Outcome outcome,
+            LeaderTerm term, Instant now) {
         String policyVersion = evidence.policyVersion() == null ? reuse.policyVersion() : evidence.policyVersion();
         EnrichmentResolved event = EnrichmentResolved.of(request, queryId, evidence.evidenceId(), ReuseDecision.MISS,
                 policyVersion, outcome, Timestamps.format(now));
@@ -73,14 +80,14 @@ class EnrichmentResolutions {
             settleAlone(settlement, request, outcome, now);
             return;
         }
-        for (int round = 1; ; round++) {
+        for (int round = 1;; round++) {
             ReuseWrite write = reuseWrite(term, queryId, evidence.evidenceId(), outcome, policyVersion);
             QueryLedger.LeaderSettlement settledAs = ledger.settleAsLeader(settlement, term, write.entry(),
                     write.expectedRevision(), now);
             switch (settledAs) {
                 case SETTLED, SETTLED_ALREADY_ANSWERED -> {
                     LOGGER.info("Enrichment resolved by the leader: queryId={} quoteId={} fencingVersion={} "
-                                    + "resultType={} state={} settlement={}", queryId, request.quoteId(),
+                            + "resultType={} state={} settlement={}", queryId, request.quoteId(),
                             term.fencingVersion(), outcome.resultType(), state, settledAs);
                     fanOut(term, request.workRef(), queryId, evidence.evidenceId(), policyVersion, outcome);
                     return;
@@ -105,8 +112,10 @@ class EnrichmentResolutions {
     }
 
     /**
-     * Consulta interrompida (§8), pela reentrega do pedido ou pelo reconciler, sem nunca repetir a chamada: fica
-     * {@code UNKNOWN} com tentativa aberta, {@code FAILED} sem ela, e a liderança conclui com {@code FAILED} e
+     * Consulta interrompida (§8), pela reentrega do pedido ou pelo reconciler, sem
+     * nunca repetir a chamada: fica
+     * {@code UNKNOWN} com tentativa aberta, {@code FAILED} sem ela, e a liderança
+     * conclui com {@code FAILED} e
      * responde aos seguidores só se ainda for dela.
      */
     void settleInterrupted(EnrichmentResolved.Recipient recipient, QueryRecord query, Instant now) {
@@ -120,7 +129,8 @@ class EnrichmentResolutions {
     }
 
     /**
-     * A liderança da consulta interrompida, se a {@code fencingVersion} e o {@code queryId} do {@code INFLIGHT#}
+     * A liderança da consulta interrompida, se a {@code fencingVersion} e o
+     * {@code queryId} do {@code INFLIGHT#}
      * ainda forem os dela.
      */
     private LeaderTerm interruptedTerm(QueryRecord query) {
@@ -136,18 +146,24 @@ class EnrichmentResolutions {
                 .orElse(null);
     }
 
-    /** {@code HIT}: o resultado da evidência válida do índice, sem chamada externa. */
+    /**
+     * {@code HIT}: o resultado da evidência válida do índice, sem chamada externa.
+     */
     void publishHit(EnrichmentRequest request, ReuseIndexEntry entry) {
         publish(request, evidence(entry.queryId(), entry.evidenceId()), ReuseDecision.HIT);
     }
 
-    /** {@code JOIN} publicado pelo próprio seguidor, quando encontra concluída a liderança em que se registrou. */
+    /**
+     * {@code JOIN} publicado pelo próprio seguidor, quando encontra concluída a
+     * liderança em que se registrou.
+     */
     void publishRecorded(EnrichmentRequest request, Leadership leadership) {
         publish(request, evidence(leadership.queryId(), leadership.evidenceId()), ReuseDecision.JOIN);
     }
 
     /**
-     * Reentrega do líder que encontra o {@code INFLIGHT#} concluído com a própria consulta: refaz o fan-out,
+     * Reentrega do líder que encontra o {@code INFLIGHT#} concluído com a própria
+     * consulta: refaz o fan-out,
      * que é idempotente pelo {@code eventId} (§8).
      */
     void redoFanOut(QueryRecord query, String leaderWorkRef) {
@@ -164,11 +180,13 @@ class EnrichmentResolutions {
     }
 
     /**
-     * Fora da transação do líder, que aceita até 100 ações: um outbox e um {@code CONSUMED} por seguidor da
-     * cadeia, com {@code eventId} determinístico e {@code attribute_not_exists} (ADR 0015).
+     * Fora da transação do líder, que aceita até 100 ações: um outbox e um
+     * {@code CONSUMED} por seguidor da
+     * cadeia, com {@code eventId} determinístico e {@code attribute_not_exists}
+     * (ADR 0015).
      */
     private void fanOut(LeaderTerm term, String leaderWorkRef, String queryId, String evidenceId,
-                        String policyVersion, EnrichmentResolved.Outcome outcome) {
+            String policyVersion, EnrichmentResolved.Outcome outcome) {
         List<ReuseLedger.Follower> followers = reuseLedger.followers(term.queryKey(), term.firstFencingVersion(),
                 term.fencingVersion());
         int published = 0;
@@ -192,8 +210,10 @@ class EnrichmentResolutions {
     }
 
     /**
-     * Fan-out que o líder não terminou (pendência do M2, §9): refeito pela cadeia gravada na conclusão, mesmo que
-     * outra cadeia já tenha começado no {@code INFLIGHT#}. O {@code CONSUMED} de cada seguidor impede uma segunda
+     * Fan-out que o líder não terminou (pendência do M2, §9): refeito pela cadeia
+     * gravada na conclusão, mesmo que
+     * outra cadeia já tenha começado no {@code INFLIGHT#}. O {@code CONSUMED} de
+     * cada seguidor impede uma segunda
      * resposta.
      */
     void resumeFanOut(QueryLedger.PendingFanOut pending) {
@@ -203,7 +223,7 @@ class EnrichmentResolutions {
     }
 
     private void settleAlone(Settlement settlement, EnrichmentResolved.Recipient request,
-                             EnrichmentResolved.Outcome outcome, Instant now) {
+            EnrichmentResolved.Outcome outcome, Instant now) {
         if (ledger.settle(settlement, now)) {
             LOGGER.info("Enrichment resolved: queryId={} quoteId={} version={} resultType={} state={}",
                     settlement.queryId(), request.quoteId(), request.version(), outcome.resultType(),
@@ -226,7 +246,7 @@ class EnrichmentResolutions {
     }
 
     private ReuseWrite reuseWrite(LeaderTerm term, String queryId, String evidenceId,
-                                  EnrichmentResolved.Outcome outcome, String policyVersion) {
+            EnrichmentResolved.Outcome outcome, String policyVersion) {
         if (!outcome.resultType().isReusable()) {
             return new ReuseWrite(null, null);
         }
@@ -264,8 +284,10 @@ class EnrichmentResolutions {
     }
 
     /**
-     * Chave do {@code CONSUMED} de um pedido: o {@code eventId} que o contrato da quote atribui ao
-     * {@code workRef}. WHY: o fan-out só conhece o {@code workRef} do seguidor, e a deduplicação é pelo
+     * Chave do {@code CONSUMED} de um pedido: o {@code eventId} que o contrato da
+     * quote atribui ao
+     * {@code workRef}. WHY: o fan-out só conhece o {@code workRef} do seguidor, e a
+     * deduplicação é pelo
      * {@code workRef}, não pelo {@code eventId} recebido.
      */
     static String consumedId(String workRef) {

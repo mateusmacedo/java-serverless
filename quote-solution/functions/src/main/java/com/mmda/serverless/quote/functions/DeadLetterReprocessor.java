@@ -16,18 +16,27 @@ import software.amazon.awssdk.services.sqs.model.Message;
 import software.amazon.awssdk.services.sqs.model.MessageAttributeValue;
 
 /**
- * Reprocessamento da {@code results-dlq} e, desde o M5, da {@code issues-dlq}, no padrão do ADR 0007 (§9 do
- * desenho, T31): abaixo do limite de tentativas, a mensagem volta à fila de origem, mesmo depois do prazo da versão;
- * no limite, ou sem identificar o recurso, vira {@code DEAD_LETTER}. Os consumidores são idempotentes pelo
+ * Reprocessamento da {@code results-dlq} e, desde o M5, da {@code issues-dlq},
+ * no padrão do ADR 0007 (§9 do
+ * desenho, T31): abaixo do limite de tentativas, a mensagem volta à fila de
+ * origem, mesmo depois do prazo da versão;
+ * no limite, ou sem identificar o recurso, vira {@code DEAD_LETTER}. Os
+ * consumidores são idempotentes pelo
  * {@code CONSUMED#<eventId>}, então o reenvio não duplica efeito.
  */
 @ApplicationScoped
 public class DeadLetterReprocessor {
 
-    /** Atributo da mensagem com o número da tentativa; ausente na entrega original, que é a tentativa 1. */
+    /**
+     * Atributo da mensagem com o número da tentativa; ausente na entrega original,
+     * que é a tentativa 1.
+     */
     static final String ATTEMPT_ATTRIBUTE = "dlqAttempt";
     private static final Logger LOG = Logger.getLogger(DeadLetterReprocessor.class);
-    /** WHY: cobre o processamento de um lote; se o reconciler cair, a mensagem volta à DLQ para o ciclo seguinte. */
+    /**
+     * WHY: cobre o processamento de um lote; se o reconciler cair, a mensagem volta
+     * à DLQ para o ciclo seguinte.
+     */
     private static final int RECEIVE_VISIBILITY_SECONDS = 60;
     private static final int MAX_MESSAGES_PER_RECEIVE = 10;
 
@@ -78,7 +87,8 @@ public class DeadLetterReprocessor {
             }
             for (Message message : messages) {
                 report.merge(handle(source, message, now) == Reconciliation.DeadLetterDecision.REDRIVE
-                        ? "redriven" : "discarded", 1, Integer::sum);
+                        ? "redriven"
+                        : "discarded", 1, Integer::sum);
             }
             budget -= messages.size();
         }
@@ -89,10 +99,11 @@ public class DeadLetterReprocessor {
         int attempt = attempt(message);
         MessageRef ref = MessageRef.of(read(message.body()), message.messageId());
         boolean identified = source.issues() ? ref.identifiesIssueEvent() : ref.identifiesQuote();
-        Reconciliation.DeadLetterDecision decision =
-                Reconciliation.deadLetter(attempt, reconcilerConfig.dlqMaxAttempts(), identified);
+        Reconciliation.DeadLetterDecision decision = Reconciliation.deadLetter(attempt,
+                reconcilerConfig.dlqMaxAttempts(), identified);
         if (decision == Reconciliation.DeadLetterDecision.REDRIVE) {
-            // INVARIANT: reenvia antes de apagar; uma queda no meio repete o reenvio, que o consumidor descarta
+            // INVARIANT: reenvia antes de apagar; uma queda no meio repete o reenvio, que o
+            // consumidor descarta
             sqs.sendMessage(builder -> builder
                     .queueUrl(source.queueUrl())
                     .messageBody(message.body())
@@ -122,10 +133,14 @@ public class DeadLetterReprocessor {
     }
 
     /**
-     * Evento operacional da provider descartado. WHY: a organização e a consulta vêm do próprio evento; numa
-     * ocorrência, a provider só põe nelas a organização da consulta, mas no {@code QueryReconciled} o par é o do
-     * pedido. A ocorrência da quote não grava {@code QUERYREF#} nem é {@code reconcilable}, então o par só a situa na
-     * listagem; sem organização, ela fica fora da listagem, como o callback sem correlação.
+     * Evento operacional da provider descartado. WHY: a organização e a consulta
+     * vêm do próprio evento; numa
+     * ocorrência, a provider só põe nelas a organização da consulta, mas no
+     * {@code QueryReconciled} o par é o do
+     * pedido. A ocorrência da quote não grava {@code QUERYREF#} nem é
+     * {@code reconcilable}, então o par só a situa na
+     * listagem; sem organização, ela fica fora da listagem, como o callback sem
+     * correlação.
      */
     private QuoteIssue issueEventDeadLetter(MessageRef ref, int attempt, boolean identified) {
         String reason = identified ? "no limite de " + reconcilerConfig.dlqMaxAttempts() + " tentativas"
@@ -156,7 +171,8 @@ public class DeadLetterReprocessor {
     }
 
     /**
-     * O que a ocorrência guarda da mensagem, sem o payload: o alvo é o {@code eventId} do evento ou, numa mensagem
+     * O que a ocorrência guarda da mensagem, sem o payload: o alvo é o
+     * {@code eventId} do evento ou, numa mensagem
      * ilegível, o {@code messageId} do SQS.
      */
     private record MessageRef(String target, String eventId, String detailType, String quoteId, int version,

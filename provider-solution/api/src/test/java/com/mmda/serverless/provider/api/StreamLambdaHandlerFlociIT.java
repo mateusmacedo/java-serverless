@@ -20,8 +20,10 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * A Lambda da API pelo handler real, com o evento de proxy que o API Gateway entrega na rota
- * {@code /v1/providers/{provider}/callbacks}: a assinatura confere com os bytes que o serverless-java-container
+ * A Lambda da API pelo handler real, com o evento de proxy que o API Gateway
+ * entrega na rota
+ * {@code /v1/providers/{provider}/callbacks}: a assinatura confere com os bytes
+ * que o serverless-java-container
  * entrega ao controller.
  */
 class StreamLambdaHandlerFlociIT extends FlociIntegrationTest {

@@ -38,7 +38,10 @@ class FunctionsConfiguration {
         return RandomGenerator.getDefault();
     }
 
-    /** WHY: o EMF é lido da saída padrão da Lambda, uma linha JSON por registro, fora do formato do log. */
+    /**
+     * WHY: o EMF é lido da saída padrão da Lambda, uma linha JSON por registro,
+     * fora do formato do log.
+     */
     @Bean
     @ConditionalOnMissingBean
     Metrics.MetricsSink metricsSink() {
@@ -55,7 +58,10 @@ class FunctionsConfiguration {
         return new RetryPolicy(properties.workerRetries(), Duration.ofSeconds(properties.retryBackoffMaxSeconds()));
     }
 
-    /** WHY: o cliente não repete nada; o worker é o único dono do retry (desenho, §9). */
+    /**
+     * WHY: o cliente não repete nada; o worker é o único dono do retry (desenho,
+     * §9).
+     */
     @Bean
     HttpClient providerHttpClient(ProviderProperties properties) {
         return HttpClient.newBuilder()

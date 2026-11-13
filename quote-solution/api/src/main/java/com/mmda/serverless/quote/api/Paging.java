@@ -2,7 +2,10 @@ package com.mmda.serverless.quote.api;
 
 import java.util.List;
 
-/** Tamanho de página comum às listagens com {@code cursor} e {@code limit} (§8 do desenho). */
+/**
+ * Tamanho de página comum às listagens com {@code cursor} e {@code limit} (§8
+ * do desenho).
+ */
 final class Paging {
 
     static final String DEFAULT_LIMIT = "20";
@@ -12,7 +15,8 @@ final class Paging {
     }
 
     /**
-     * WHY: com {@code int} no {@code @QueryParam}, um valor não numérico vira {@code NotFoundException} no
+     * WHY: com {@code int} no {@code @QueryParam}, um valor não numérico vira
+     * {@code NotFoundException} no
      * Quarkus REST, e o contrato pede 400 para parâmetro inválido.
      */
     static int limit(String limit) {

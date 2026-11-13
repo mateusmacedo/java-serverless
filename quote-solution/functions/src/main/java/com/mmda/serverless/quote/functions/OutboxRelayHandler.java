@@ -14,10 +14,14 @@ import org.jboss.logging.Logger;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 
 /**
- * Publica os {@code INSERT} de outbox recebidos do stream da tabela, registro a registro (§7 do desenho).
- * Uma falha transitória devolve o número de sequência em {@code batchItemFailures} e encerra o lote:
- * com {@code ReportBatchItemFailures}, o stream reentrega a partir dele, inclusive os seguintes. Uma
- * falha permanente fica gravada no item, que segue {@code OUTBOX_PENDING} para o {@code reconciler}.
+ * Publica os {@code INSERT} de outbox recebidos do stream da tabela, registro a
+ * registro (§7 do desenho).
+ * Uma falha transitória devolve o número de sequência em
+ * {@code batchItemFailures} e encerra o lote:
+ * com {@code ReportBatchItemFailures}, o stream reentrega a partir dele,
+ * inclusive os seguintes. Uma
+ * falha permanente fica gravada no item, que segue {@code OUTBOX_PENDING} para
+ * o {@code reconciler}.
  */
 @Singleton
 @Named("outbox-relay")

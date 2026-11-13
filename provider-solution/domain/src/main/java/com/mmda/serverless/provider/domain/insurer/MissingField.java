@@ -5,7 +5,8 @@ import java.util.Objects;
 /**
  * Pendência de dados apontada pela seguradora.
  *
- * @param path caminho relativo ao snapshot, como {@code risk.principalDriver.licenseDate}
+ * @param path caminho relativo ao snapshot, como
+ *             {@code risk.principalDriver.licenseDate}
  */
 public record MissingField(String path, String reasonCode) {
 

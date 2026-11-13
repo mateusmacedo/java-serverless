@@ -19,7 +19,8 @@ import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItem;
 
 /**
- * Itens {@code OUTBOX#<eventId>}: gravados na transação do fato, publicados pela relay e, se ficarem
+ * Itens {@code OUTBOX#<eventId>}: gravados na transação do fato, publicados
+ * pela relay e, se ficarem
  * {@code OUTBOX_PENDING}, pelo republicador (ADR 0015).
  */
 @Component
@@ -37,7 +38,10 @@ class OutboxStore {
         this.properties = properties;
     }
 
-    /** Put com {@code attribute_not_exists}: o mesmo {@code eventId} nunca vira um segundo evento. */
+    /**
+     * Put com {@code attribute_not_exists}: o mesmo {@code eventId} nunca vira um
+     * segundo evento.
+     */
     TransactWriteItem put(Settlement.OutboxEvent event, Instant now) {
         String createdAt = Timestamps.format(now);
         Map<String, AttributeValue> item = Items.item(Items.outboxPk(event.eventId()), META, Items.TYPE_OUTBOX);
@@ -56,7 +60,10 @@ class OutboxStore {
                 .build();
     }
 
-    /** WHY: {@code SET} absoluto, então publicar de novo um evento já publicado não tem efeito (§7). */
+    /**
+     * WHY: {@code SET} absoluto, então publicar de novo um evento já publicado não
+     * tem efeito (§7).
+     */
     void markPublished(String eventId, Instant now) {
         dynamoDb.updateItem(builder -> builder
                 .tableName(properties.tableName())
@@ -67,8 +74,10 @@ class OutboxStore {
     }
 
     /**
-     * Erro permanente: o item continua {@code OUTBOX_PENDING}, com a contagem e o último erro. WHY: o
-     * {@code gsi2sk} passa a ser a data da falha, então um item que falha sempre vai para o fim da fila do
+     * Erro permanente: o item continua {@code OUTBOX_PENDING}, com a contagem e o
+     * último erro. WHY: o
+     * {@code gsi2sk} passa a ser a data da falha, então um item que falha sempre
+     * vai para o fim da fila do
      * republicador e não impede a republicação dos mais novos.
      */
     void recordFailure(String eventId, String error, Instant now) {
@@ -85,16 +94,18 @@ class OutboxStore {
     }
 
     /**
-     * Todos os pendentes, pela ordem do {@code gsi2sk}, com o {@code createdAt}. WHY: a idade de um item vem do
-     * {@code createdAt}, e um item com falha permanente recente tem o {@code gsi2sk} novo, mas pode ser antigo (§7).
+     * Todos os pendentes, pela ordem do {@code gsi2sk}, com o {@code createdAt}.
+     * WHY: a idade de um item vem do
+     * {@code createdAt}, e um item com falha permanente recente tem o
+     * {@code gsi2sk} novo, mas pode ser antigo (§7).
      */
     List<PendingOutbox> pending(int limit) {
         return dynamoDb.query(builder -> builder
-                        .tableName(properties.tableName())
-                        .indexName(GSI2)
-                        .keyConditionExpression("gsi2pk = :pending")
-                        .expressionAttributeValues(Map.of(":pending", s(OUTBOX_PENDING)))
-                        .limit(limit))
+                .tableName(properties.tableName())
+                .indexName(GSI2)
+                .keyConditionExpression("gsi2pk = :pending")
+                .expressionAttributeValues(Map.of(":pending", s(OUTBOX_PENDING)))
+                .limit(limit))
                 .items().stream()
                 .map(PendingOutbox::from)
                 .flatMap(Optional::stream)
@@ -102,7 +113,8 @@ class OutboxStore {
     }
 
     /**
-     * Item pendente com o necessário para republicar e medir a idade; {@code entry} é nulo quando o conteúdo não
+     * Item pendente com o necessário para republicar e medir a idade; {@code entry}
+     * é nulo quando o conteúdo não
      * pôde ser lido, e o item só pode virar {@code STALE_OUTBOX}.
      */
     record PendingOutbox(String eventId, OutboxEntry entry, Instant createdAt, String gsi2sk) {
@@ -122,9 +134,9 @@ class OutboxStore {
     /** {@code true} quando o item existe e continua {@code OUTBOX_PENDING}. */
     boolean isPending(String eventId) {
         return Items.string(dynamoDb.getItem(builder -> builder
-                        .tableName(properties.tableName())
-                        .consistentRead(true)
-                        .key(Items.key(Items.outboxPk(eventId), META)))
+                .tableName(properties.tableName())
+                .consistentRead(true)
+                .key(Items.key(Items.outboxPk(eventId), META)))
                 .item(), GSI2PK).isPresent();
     }
 }

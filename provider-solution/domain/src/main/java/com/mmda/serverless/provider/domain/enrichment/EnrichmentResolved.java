@@ -6,9 +6,12 @@ import java.util.Objects;
 import java.util.regex.Pattern;
 
 /**
- * {@code detail} do {@code EnrichmentResolved} (desenho, §3). {@code result} só existe em {@code FOUND},
- * {@code notFoundRefs} só em {@code NOT_FOUND}, {@code errorClass} só em {@code FAILED} e {@code reusableUntil}
- * só nos resultados reutilizáveis. {@code policyVersion} é a política de reuso da provider que produziu a
+ * {@code detail} do {@code EnrichmentResolved} (desenho, §3). {@code result} só
+ * existe em {@code FOUND},
+ * {@code notFoundRefs} só em {@code NOT_FOUND}, {@code errorClass} só em
+ * {@code FAILED} e {@code reusableUntil}
+ * só nos resultados reutilizáveis. {@code policyVersion} é a política de reuso
+ * da provider que produziu a
  * evidência, no formato {@link #POLICY_VERSION} do AsyncAPI.
  */
 public record EnrichmentResolved(
@@ -57,20 +60,25 @@ public record EnrichmentResolved(
         notFoundRefs = notFoundRefs == null ? null : List.copyOf(notFoundRefs);
     }
 
-    /** Resolução do próprio pedido; o {@code eventId} é o UUIDv5 de {@code queryId|workRef}. */
+    /**
+     * Resolução do próprio pedido; o {@code eventId} é o UUIDv5 de
+     * {@code queryId|workRef}.
+     */
     public static EnrichmentResolved of(EnrichmentRequest request, String queryId, String evidenceId,
-                                        ReuseDecision reuseDecision, String policyVersion, Outcome outcome,
-                                        String occurredAt) {
+            ReuseDecision reuseDecision, String policyVersion, Outcome outcome,
+            String occurredAt) {
         return of(Recipient.of(request), queryId, evidenceId, reuseDecision, policyVersion, outcome, occurredAt);
     }
 
     /**
-     * Resolução para um destinatário, como cada seguidor no fan-out do líder; {@code queryId} é a consulta que
-     * produziu a evidência, e o {@code eventId}, o UUIDv5 de {@code queryId|workRef}.
+     * Resolução para um destinatário, como cada seguidor no fan-out do líder;
+     * {@code queryId} é a consulta que
+     * produziu a evidência, e o {@code eventId}, o UUIDv5 de
+     * {@code queryId|workRef}.
      */
     public static EnrichmentResolved of(Recipient recipient, String queryId, String evidenceId,
-                                        ReuseDecision reuseDecision, String policyVersion, Outcome outcome,
-                                        String occurredAt) {
+            ReuseDecision reuseDecision, String policyVersion, Outcome outcome,
+            String occurredAt) {
         return new EnrichmentResolved(
                 EventIds.enrichmentResolved(queryId, recipient.workRef()),
                 occurredAt,
@@ -89,7 +97,10 @@ public record EnrichmentResolved(
                 outcome.errorClass());
     }
 
-    /** Pedido que recebe o resultado: o próprio, ou um seguidor registrado na liderança. */
+    /**
+     * Pedido que recebe o resultado: o próprio, ou um seguidor registrado na
+     * liderança.
+     */
     public record Recipient(String workRef, String quoteId, int version) {
 
         public Recipient {
@@ -104,7 +115,7 @@ public record EnrichmentResolved(
 
     /** Resultado gravado na evidência, comum ao líder, aos seguidores e ao HIT. */
     public record Outcome(EnrichmentResultType resultType, EnrichmentProfile result, List<String> notFoundRefs,
-                          String reusableUntil, String errorClass) {
+            String reusableUntil, String errorClass) {
 
         public static Outcome found(EnrichmentProfile profile, String reusableUntil) {
             return new Outcome(EnrichmentResultType.FOUND, profile, null, reusableUntil, null);

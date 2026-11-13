@@ -53,9 +53,12 @@ import software.amazon.awssdk.services.sqs.model.MessageAttributeValue;
 import software.amazon.awssdk.services.sqs.model.QueueAttributeName;
 
 /**
- * Passos, {@code dispatch}, {@code resume}, relay e reconciler contra DynamoDB, EventBridge, SQS, Secrets
- * Manager e Step Functions reais do Floci, com task tokens reais. A máquina da quote não é implantada: os
- * passos são chamados na ordem em que ela os chama, e o deploy de verificação cobre a máquina.
+ * Passos, {@code dispatch}, {@code resume}, relay e reconciler contra DynamoDB,
+ * EventBridge, SQS, Secrets
+ * Manager e Step Functions reais do Floci, com task tokens reais. A máquina da
+ * quote não é implantada: os
+ * passos são chamados na ordem em que ela os chama, e o deploy de verificação
+ * cobre a máquina.
  */
 @QuarkusTest
 @WithTestResource(FlociResource.class)
@@ -89,7 +92,8 @@ class QuoteFunctionsFlociIT {
     @Inject
     ObjectMapper objectMapper;
 
-    // WHY: os padrões só existem para a classe validar na inicialização dos testes do surefire, sem o Floci
+    // WHY: os padrões só existem para a classe validar na inicialização dos testes
+    // do surefire, sem o Floci
     @ConfigProperty(name = "it.capture-queue-url", defaultValue = "unset")
     String captureQueueUrl;
 
@@ -186,7 +190,8 @@ class QuoteFunctionsFlociIT {
         assertThat(request.toString()).doesNotContain(task.token());
 
         LambdaEvents.BatchResponse response = resume.handleRequest(
-                QuoteFixtures.sqs(QuoteFixtures.insurerResult(workRef.value(), quoteId, "QUOTED", UUID.randomUUID().toString())),
+                QuoteFixtures.sqs(
+                        QuoteFixtures.insurerResult(workRef.value(), quoteId, "QUOTED", UUID.randomUUID().toString())),
                 null);
         assertThat(response.batchItemFailures()).isEmpty();
         assertThat(succeededOutput(task).get("status").asText()).isEqualTo("QUOTED");
@@ -294,8 +299,9 @@ class QuoteFunctionsFlociIT {
         Task task = newTask();
         dispatch.handleRequest(insurerRequest(quoteId, task), null);
 
-        Map<String, Object> recorded = steps.handleRequest(new StepRequest("record-insurer-outcome", quoteId, 1, "alpha",
-                "TIMED_OUT", objectMapper.readTree("{\"Error\":\"States.Timeout\",\"Cause\":\"\"}")), null);
+        Map<String, Object> recorded = steps
+                .handleRequest(new StepRequest("record-insurer-outcome", quoteId, 1, "alpha",
+                        "TIMED_OUT", objectMapper.readTree("{\"Error\":\"States.Timeout\",\"Cause\":\"\"}")), null);
         assertThat(recorded.get("status")).isEqualTo("TIMED_OUT");
         assertThat(waiter(workRef).get("status").s()).isEqualTo("EXPIRED");
 
@@ -370,7 +376,8 @@ class QuoteFunctionsFlociIT {
         assertThat(used.get("resultType").s()).isEqualTo("NOT_FOUND");
         assertThat(used.get("evidenceId").s()).isEqualTo(EvidenceRef.miss(workRef.value()).evidenceId());
 
-        assertThat(step("select-insurers", quoteId).get("insurers")).as("no insurer even if the step runs").isEqualTo(List.of());
+        assertThat(step("select-insurers", quoteId).get("insurers")).as("no insurer even if the step runs")
+                .isEqualTo(List.of());
         Map<String, Object> consolidation = step("consolidate", quoteId);
 
         assertThat(consolidation.get("outcome")).isEqualTo("NEEDS_INFORMATION");
@@ -504,7 +511,8 @@ class QuoteFunctionsFlociIT {
         for (String insurerId : List.of("beta", "alpha")) {
             WorkRef workRef = insurerRef(quoteId, insurerId);
             LambdaEvents.BatchResponse response = resume.handleRequest(QuoteFixtures.sqs(QuoteFixtures.insurerResult(
-                    workRef.value(), quoteId, insurerId, "QUOTED", QuoteFixtures.insurerResultEventId(workRef.value()))),
+                    workRef.value(), quoteId, insurerId, "QUOTED",
+                    QuoteFixtures.insurerResultEventId(workRef.value()))),
                     null);
             assertThat(response.batchItemFailures()).isEmpty();
             assertThat(succeededOutput(tasks.get(insurerId)).get("status").asText()).isEqualTo("QUOTED");
@@ -580,7 +588,8 @@ class QuoteFunctionsFlociIT {
         assertThat(resumer.handle(QuoteFixtures.insurerResult(beta.value(), quoteId, "beta", "QUOTED",
                 QuoteFixtures.insurerResultEventId(beta.value())))).isEqualTo(ResultResumer.Disposition.LATE);
         assertThat(lateItems(quoteId)).singleElement().satisfies(late -> {
-            assertThat(late.get("sk").s()).isEqualTo(QuoteKeys.lateSk(1, "beta", QuoteFixtures.providerQueryId(beta.value())));
+            assertThat(late.get("sk").s())
+                    .isEqualTo(QuoteKeys.lateSk(1, "beta", QuoteFixtures.providerQueryId(beta.value())));
             assertThat(late.get("reason").s()).isEqualTo("LATE");
             assertThat(late.get("status").s()).isEqualTo("QUOTED");
             assertThat(late).containsKeys("offerSummary", "rawResponseRef");
@@ -631,12 +640,14 @@ class QuoteFunctionsFlociIT {
         assertThat(succeededOutput(tasks.get("beta")).get("status").asText()).isEqualTo("QUOTED");
         LambdaEvents.BatchResponse republished = resume.handleRequest(QuoteFixtures.sqs(quoted), null);
         assertThat(republished.batchItemFailures()).isEmpty();
-        assertThat(resumer.handle(quoted)).as("same eventId of the same queryId").isEqualTo(ResultResumer.Disposition.DISCARDED);
+        assertThat(resumer.handle(quoted)).as("same eventId of the same queryId")
+                .isEqualTo(ResultResumer.Disposition.DISCARDED);
         assertThat(resumer.handle(QuoteFixtures.insurerResult(beta.value(), quoteId, "beta", "QUOTED",
                 UUID.randomUUID().toString()))).isEqualTo(ResultResumer.Disposition.DUPLICATE);
 
         Task retry = newTask();
-        assertThat(dispatch.handleRequest(insurerRequest(quoteId, "beta", retry), null).get("status")).isEqualTo("RESUMED");
+        assertThat(dispatch.handleRequest(insurerRequest(quoteId, "beta", retry), null).get("status"))
+                .isEqualTo("RESUMED");
         assertThat(succeededOutput(retry).get("offerId").asText()).isEqualTo(QuoteKeys.offerId(beta));
         assertThat(outboxOf(quoteId, QuoteEvents.INSURER_QUOTE_REQUESTED)).as("no new request").hasSize(2);
 
@@ -798,13 +809,15 @@ class QuoteFunctionsFlociIT {
         assertThat(execution(task).status()).isEqualTo(ExecutionStatus.RUNNING);
 
         waiterReconciler.resumeStale(Instant.now());
-        assertThat(waiter(workRef).get("status").s()).as("younger than resumingRetryAfterSeconds").isEqualTo("RESUMING");
+        assertThat(waiter(workRef).get("status").s()).as("younger than resumingRetryAfterSeconds")
+                .isEqualTo("RESUMING");
         waiterReconciler.resumeStale(Instant.now().plusSeconds(60));
 
         assertThat(succeededOutput(task).get("status").asText()).isEqualTo("QUOTED");
         assertThat(waiter(workRef).get("status").s()).isEqualTo("DONE");
         assertThat(waiter(workRef)).doesNotContainKey("gsi2pk");
-        assertThat(outboxOf(quoteId, QuoteEvents.INSURER_QUOTE_REQUESTED)).as("no new request to the insurer").hasSize(1);
+        assertThat(outboxOf(quoteId, QuoteEvents.INSURER_QUOTE_REQUESTED)).as("no new request to the insurer")
+                .hasSize(1);
         assertThat(offers(quoteId)).hasSize(1);
         assertThat(resumer.handle(body)).as("the redelivered message").isEqualTo(ResultResumer.Disposition.DISCARDED);
         assertThat(offers(quoteId)).hasSize(1);
@@ -830,7 +843,8 @@ class QuoteFunctionsFlociIT {
         JsonNode completed = outboxDetail(QuoteEvents.completedEventId(quoteId, 1));
         assertThat(completed.get("outcome").asText()).isEqualTo("PARTIAL");
         assertThat(completed.get("offerCount").asInt()).isEqualTo(1);
-        Map<String, AttributeValue> issue = issue(QuoteIssues.Type.WORKFLOW_FAILED, QuoteIssues.versionTarget(quoteId, 1));
+        Map<String, AttributeValue> issue = issue(QuoteIssues.Type.WORKFLOW_FAILED,
+                QuoteIssues.versionTarget(quoteId, 1));
         assertThat(issue.get("type").s()).as("the item type (ADR 0015)").isEqualTo("ISSUE");
         assertThat(issue.get("issueType").s()).isEqualTo("WORKFLOW_FAILED");
         assertThat(issue.get("status").s()).isEqualTo("OPEN");
@@ -872,7 +886,8 @@ class QuoteFunctionsFlociIT {
 
         assertThat(version(waiting).get("outcome").s()).isEqualTo("TECHNICAL_FAILURE");
         assertThat(version(waiting).get("outcomeReason").s()).isEqualTo("ENRICHMENT_FAILED");
-        assertThat(issue(QuoteIssues.Type.WORKFLOW_FAILED, QuoteIssues.versionTarget(waiting, 1)).get("safeSummary").s())
+        assertThat(
+                issue(QuoteIssues.Type.WORKFLOW_FAILED, QuoteIssues.versionTarget(waiting, 1)).get("safeSummary").s())
                 .contains("TIMED_OUT");
         assertThat(version(early).get("outcome").s()).isEqualTo("TECHNICAL_FAILURE");
         assertThat(version(early).get("outcomeReason").s()).isEqualTo("WORKFLOW_FAILED");
@@ -893,13 +908,15 @@ class QuoteFunctionsFlociIT {
         QuoteFixtures.createQuote(dynamoDb, quoteId, QuoteFixtures.snapshot(Usage.PERSONAL, 2021, false, "2012-03-15"),
                 Instant.now().minusSeconds(600));
         dynamoDb.updateItem(builder -> builder.tableName(FlociResource.TABLE)
-                .key(Map.of("pk", AttributeValue.fromS(QuoteKeys.quotePk(quoteId)), "sk", AttributeValue.fromS("V#0001")))
+                .key(Map.of("pk", AttributeValue.fromS(QuoteKeys.quotePk(quoteId)), "sk",
+                        AttributeValue.fromS("V#0001")))
                 .updateExpression("SET phase = :quoting")
                 .expressionAttributeValues(Map.of(":quoting", AttributeValue.fromS("QUOTING"))));
 
         versionReconciler.reconcile(Instant.now());
 
-        Map<String, AttributeValue> stuck = issue(QuoteIssues.Type.STUCK_VERSION, QuoteIssues.versionTarget(quoteId, 1));
+        Map<String, AttributeValue> stuck = issue(QuoteIssues.Type.STUCK_VERSION,
+                QuoteIssues.versionTarget(quoteId, 1));
         assertThat(stuck.get("status").s()).isEqualTo("OPEN");
         assertThat(stuck.get("safeSummary").s()).contains("MISSING");
         assertThat(stuck.get("revision").n()).isEqualTo("1");
@@ -922,7 +939,8 @@ class QuoteFunctionsFlociIT {
         QuoteTable refreshFails = new QuoteTable(dynamoDb, config, objectMapper) {
             @Override
             void refreshSummary(String quoteId, int version, Instant now) {
-                // NOTE: o UpdateItem do resumo falha depois do commit da consolidação e só fica no log
+                // NOTE: o UpdateItem do resumo falha depois do commit da consolidação e só fica
+                // no log
             }
         };
 
@@ -975,7 +993,8 @@ class QuoteFunctionsFlociIT {
         assertThatThrownBy(() -> crashing.handle(QuoteFixtures.insurerResult(poison.value(), poisonQuote, "alpha",
                 "QUOTED", QuoteFixtures.insurerResultEventId(poison.value())))).isInstanceOf(SdkClientException.class);
         updateWaiter(poison, "SET tokenCiphertext = :unreadable, gsi2sk = :oldest", Map.of(
-                ":unreadable", AttributeValue.fromS("unreadable"), ":oldest", AttributeValue.fromS("2000-01-01T00:00:00Z")));
+                ":unreadable", AttributeValue.fromS("unreadable"), ":oldest",
+                AttributeValue.fromS("2000-01-01T00:00:00Z")));
         String quoteId = quoteReadyToQuote(Usage.COMMERCIAL);
         WorkRef workRef = insurerRef(quoteId, "alpha");
         Task task = newTask();
@@ -1001,7 +1020,8 @@ class QuoteFunctionsFlociIT {
         QuoteFixtures.createQuote(dynamoDb, poisonQuote, QuoteFixtures.snapshot(Usage.PERSONAL, 2021, false,
                 "2012-03-15"), Instant.now().minusSeconds(900));
         dynamoDb.updateItem(builder -> builder.tableName(FlociResource.TABLE)
-                .key(Map.of("pk", AttributeValue.fromS(QuoteKeys.quotePk(poisonQuote)), "sk", AttributeValue.fromS("V#0001")))
+                .key(Map.of("pk", AttributeValue.fromS(QuoteKeys.quotePk(poisonQuote)), "sk",
+                        AttributeValue.fromS("V#0001")))
                 .updateExpression("SET version = :outOfRange, gsi2sk = :oldest")
                 .expressionAttributeValues(Map.of(":outOfRange", AttributeValue.fromN("10000"),
                         ":oldest", AttributeValue.fromS("2000-01-01T00:00:00Z"))));
@@ -1047,7 +1067,8 @@ class QuoteFunctionsFlociIT {
         dispatch.handleRequest(insurerRequest(quoteId, task), null);
         String eventId = QuoteFixtures.insurerResultEventId(workRef.value());
         String body = QuoteFixtures.insurerResult(workRef.value(), quoteId, "alpha", "QUOTED", eventId);
-        // NOTE: o resume grava o resultado e cai antes do SendTaskSuccess; a execução termina sem recebê-lo
+        // NOTE: o resume grava o resultado e cai antes do SendTaskSuccess; a execução
+        // termina sem recebê-lo
         ResultResumer crashing = new ResultResumer(table, cipher, unreachableSfn(), objectMapper, Clock.systemUTC());
         assertThatThrownBy(() -> crashing.handle(body)).isInstanceOf(SdkClientException.class);
         assertThat(waiter(workRef).get("status").s()).isEqualTo("RESUMING");
@@ -1100,7 +1121,8 @@ class QuoteFunctionsFlociIT {
     private void updateWaiter(WorkRef workRef, String expression, Map<String, AttributeValue> values) {
         Map<String, String> names = expression.contains("#status") ? Map.of("#status", "status") : null;
         dynamoDb.updateItem(builder -> builder.tableName(FlociResource.TABLE)
-                .key(Map.of("pk", AttributeValue.fromS(QuoteKeys.waiterPk(workRef)), "sk", AttributeValue.fromS("META")))
+                .key(Map.of("pk", AttributeValue.fromS(QuoteKeys.waiterPk(workRef)), "sk",
+                        AttributeValue.fromS("META")))
                 .updateExpression(expression)
                 .expressionAttributeNames(names)
                 .expressionAttributeValues(values));
@@ -1116,9 +1138,11 @@ class QuoteFunctionsFlociIT {
         String body = QuoteFixtures.insurerResult(workRef.value(), quoteId, "alpha", "QUOTED", eventId);
         assertThat(resumer.handle(body)).isEqualTo(ResultResumer.Disposition.RESUMED);
         assertThat(succeededOutput(task).get("status").asText()).isEqualTo("QUOTED");
-        // NOTE: o resume cai depois do SendTaskSuccess aceito e antes do DONE; a reentrega marca EXPIRED (§8)
+        // NOTE: o resume cai depois do SendTaskSuccess aceito e antes do DONE; a
+        // reentrega marca EXPIRED (§8)
         dynamoDb.updateItem(builder -> builder.tableName(FlociResource.TABLE)
-                .key(Map.of("pk", AttributeValue.fromS(QuoteKeys.waiterPk(workRef)), "sk", AttributeValue.fromS("META")))
+                .key(Map.of("pk", AttributeValue.fromS(QuoteKeys.waiterPk(workRef)), "sk",
+                        AttributeValue.fromS("META")))
                 .updateExpression("SET #status = :resuming, gsi2pk = :index, gsi2sk = :now")
                 .expressionAttributeNames(Map.of("#status", "status"))
                 .expressionAttributeValues(Map.of(":resuming", AttributeValue.fromS("RESUMING"),
@@ -1145,7 +1169,8 @@ class QuoteFunctionsFlociIT {
         String eventId = QuoteFixtures.insurerResultEventId(workRef.value());
         String body = QuoteFixtures.insurerResult(workRef.value(), quoteId, "alpha", "QUOTED", eventId);
         sqs.sendMessage(builder -> builder.queueUrl(resultsQueueUrl).messageBody(body));
-        // NOTE: o consumidor falha sem apagar; o recebimento seguinte passa do maxReceiveCount e a RedrivePolicy move
+        // NOTE: o consumidor falha sem apagar; o recebimento seguinte passa do
+        // maxReceiveCount e a RedrivePolicy move
         await().atMost(Duration.ofSeconds(30)).pollInterval(Duration.ofSeconds(1)).until(() -> {
             sqs.receiveMessage(builder -> builder.queueUrl(resultsQueueUrl).maxNumberOfMessages(10).waitTimeSeconds(0));
             return visibleMessages(deadLetterQueueUrl) > 0;
@@ -1188,7 +1213,8 @@ class QuoteFunctionsFlociIT {
         step("consolidate", quoteId);
         sfn.stopExecution(builder -> builder.executionArn(task.executionArn()));
         dynamoDb.updateItem(builder -> builder.tableName(FlociResource.TABLE)
-                .key(Map.of("pk", AttributeValue.fromS(QuoteKeys.quotePk(quoteId)), "sk", AttributeValue.fromS("V#0001")))
+                .key(Map.of("pk", AttributeValue.fromS(QuoteKeys.quotePk(quoteId)), "sk",
+                        AttributeValue.fromS("V#0001")))
                 .updateExpression("SET deadlineAt = :past")
                 .expressionAttributeValues(Map.of(":past", AttributeValue.fromS(Instant.now().minusSeconds(60)
                         .toString()))));
@@ -1246,7 +1272,8 @@ class QuoteFunctionsFlociIT {
         assertThat(issue).as("only the quote's own issues are reviewed").doesNotContainKey("gsi2pk");
         assertThat(item(QuoteKeys.queryRefPk(queryId), "META").get("organizationId").s()).isEqualTo("org-acme");
 
-        assertThat(issueProjectorLogic.handle(raised)).as("the same event").isEqualTo(IssueProjector.Disposition.DISCARDED);
+        assertThat(issueProjectorLogic.handle(raised)).as("the same event")
+                .isEqualTo(IssueProjector.Disposition.DISCARDED);
         assertThat(issueProjectorLogic.handle(updated)).isEqualTo(IssueProjector.Disposition.PROJECTED);
         Map<String, AttributeValue> resolved = item(QuoteKeys.issuePk(issueId), "META");
         assertThat(resolved.get("status").s()).isEqualTo("RESOLVED");
@@ -1255,7 +1282,8 @@ class QuoteFunctionsFlociIT {
         assertThat(resolved.get("gsi1sk").s()).isNotEqualTo(issue.get("gsi1sk").s());
 
         String republished = withEventId(raised, UUID.randomUUID().toString());
-        assertThat(issueProjectorLogic.handle(republished)).as("an older revision").isEqualTo(IssueProjector.Disposition.DISCARDED);
+        assertThat(issueProjectorLogic.handle(republished)).as("an older revision")
+                .isEqualTo(IssueProjector.Disposition.DISCARDED);
         assertThat(item(QuoteKeys.issuePk(issueId), "META").get("status").s()).isEqualTo("RESOLVED");
     }
 
@@ -1328,7 +1356,8 @@ class QuoteFunctionsFlociIT {
                 .queueUrl(issuesQueueUrl).maxNumberOfMessages(1).waitTimeSeconds(1).messageAttributeNames("All"))
                 .messages().stream().findFirst().orElse(null), message -> message != null);
         assertThat(redriven.messageAttributes().get("dlqAttempt").stringValue()).isEqualTo("2");
-        assertThat(issueProjector.handleRequest(QuoteFixtures.sqs(redriven.body()), null).batchItemFailures()).isEmpty();
+        assertThat(issueProjector.handleRequest(QuoteFixtures.sqs(redriven.body()), null).batchItemFailures())
+                .isEmpty();
         sqs.deleteMessage(builder -> builder.queueUrl(issuesQueueUrl).receiptHandle(redriven.receiptHandle()));
         assertThat(item(QuoteKeys.issuePk(issueId), "META").get("issueType").s()).isEqualTo("UNKNOWN_QUERY");
 
@@ -1355,7 +1384,8 @@ class QuoteFunctionsFlociIT {
         QuoteFixtures.createQuote(dynamoDb, quoteId, QuoteFixtures.snapshot(Usage.PERSONAL, 2021, false, "2012-03-15"),
                 Instant.now().minusSeconds(600));
         versionReconciler.reconcile(Instant.now());
-        Map<String, AttributeValue> stuck = issue(QuoteIssues.Type.STUCK_VERSION, QuoteIssues.versionTarget(quoteId, 1));
+        Map<String, AttributeValue> stuck = issue(QuoteIssues.Type.STUCK_VERSION,
+                QuoteIssues.versionTarget(quoteId, 1));
         assertThat(stuck.get("gsi2pk").s()).isEqualTo("ISSUE_OPEN");
 
         issueReviewer.review(Instant.now());
@@ -1363,16 +1393,19 @@ class QuoteFunctionsFlociIT {
                 .as("the version is still active").isEqualTo("OPEN");
 
         dynamoDb.updateItem(builder -> builder.tableName(FlociResource.TABLE)
-                .key(Map.of("pk", AttributeValue.fromS(QuoteKeys.quotePk(quoteId)), "sk", AttributeValue.fromS("V#0001")))
+                .key(Map.of("pk", AttributeValue.fromS(QuoteKeys.quotePk(quoteId)), "sk",
+                        AttributeValue.fromS("V#0001")))
                 .updateExpression("SET phase = :terminal, outcome = :outcome REMOVE gsi2pk, gsi2sk")
                 .expressionAttributeValues(Map.of(":terminal", AttributeValue.fromS("TERMINAL"),
                         ":outcome", AttributeValue.fromS("TECHNICAL_FAILURE"))));
         Instant reviewedAt = Instant.now();
         assertThat(issueReviewer.review(reviewedAt).get("resolved")).isPositive();
 
-        Map<String, AttributeValue> resolved = issue(QuoteIssues.Type.STUCK_VERSION, QuoteIssues.versionTarget(quoteId, 1));
+        Map<String, AttributeValue> resolved = issue(QuoteIssues.Type.STUCK_VERSION,
+                QuoteIssues.versionTarget(quoteId, 1));
         assertThat(resolved.get("status").s()).isEqualTo("RESOLVED");
-        assertThat(resolved.get("revision").n()).isEqualTo(Long.toString(Long.parseLong(stuck.get("revision").n()) + 1));
+        assertThat(resolved.get("revision").n())
+                .isEqualTo(Long.toString(Long.parseLong(stuck.get("revision").n()) + 1));
         assertThat(resolved.get("firstSeenAt").s()).isEqualTo(stuck.get("firstSeenAt").s());
         assertThat(resolved.get("lastSeenAt").s()).isEqualTo(reviewedAt.toString());
         assertThat(resolved.get("gsi1sk").s()).isEqualTo(reviewedAt + "#" + resolved.get("issueId").s());
@@ -1440,7 +1473,8 @@ class QuoteFunctionsFlociIT {
 
     private void setVersionPhase(String quoteId, String phase) {
         dynamoDb.updateItem(builder -> builder.tableName(FlociResource.TABLE)
-                .key(Map.of("pk", AttributeValue.fromS(QuoteKeys.quotePk(quoteId)), "sk", AttributeValue.fromS("V#0001")))
+                .key(Map.of("pk", AttributeValue.fromS(QuoteKeys.quotePk(quoteId)), "sk",
+                        AttributeValue.fromS("V#0001")))
                 .updateExpression("SET phase = :phase")
                 .expressionAttributeValues(Map.of(":phase", AttributeValue.fromS(phase))));
     }
@@ -1450,7 +1484,8 @@ class QuoteFunctionsFlociIT {
     }
 
     /**
-     * Exemplo do AsyncAPI da provider, pelo nome ou o primeiro, com os campos trocados para o teste não colidir
+     * Exemplo do AsyncAPI da provider, pelo nome ou o primeiro, com os campos
+     * trocados para o teste não colidir
      * com outro.
      */
     private String providerEvent(String detailType, String example, Map<String, String> overrides) throws Exception {
@@ -1489,17 +1524,21 @@ class QuoteFunctionsFlociIT {
         if (expected == ExecutionStatus.ABORTED) {
             sfn.stopExecution(builder -> builder.executionArn(executionArn));
         }
-        await().atMost(Duration.ofSeconds(20)).until(() ->
-                sfn.describeExecution(builder -> builder.executionArn(executionArn)).status() == expected);
+        await().atMost(Duration.ofSeconds(20))
+                .until(() -> sfn.describeExecution(builder -> builder.executionArn(executionArn)).status() == expected);
         dynamoDb.updateItem(builder -> builder.tableName(FlociResource.TABLE)
-                .key(Map.of("pk", AttributeValue.fromS(QuoteKeys.quotePk(quoteId)), "sk", AttributeValue.fromS("V#0001")))
+                .key(Map.of("pk", AttributeValue.fromS(QuoteKeys.quotePk(quoteId)), "sk",
+                        AttributeValue.fromS("V#0001")))
                 .updateExpression("SET executionArn = :arn")
                 .expressionAttributeValues(Map.of(":arn", AttributeValue.fromS(executionArn))));
     }
 
-    /** Step Functions que não responde, como o {@code resume} que cai depois do commit e antes da retomada. */
+    /**
+     * Step Functions que não responde, como o {@code resume} que cai depois do
+     * commit e antes da retomada.
+     */
     private static SfnClient unreachableSfn() {
-        return (SfnClient) Proxy.newProxyInstance(SfnClient.class.getClassLoader(), new Class<?>[] {SfnClient.class},
+        return (SfnClient) Proxy.newProxyInstance(SfnClient.class.getClassLoader(), new Class<?>[] { SfnClient.class },
                 (proxy, method, args) -> {
                     if ("sendTaskSuccess".equals(method.getName())) {
                         throw SdkClientException.create("connection reset after the commit");
@@ -1525,7 +1564,10 @@ class QuoteFunctionsFlociIT {
         return quoteId;
     }
 
-    /** Cotação elegível, na fase {@code ENRICHING}, pronta para o pedido de enriquecimento. */
+    /**
+     * Cotação elegível, na fase {@code ENRICHING}, pronta para o pedido de
+     * enriquecimento.
+     */
     private String eligibleQuote(Usage usage) throws Exception {
         String quoteId = newQuote(usage, 2021, false, "2012-03-15");
         step("load-snapshot", quoteId);
@@ -1533,7 +1575,10 @@ class QuoteFunctionsFlociIT {
         return quoteId;
     }
 
-    /** Leva a cotação até o {@code select-insurers}, com o enriquecimento resolvido por um token real. */
+    /**
+     * Leva a cotação até o {@code select-insurers}, com o enriquecimento resolvido
+     * por um token real.
+     */
     private String quoteReadyToQuote(Usage usage) throws Exception {
         String quoteId = newQuote(usage, 2021, false, "2012-03-15");
         step("load-snapshot", quoteId);
@@ -1570,7 +1615,10 @@ class QuoteFunctionsFlociIT {
         return WorkRef.of(quoteId, 1, WorkRef.Kind.INSURER, insurerId);
     }
 
-    /** Um item do Map por seguradora, cada um com o próprio task token, como a máquina os despacha. */
+    /**
+     * Um item do Map por seguradora, cada um com o próprio task token, como a
+     * máquina os despacha.
+     */
     private Map<String, Task> dispatchInsurers(String quoteId, String... insurerIds) {
         Map<String, Task> tasks = new HashMap<>();
         for (String insurerId : insurerIds) {
@@ -1582,11 +1630,15 @@ class QuoteFunctionsFlociIT {
         return tasks;
     }
 
-    /** Resultado da seguradora pela fila {@code results}, com o {@code eventId} determinístico da provider. */
+    /**
+     * Resultado da seguradora pela fila {@code results}, com o {@code eventId}
+     * determinístico da provider.
+     */
     private void resumeInsurer(String quoteId, String insurerId, String status) {
         WorkRef workRef = insurerRef(quoteId, insurerId);
         LambdaEvents.BatchResponse response = resume.handleRequest(QuoteFixtures.sqs(QuoteFixtures.insurerResult(
-                workRef.value(), quoteId, insurerId, status, QuoteFixtures.insurerResultEventId(workRef.value()))), null);
+                workRef.value(), quoteId, insurerId, status, QuoteFixtures.insurerResultEventId(workRef.value()))),
+                null);
         assertThat(response.batchItemFailures()).isEmpty();
         assertThat(result(quoteId, insurerId).get("status").s()).isEqualTo(status);
     }
@@ -1598,7 +1650,9 @@ class QuoteFunctionsFlociIT {
     private record Task(String token, String executionArn) {
     }
 
-    /** Inicia a {@code token-machine} e lê o task token real que ela envia à fila. */
+    /**
+     * Inicia a {@code token-machine} e lê o task token real que ela envia à fila.
+     */
     private Task newTask() {
         String executionArn = sfn.startExecution(builder -> builder.stateMachineArn(tokenMachineArn).input("{}"))
                 .executionArn();
@@ -1647,7 +1701,8 @@ class QuoteFunctionsFlociIT {
                 .filterExpression("#type = :waiter AND quoteId = :quoteId")
                 .expressionAttributeNames(Map.of("#type", "type"))
                 .expressionAttributeValues(Map.of(":waiter", AttributeValue.fromS("WAITER"),
-                        ":quoteId", AttributeValue.fromS(quoteId)))).items()).isEmpty();
+                        ":quoteId", AttributeValue.fromS(quoteId))))
+                .items()).isEmpty();
         assertThat(outboxOf(quoteId, QuoteEvents.QUOTE_COMPLETED)).hasSize(1);
     }
 
@@ -1708,7 +1763,8 @@ class QuoteFunctionsFlociIT {
         return dynamoDb.query(builder -> builder.tableName(FlociResource.TABLE).consistentRead(true)
                 .keyConditionExpression("pk = :pk AND begins_with(sk, :prefix)")
                 .expressionAttributeValues(Map.of(":pk", AttributeValue.fromS(QuoteKeys.quotePk(quoteId)),
-                        ":prefix", AttributeValue.fromS(prefix)))).items();
+                        ":prefix", AttributeValue.fromS(prefix))))
+                .items();
     }
 
     private Map<String, AttributeValue> version(String quoteId) {

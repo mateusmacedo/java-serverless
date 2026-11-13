@@ -9,7 +9,8 @@ import org.jboss.resteasy.reactive.server.ServerRequestFilter;
 import org.jboss.resteasy.reactive.server.ServerResponseFilter;
 
 /**
- * {@code correlationId} da requisição: o header {@code X-Correlation-Id} do cliente, quando bem formado,
+ * {@code correlationId} da requisição: o header {@code X-Correlation-Id} do
+ * cliente, quando bem formado,
  * ou um UUID novo. Vai nos erros, no header da resposta e nos logs.
  */
 @RequestScoped

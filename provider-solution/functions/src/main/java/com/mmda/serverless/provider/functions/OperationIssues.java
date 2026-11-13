@@ -28,10 +28,14 @@ import software.amazon.awssdk.services.dynamodb.model.ConditionalCheckFailedExce
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItem;
 
 /**
- * Ocorrências operacionais da provider ({@code ISSUE#}, desenho, §5): cada mudança grava uma nova revisão, com
- * {@code firstSeenAt}, {@code lastSeenAt} e {@code revision}, e o {@code OperationIssueRaised} ou
- * {@code OperationIssueUpdated} no outbox, na mesma transação e condicionada à revisão lida. As ocorrências que
- * o reconciler resolve sozinho ficam no índice {@code ISSUE_OPEN} enquanto abertas.
+ * Ocorrências operacionais da provider ({@code ISSUE#}, desenho, §5): cada
+ * mudança grava uma nova revisão, com
+ * {@code firstSeenAt}, {@code lastSeenAt} e {@code revision}, e o
+ * {@code OperationIssueRaised} ou
+ * {@code OperationIssueUpdated} no outbox, na mesma transação e condicionada à
+ * revisão lida. As ocorrências que
+ * o reconciler resolve sozinho ficam no índice {@code ISSUE_OPEN} enquanto
+ * abertas.
  */
 @Component
 class OperationIssues {
@@ -46,7 +50,7 @@ class OperationIssues {
     private final Clock clock;
 
     OperationIssues(DynamoDbClient dynamoDb, Transactions transactions, OutboxStore outbox,
-                    ProviderProperties properties, Clock clock) {
+            ProviderProperties properties, Clock clock) {
         this.dynamoDb = dynamoDb;
         this.transactions = transactions;
         this.outbox = outbox;
@@ -55,11 +59,12 @@ class OperationIssues {
     }
 
     /**
-     * Problema observado. {@code target} identifica a ocorrência com o tipo; {@code organizationId},
+     * Problema observado. {@code target} identifica a ocorrência com o tipo;
+     * {@code organizationId},
      * {@code queryId} e {@code quoteId} são opcionais.
      */
     record Observation(IssueType type, String target, String organizationId, String queryId, String quoteId,
-                       String safeSummary) {
+            String safeSummary) {
 
         String issueId() {
             return Identities.issueId(type, target);
@@ -71,8 +76,10 @@ class OperationIssues {
     }
 
     /**
-     * Abre a ocorrência, ou reabre a resolvida. Uma ocorrência aberta só muda com {@code recurrence}, como outra
-     * mensagem descartada do mesmo pedido. Devolve {@code true} quando gravou uma revisão.
+     * Abre a ocorrência, ou reabre a resolvida. Uma ocorrência aberta só muda com
+     * {@code recurrence}, como outra
+     * mensagem descartada do mesmo pedido. Devolve {@code true} quando gravou uma
+     * revisão.
      */
     boolean raise(Observation observation, boolean recurrence) {
         return change(observation, IssueStatus.OPEN, recurrence);
@@ -84,8 +91,10 @@ class OperationIssues {
     }
 
     /**
-     * Leva a ocorrência que continua aberta para o fim do índice {@code ISSUE_OPEN}. WHY: o índice é lido em ordem e
-     * com limite; sem isso, as que nunca se resolvem sozinhas ocupariam o lote e as outras não seriam revistas.
+     * Leva a ocorrência que continua aberta para o fim do índice
+     * {@code ISSUE_OPEN}. WHY: o índice é lido em ordem e
+     * com limite; sem isso, as que nunca se resolvem sozinhas ocupariam o lote e as
+     * outras não seriam revistas.
      */
     void deferReview(String issueId, Instant now) {
         try {
@@ -101,14 +110,17 @@ class OperationIssues {
         }
     }
 
-    /** Ocorrências abertas dos tipos que se resolvem sozinhos, as revistas há mais tempo primeiro. */
+    /**
+     * Ocorrências abertas dos tipos que se resolvem sozinhos, as revistas há mais
+     * tempo primeiro.
+     */
     List<OpenIssue> openSelfResolving(int limit) {
         return dynamoDb.query(builder -> builder
-                        .tableName(properties.tableName())
-                        .indexName(GSI2)
-                        .keyConditionExpression("gsi2pk = :open")
-                        .expressionAttributeValues(Map.of(":open", s(Items.ISSUE_OPEN)))
-                        .limit(limit))
+                .tableName(properties.tableName())
+                .indexName(GSI2)
+                .keyConditionExpression("gsi2pk = :open")
+                .expressionAttributeValues(Map.of(":open", s(Items.ISSUE_OPEN)))
+                .limit(limit))
                 .items().stream()
                 .map(item -> new OpenIssue(
                         Items.string(item, "issueId").orElseThrow(),
@@ -120,9 +132,9 @@ class OperationIssues {
 
     Optional<OperationIssue.State> load(String issueId) {
         Map<String, AttributeValue> item = dynamoDb.getItem(builder -> builder
-                        .tableName(properties.tableName())
-                        .consistentRead(true)
-                        .key(Items.key(Items.issuePk(issueId), META)))
+                .tableName(properties.tableName())
+                .consistentRead(true)
+                .key(Items.key(Items.issuePk(issueId), META)))
                 .item();
         if (item.isEmpty()) {
             return Optional.empty();
@@ -165,7 +177,7 @@ class OperationIssues {
     }
 
     private static OperationIssue.State next(Observation observation, Optional<OperationIssue.State> current,
-                                             IssueStatus status, Instant now) {
+            IssueStatus status, Instant now) {
         String seenAt = Timestamps.format(now);
         if (current.isEmpty()) {
             return new OperationIssue.State(observation.issueId(), observation.organizationId(), observation.type(),

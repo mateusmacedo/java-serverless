@@ -30,8 +30,10 @@ import software.amazon.awssdk.services.sfn.model.HistoryEvent;
 import software.amazon.awssdk.services.sfn.model.HistoryEventType;
 
 /**
- * Waiters que o {@code reconciler} acompanha (§8 e §9 do desenho): retoma os parados em {@code RESUMING} com o
- * {@code resumePayload} já gravado (T13), sem pedido novo à provider, e confere no histórico da execução os
+ * Waiters que o {@code reconciler} acompanha (§8 e §9 do desenho): retoma os
+ * parados em {@code RESUMING} com o
+ * {@code resumePayload} já gravado (T13), sem pedido novo à provider, e confere
+ * no histórico da execução os
  * {@code EXPIRED} com resultado gravado antes de abrir {@code TASK_EXPIRED}.
  */
 @ApplicationScoped
@@ -41,7 +43,8 @@ public class WaiterReconciler {
     private static final String WAITER_PREFIX = "WAITER#";
     private static final int HISTORY_PAGE_SIZE = 1000;
     private static final Set<HistoryEventType> ENDED_EXECUTION = EnumSet.of(HistoryEventType.EXECUTION_SUCCEEDED,
-            HistoryEventType.EXECUTION_FAILED, HistoryEventType.EXECUTION_ABORTED, HistoryEventType.EXECUTION_TIMED_OUT);
+            HistoryEventType.EXECUTION_FAILED, HistoryEventType.EXECUTION_ABORTED,
+            HistoryEventType.EXECUTION_TIMED_OUT);
 
     private final DynamoDbClient dynamoDb;
     private final QuoteTable table;
@@ -63,8 +66,10 @@ public class WaiterReconciler {
     }
 
     /**
-     * Retoma o waiter {@code RESUMING} mais antigo que {@code resumingRetryAfterSeconds}: o {@code resume} gravou
-     * o resultado e caiu antes do {@code SendTaskSuccess}, ou a mensagem foi para a DLQ. Devolve quantos
+     * Retoma o waiter {@code RESUMING} mais antigo que
+     * {@code resumingRetryAfterSeconds}: o {@code resume} gravou
+     * o resultado e caiu antes do {@code SendTaskSuccess}, ou a mensagem foi para a
+     * DLQ. Devolve quantos
      * retomou. A falha de um waiter fica no log e não impede os seguintes.
      */
     int resumeStale(Instant now) {
@@ -95,9 +100,12 @@ public class WaiterReconciler {
     }
 
     /**
-     * Confere os waiters {@code EXPIRED} ainda no índice {@code WAITER_EXPIRED} (§3). Sem resultado gravado, é o
-     * timeout normal da etapa e o waiter só sai do índice. Com resultado gravado, o histórico da execução diz se
-     * ele chegou a ela; se a execução encerrou sem recebê-lo, abre {@code TASK_EXPIRED} na mesma transação que
+     * Confere os waiters {@code EXPIRED} ainda no índice {@code WAITER_EXPIRED}
+     * (§3). Sem resultado gravado, é o
+     * timeout normal da etapa e o waiter só sai do índice. Com resultado gravado, o
+     * histórico da execução diz se
+     * ele chegou a ela; se a execução encerrou sem recebê-lo, abre
+     * {@code TASK_EXPIRED} na mesma transação que
      * tira o waiter do índice. Devolve quantas ocorrências abriu.
      */
     int reviewExpired(Instant now) {
@@ -147,7 +155,8 @@ public class WaiterReconciler {
     }
 
     /**
-     * Lê o histórico da execução do waiter. Sem {@code executionArn}, ou com a execução apagada, não há como provar
+     * Lê o histórico da execução do waiter. Sem {@code executionArn}, ou com a
+     * execução apagada, não há como provar
      * a entrega, e a execução conta como encerrada.
      */
     private Reconciliation.ExpiredTaskReview history(String executionArn, String resumePayload) {
@@ -173,9 +182,12 @@ public class WaiterReconciler {
     }
 
     /**
-     * A saída de um {@code TaskSucceeded} carrega o resultado gravado: é o {@code resumePayload} entregue pelo
-     * {@code SendTaskSuccess} ou o {@code Payload} do passo de timeout que usou o resultado já gravado (§8). Na
-     * seguradora, bastam a seguradora e a situação, porque o passo de timeout devolve só esses campos.
+     * A saída de um {@code TaskSucceeded} carrega o resultado gravado: é o
+     * {@code resumePayload} entregue pelo
+     * {@code SendTaskSuccess} ou o {@code Payload} do passo de timeout que usou o
+     * resultado já gravado (§8). Na
+     * seguradora, bastam a seguradora e a situação, porque o passo de timeout
+     * devolve só esses campos.
      */
     static boolean carries(JsonNode output, JsonNode expected) {
         return matches(output, expected) || matches(output.path("Payload"), expected);
@@ -212,7 +224,10 @@ public class WaiterReconciler {
         }
     }
 
-    /** {@code resultEventId} gravado com o resultado: no {@code RESULT} da seguradora ou na evidência usada. */
+    /**
+     * {@code resultEventId} gravado com o resultado: no {@code RESULT} da
+     * seguradora ou na evidência usada.
+     */
     private String recordedResultEventId(WorkRef workRef, Map<String, AttributeValue> waiter) {
         String quoteId = Attr.string(waiter, "quoteId");
         int version = (int) Attr.number(waiter, "version", 0);

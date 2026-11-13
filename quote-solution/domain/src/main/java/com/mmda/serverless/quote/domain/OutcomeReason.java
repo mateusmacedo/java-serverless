@@ -1,7 +1,8 @@
 package com.mmda.serverless.quote.domain;
 
 /**
- * Motivo do {@link Outcome} agregado, enum fechado do contrato. Nulo em {@link Outcome#COMPLETED} e
+ * Motivo do {@link Outcome} agregado, enum fechado do contrato. Nulo em
+ * {@link Outcome#COMPLETED} e
  * {@link Outcome#PARTIAL}.
  */
 public enum OutcomeReason {

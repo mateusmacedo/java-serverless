@@ -10,8 +10,10 @@ import jakarta.json.JsonString;
 import org.eclipse.microprofile.jwt.JsonWebToken;
 
 /**
- * Aceita só access tokens do app client da stack (§11 do desenho). WHY: o access token do Cognito não tem
- * {@code aud}, e um ID token do mesmo pool passaria na assinatura; {@code token_use} e {@code client_id}
+ * Aceita só access tokens do app client da stack (§11 do desenho). WHY: o
+ * access token do Cognito não tem
+ * {@code aud}, e um ID token do mesmo pool passaria na assinatura;
+ * {@code token_use} e {@code client_id}
  * fecham as duas brechas.
  */
 @ApplicationScoped
@@ -28,8 +30,10 @@ public class CognitoAccessTokenAugmentor implements SecurityIdentityAugmentor {
         if (identity.isAnonymous() || !(identity.getPrincipal() instanceof JsonWebToken token)) {
             return Uni.createFrom().item(identity);
         }
-        if (!"access".equals(claim(token, "token_use")) || !config.auth().clientId().equals(claim(token, "client_id"))) {
-            return Uni.createFrom().failure(new AuthenticationFailedException("token is not an access token of the app client"));
+        if (!"access".equals(claim(token, "token_use"))
+                || !config.auth().clientId().equals(claim(token, "client_id"))) {
+            return Uni.createFrom()
+                    .failure(new AuthenticationFailedException("token is not an access token of the app client"));
         }
         return Uni.createFrom().item(identity);
     }

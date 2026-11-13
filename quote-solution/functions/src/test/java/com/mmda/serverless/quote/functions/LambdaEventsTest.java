@@ -7,17 +7,22 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 
-/** Desserialização dos eventos de SQS e de DynamoDB Streams no formato que a Lambda recebe. */
+/**
+ * Desserialização dos eventos de SQS e de DynamoDB Streams no formato que a
+ * Lambda recebe.
+ */
 class LambdaEventsTest {
 
     private final ObjectMapper mapper = new ObjectMapper();
 
     @Test
     void readsAnSqsEventWithTheEventBridgeEnvelopeInTheBody() throws Exception {
-        LambdaEvents.SqsEvent event = mapper.readValue("""
-                {"Records":[{"messageId":"m-1","receiptHandle":"r","body":"{\\"detail-type\\":\\"InsurerResultRecorded\\"}",
-                  "attributes":{"ApproximateReceiveCount":"1"},"eventSource":"aws:sqs"}]}
-                """, LambdaEvents.SqsEvent.class);
+        LambdaEvents.SqsEvent event = mapper.readValue(
+                """
+                        {"Records":[{"messageId":"m-1","receiptHandle":"r","body":"{\\"detail-type\\":\\"InsurerResultRecorded\\"}",
+                          "attributes":{"ApproximateReceiveCount":"1"},"eventSource":"aws:sqs"}]}
+                        """,
+                LambdaEvents.SqsEvent.class);
 
         assertThat(event.records()).singleElement().satisfies(message -> {
             assertThat(message.messageId()).isEqualTo("m-1");

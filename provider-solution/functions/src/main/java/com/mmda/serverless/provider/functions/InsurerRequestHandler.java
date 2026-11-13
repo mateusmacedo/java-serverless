@@ -23,9 +23,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
- * Um {@code InsurerQuoteRequested} (§8): {@code QUERY}, {@code ATTEMPT} e quota antes do HTTP; evidência e
- * outbox {@code InsurerResultRecorded} depois, ou, na resposta {@code 202}, o encontro com o callback. A
- * reentrega relê a consulta e nunca repete uma chamada que pode ter chegado à seguradora.
+ * Um {@code InsurerQuoteRequested} (§8): {@code QUERY}, {@code ATTEMPT} e quota
+ * antes do HTTP; evidência e
+ * outbox {@code InsurerResultRecorded} depois, ou, na resposta {@code 202}, o
+ * encontro com o callback. A
+ * reentrega relê a consulta e nunca repete uma chamada que pode ter chegado à
+ * seguradora.
  */
 @Component
 class InsurerRequestHandler {
@@ -46,9 +49,9 @@ class InsurerRequestHandler {
     private final Metrics metrics;
 
     InsurerRequestHandler(QueryLedger ledger, ProviderClients clients, PendingCallbacks callbacks,
-                          RawResponses rawResponses, DelayedRedelivery redelivery, EventJson json,
-                          ProviderProperties properties, RetryPolicy retryPolicy, Clock clock, Sleeper sleeper,
-                          RandomGenerator jitter, Metrics metrics) {
+            RawResponses rawResponses, DelayedRedelivery redelivery, EventJson json,
+            ProviderProperties properties, RetryPolicy retryPolicy, Clock clock, Sleeper sleeper,
+            RandomGenerator jitter, Metrics metrics) {
         this.ledger = ledger;
         this.clients = clients;
         this.callbacks = callbacks;
@@ -90,7 +93,7 @@ class InsurerRequestHandler {
     }
 
     private void call(InsurerQuoteRequest request, String queryId, String path, int firstSequence,
-                      QueuedMessage message) {
+            QueuedMessage message) {
         int sequence = firstSequence;
         while (true) {
             ProviderExchange<InsurerReply> exchange = clients.requestQuote(path, queryId, request);
@@ -131,7 +134,7 @@ class InsurerRequestHandler {
     }
 
     private void conclude(InsurerQuoteRequest request, String queryId, int sequence, InsurerVerdict verdict,
-                          ProviderExchange<InsurerReply> exchange) {
+            ProviderExchange<InsurerReply> exchange) {
         Instant now = clock.instant();
         if (verdict instanceof InsurerVerdict.Unknown unknown) {
             Settlement.AttemptResult attempt = new Settlement.AttemptResult(sequence, "NO_RESPONSE", null,
@@ -166,17 +169,21 @@ class InsurerRequestHandler {
         QueryState state = outcome.status() == InsurerResultStatus.UNAVAILABLE
                 ? QueryState.FAILED
                 : QueryState.COMPLETED;
-        settle(request, queryId, null, state, attempt, evidence, Identities.attemptRef(queryId, sequence), outcome, now);
+        settle(request, queryId, null, state, attempt, evidence, Identities.attemptRef(queryId, sequence), outcome,
+                now);
     }
 
     /**
-     * Resposta {@code 202} (§8, passo 3): uma transação grava o {@code providerRequestId} na consulta e na
-     * tentativa; depois vem a metade do worker no {@code CORR#}. Ela roda mesmo se um callback com
-     * {@code clientReference} já concluiu a consulta, para marcar como processado o que chegou só com o
+     * Resposta {@code 202} (§8, passo 3): uma transação grava o
+     * {@code providerRequestId} na consulta e na
+     * tentativa; depois vem a metade do worker no {@code CORR#}. Ela roda mesmo se
+     * um callback com
+     * {@code clientReference} já concluiu a consulta, para marcar como processado o
+     * que chegou só com o
      * {@code providerRequestId}.
      */
     private void accepted(InsurerQuoteRequest request, String queryId, int sequence, String providerRequestId,
-                          Integer httpStatus, Instant now) {
+            Integer httpStatus, Instant now) {
         if (ledger.recordAccepted(queryId, sequence, providerRequestId, httpStatus, now)) {
             LOGGER.info("Insurer accepted the request: queryId={} insurerId={}", queryId, request.insurerId());
         } else {
@@ -187,8 +194,10 @@ class InsurerRequestHandler {
 
     private void unavailable(InsurerQuoteRequest request, String queryId, int lastSequence, String reasonCode) {
         Instant now = clock.instant();
-        settle(request, queryId, null, QueryState.FAILED, null, unavailableEvidence(queryId, lastSequence, reasonCode, now),
-                Identities.attemptRef(queryId, lastSequence), InsurerResultRecorded.Outcome.unavailable(reasonCode), now);
+        settle(request, queryId, null, QueryState.FAILED, null,
+                unavailableEvidence(queryId, lastSequence, reasonCode, now),
+                Identities.attemptRef(queryId, lastSequence), InsurerResultRecorded.Outcome.unavailable(reasonCode),
+                now);
     }
 
     private void concludeWithoutCall(InsurerQuoteRequest request, String queryId, String reasonCode, Instant now) {
@@ -198,9 +207,12 @@ class InsurerRequestHandler {
     }
 
     /**
-     * Reentrega pela tabela do §8: concluída ou {@code UNKNOWN} não faz nada; enquanto outra entrega pode estar
-     * viva, o pedido é adiado sem tocar a consulta; depois disso, com tentativa aberta, a consulta fica
-     * {@code UNKNOWN}; só com falhas antes do envio, segue com nova tentativa se couber no orçamento.
+     * Reentrega pela tabela do §8: concluída ou {@code UNKNOWN} não faz nada;
+     * enquanto outra entrega pode estar
+     * viva, o pedido é adiado sem tocar a consulta; depois disso, com tentativa
+     * aberta, a consulta fica
+     * {@code UNKNOWN}; só com falhas antes do envio, segue com nova tentativa se
+     * couber no orçamento.
      */
     private void redelivered(InsurerQuoteRequest request, QueryRecord query, QueuedMessage message) {
         String queryId = query.queryId();
@@ -241,8 +253,10 @@ class InsurerRequestHandler {
     }
 
     /**
-     * Uma entrega duplicada do mesmo pedido (a publicação é pelo menos uma vez) pode estar no HTTP ou no
-     * backoff. A consulta não é tocada, e o pedido volta depois que essa entrega terminou ou morreu, com
+     * Uma entrega duplicada do mesmo pedido (a publicação é pelo menos uma vez)
+     * pode estar no HTTP ou no
+     * backoff. A consulta não é tocada, e o pedido volta depois que essa entrega
+     * terminou ou morreu, com
      * {@code DelaySeconds}, sem gastar {@code maxReceiveCount}.
      */
     private boolean deferredWhileBusy(QueryRecord query, QueuedMessage message, Instant now) {
@@ -258,17 +272,21 @@ class InsurerRequestHandler {
     }
 
     private void quotaExhausted(InsurerQuoteRequest request, String queryId, QueuedMessage message,
-                                QuotaReservation quota, Instant now) {
+            QuotaReservation quota, Instant now) {
         if (delayUntilWindowTurns(request, message, quota, now)) {
-            LOGGER.info("Insurer quota exhausted, request delayed: queryId={} insurerId={}", queryId, request.insurerId());
+            LOGGER.info("Insurer quota exhausted, request delayed: queryId={} insurerId={}", queryId,
+                    request.insurerId());
             return;
         }
         concludeWithoutCall(request, queryId, ErrorClasses.QUOTA_EXHAUSTED, now);
     }
 
-    /** Com a consulta já em voo e sem tentativa aberta, a reentrega adiada continua de onde parou. */
+    /**
+     * Com a consulta já em voo e sem tentativa aberta, a reentrega adiada continua
+     * de onde parou.
+     */
     private void quotaExhaustedOnRetry(InsurerQuoteRequest request, String queryId, int lastSequence,
-                                       QueuedMessage message, QuotaReservation quota, Instant now) {
+            QueuedMessage message, QuotaReservation quota, Instant now) {
         if (delayUntilWindowTurns(request, message, quota, now)) {
             LOGGER.info("Insurer quota exhausted on retry, request delayed: queryId={}", queryId);
             return;
@@ -277,7 +295,7 @@ class InsurerRequestHandler {
     }
 
     private boolean delayUntilWindowTurns(InsurerQuoteRequest request, QueuedMessage message, QuotaReservation quota,
-                                          Instant now) {
+            Instant now) {
         long delay = quota.window().secondsUntilEnd(now) + 1;
         if (delay > DelayedRedelivery.MAX_DELAY_SECONDS || !now.plusSeconds(delay).isBefore(request.deadlineAt())) {
             return false;
@@ -287,8 +305,8 @@ class InsurerRequestHandler {
     }
 
     private void settle(InsurerQuoteRequest request, String queryId, QueryDraft newQuery, QueryState state,
-                        Settlement.AttemptResult attempt, EvidenceDraft evidence, String attemptRef,
-                        InsurerResultRecorded.Outcome outcome, Instant now) {
+            Settlement.AttemptResult attempt, EvidenceDraft evidence, String attemptRef,
+            InsurerResultRecorded.Outcome outcome, Instant now) {
         InsurerResultRecorded event = InsurerResultRecorded.of(request, queryId, attemptRef, outcome,
                 Timestamps.format(now));
         Settlement settlement = new Settlement(queryId, newQuery, state, attempt, evidence,

@@ -13,18 +13,26 @@ public interface QuoteFunctionsConfig {
 
     String stateMachineArn();
 
-    /** Segredo {@code quote-solution/<stage>/token-key}, de onde vem a chave da cifra dos task tokens. */
+    /**
+     * Segredo {@code quote-solution/<stage>/token-key}, de onde vem a chave da
+     * cifra dos task tokens.
+     */
     String tokenKeySecretId();
 
-    /** Limite de seguradoras por versão, parte da invariante de orçamento (§9 do desenho). */
+    /**
+     * Limite de seguradoras por versão, parte da invariante de orçamento (§9 do
+     * desenho).
+     */
     int maxInsurers();
 
     /** Idade a partir da qual o {@code reconciler} republica um outbox pendente. */
     int outboxRepublishAfterSeconds();
 
     /**
-     * Itens tratados por dever em cada execução do {@code reconciler}: outbox, waiters, versões
-     * ({@code ACTIVE_VERSION} e {@code SUMMARY_PENDING}), ocorrências e mensagens das DLQs.
+     * Itens tratados por dever em cada execução do {@code reconciler}: outbox,
+     * waiters, versões
+     * ({@code ACTIVE_VERSION} e {@code SUMMARY_PENDING}), ocorrências e mensagens
+     * das DLQs.
      */
     @WithDefault("50")
     int reconcilerBatchSize();

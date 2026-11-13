@@ -9,8 +9,10 @@ import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
 
 /**
- * Recusas do DynamoDB que a tabela simulada dos testes de contrato reproduz, porque o mock e o Floci não as fazem:
- * chave de partição acima de 2048 bytes, de ordenação acima de 1024 e {@code ExclusiveStartKey} fora da condição da
+ * Recusas do DynamoDB que a tabela simulada dos testes de contrato reproduz,
+ * porque o mock e o Floci não as fazem:
+ * chave de partição acima de 2048 bytes, de ordenação acima de 1024 e
+ * {@code ExclusiveStartKey} fora da condição da
  * chave respondem {@code ValidationException}.
  */
 final class DynamoDbLimits {
@@ -28,7 +30,10 @@ final class DynamoDbLimits {
         }
     }
 
-    /** Página do {@code gsi1} com os itens informados, depois das conferências do {@code ExclusiveStartKey}. */
+    /**
+     * Página do {@code gsi1} com os itens informados, depois das conferências do
+     * {@code ExclusiveStartKey}.
+     */
     static QueryResponse query(QueryRequest request, List<Map<String, AttributeValue>> items) {
         if (request.hasExclusiveStartKey()) {
             String position = request.exclusiveStartKey().get("gsi1sk").s();

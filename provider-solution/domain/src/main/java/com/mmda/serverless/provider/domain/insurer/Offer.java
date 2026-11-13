@@ -8,11 +8,14 @@ import java.util.Objects;
 import java.util.regex.Pattern;
 
 /**
- * Oferta normalizada, o {@code offer} do {@code InsurerResultRecorded} quando {@code QUOTED}. Valores
- * monetários são strings decimais com a moeda em {@code currency} (RN12). Os formatos são os do schema
+ * Oferta normalizada, o {@code offer} do {@code InsurerResultRecorded} quando
+ * {@code QUOTED}. Valores
+ * monetários são strings decimais com a moeda em {@code currency} (RN12). Os
+ * formatos são os do schema
  * {@code Offer} do AsyncAPI da provider, que a quote lê sem validar de novo.
  *
- * @param rawResponseRef chave, no bucket de payloads da provider, da resposta bruta da seguradora
+ * @param rawResponseRef chave, no bucket de payloads da provider, da resposta
+ *                       bruta da seguradora
  */
 public record Offer(
         String externalOfferId,
@@ -66,8 +69,10 @@ public record Offer(
     }
 
     /**
-     * Cobertura por código normalizado; {@code insuredAmount} ausente significa não informado, não zero. O
-     * {@code label} é obrigatório porque a API de produto o exige em cada cobertura da oferta.
+     * Cobertura por código normalizado; {@code insuredAmount} ausente significa não
+     * informado, não zero. O
+     * {@code label} é obrigatório porque a API de produto o exige em cada cobertura
+     * da oferta.
      */
     public record Coverage(String code, String label, String insuredAmount) {
 

@@ -46,15 +46,21 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
 /**
- * Os eventos que a provider produz em cada desfecho, serializados como no outbox, conferem com os schemas do
- * {@code contracts/provider-solution/asyncapi.yaml}: obrigatórios, enums de {@code errorClass} e
- * {@code status}, padrões de identificadores e de valores. O teste de exemplos só cobre os desfechos
+ * Os eventos que a provider produz em cada desfecho, serializados como no
+ * outbox, conferem com os schemas do
+ * {@code contracts/provider-solution/asyncapi.yaml}: obrigatórios, enums de
+ * {@code errorClass} e
+ * {@code status}, padrões de identificadores e de valores. O teste de exemplos
+ * só cobre os desfechos
  * documentados; este cobre também os caminhos sem exemplo.
  */
 @JsonTest
 class ProducedEventSchemaTest {
 
-    /** Códigos que só a seguradora produz; os demais podem ser o {@code errorClass} do enriquecimento. */
+    /**
+     * Códigos que só a seguradora produz; os demais podem ser o {@code errorClass}
+     * do enriquecimento.
+     */
     private static final Set<String> INSURER_ONLY = Set.of(ErrorClasses.UNSUPPORTED_INSURER);
     private static final String QUOTE_ID = "5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11";
 
@@ -163,7 +169,10 @@ class ProducedEventSchemaTest {
         }
     }
 
-    /** Toda ocorrência, aberta ou resolvida, com e sem organização (callback sem correlação), segue o schema (M4). */
+    /**
+     * Toda ocorrência, aberta ou resolvida, com e sem organização (callback sem
+     * correlação), segue o schema (M4).
+     */
     @Test
     void operationIssueOfEveryTypeAndStatusFollowsTheSchema() {
         for (IssueType type : IssueType.values()) {
@@ -196,7 +205,10 @@ class ProducedEventSchemaTest {
         }
     }
 
-    /** O resultado de cada callback da beta, classificado como na API de callbacks, segue o schema. */
+    /**
+     * O resultado de cada callback da beta, classificado como na API de callbacks,
+     * segue o schema.
+     */
     @Test
     void insurerResultRecordedFromEveryCallbackResultFollowsTheSchema() {
         String workRef = Identities.workRef(QUOTE_ID, 1, Identities.INSURER, "beta");
@@ -211,7 +223,8 @@ class ProducedEventSchemaTest {
                 new InsurerReply(null, "DECLINED", null, null, null, null, null, null, null, "RISK_NOT_ACCEPTED", null,
                         null, null),
                 new InsurerReply(null, "PENDING_INFORMATION", null, null, null, null, null, null, null, null,
-                        List.of(new InsurerReply.PendingField("risk.principalDriver.licenseDate", "MISSING_LICENSE_DATE")),
+                        List.of(new InsurerReply.PendingField("risk.principalDriver.licenseDate",
+                                "MISSING_LICENSE_DATE")),
                         null, null),
                 new InsurerReply(null, "OFFER", null, "Beta Seguros", null, null, null, null, null, null, null, null,
                         null));
@@ -230,7 +243,9 @@ class ProducedEventSchemaTest {
         }
     }
 
-    /** {@code attemptRef} nulo quando a provider concluiu sem chamar a seguradora. */
+    /**
+     * {@code attemptRef} nulo quando a provider concluiu sem chamar a seguradora.
+     */
     private record InsurerCase(InsurerResultRecorded.Outcome outcome, String attemptRef) {
     }
 
@@ -251,7 +266,10 @@ class ProducedEventSchemaTest {
         return schema;
     }
 
-    /** Subconjunto do JSON Schema usado no documento, com {@code allOf} e {@code $ref} locais. */
+    /**
+     * Subconjunto do JSON Schema usado no documento, com {@code allOf} e
+     * {@code $ref} locais.
+     */
     private List<String> validate(JsonNode schema, JsonNode value, String path) {
         List<String> errors = new ArrayList<>();
         if (schema.has("$ref")) {

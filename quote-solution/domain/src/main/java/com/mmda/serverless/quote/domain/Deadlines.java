@@ -13,7 +13,10 @@ public final class Deadlines {
         return acceptedAt.plus(quoteDeadline);
     }
 
-    /** Instante da {@code dispatch} mais o {@code TimeoutSeconds} da etapa, limitado ao prazo da versão. */
+    /**
+     * Instante da {@code dispatch} mais o {@code TimeoutSeconds} da etapa, limitado
+     * ao prazo da versão.
+     */
     public static Instant requestDeadline(Instant dispatchedAt, Duration stepTimeout, Instant versionDeadline) {
         Instant stepDeadline = dispatchedAt.plus(stepTimeout);
         return versionDeadline != null && versionDeadline.isBefore(stepDeadline) ? versionDeadline : stepDeadline;

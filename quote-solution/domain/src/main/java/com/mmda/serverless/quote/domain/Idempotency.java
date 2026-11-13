@@ -4,8 +4,10 @@ import java.util.Objects;
 import java.util.regex.Pattern;
 
 /**
- * Idempotência das mutações da API (§4 e §8 do desenho). A chave é única por organização, operação,
- * escopo e {@code Idempotency-Key}; o {@code requestHash} é o SHA-256 do body em JSON canônico.
+ * Idempotência das mutações da API (§4 e §8 do desenho). A chave é única por
+ * organização, operação,
+ * escopo e {@code Idempotency-Key}; o {@code requestHash} é o SHA-256 do body
+ * em JSON canônico.
  */
 public final class Idempotency {
 

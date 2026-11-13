@@ -26,7 +26,10 @@ import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsRequest;
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsResponse;
 import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledException;
 
-/** {@code TransactionConflict} não é emulado pelo Floci (§13); este caminho é coberto aqui e repetido no M6. */
+/**
+ * {@code TransactionConflict} não é emulado pelo Floci (§13); este caminho é
+ * coberto aqui e repetido no M6.
+ */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class TransactionsTest {
@@ -54,7 +57,8 @@ class TransactionsTest {
 
     @Test
     void conflictThatPersistsIsRaisedForTheMessageToBeRedelivered() {
-        doThrow(cancelled("TransactionConflict")).when(dynamoDb).transactWriteItems(any(TransactWriteItemsRequest.class));
+        doThrow(cancelled("TransactionConflict")).when(dynamoDb)
+                .transactWriteItems(any(TransactWriteItemsRequest.class));
 
         assertThatThrownBy(() -> transactions().write(ITEMS)).isInstanceOf(TransactionCanceledException.class);
         verify(dynamoDb, times(Transactions.MAX_CONFLICT_RETRIES + 1))

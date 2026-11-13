@@ -10,8 +10,10 @@ import java.util.UUID;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Pedidos da quote como chegam às filas da provider: o envelope do EventBridge com o {@code detail} do
- * AsyncAPI da quote-solution. Cada pedido usa uma cotação nova, para os testes não se cruzarem.
+ * Pedidos da quote como chegam às filas da provider: o envelope do EventBridge
+ * com o {@code detail} do
+ * AsyncAPI da quote-solution. Cada pedido usa uma cotação nova, para os testes
+ * não se cruzarem.
  */
 final class TestRequests {
 
@@ -31,7 +33,10 @@ final class TestRequests {
         return enrichment(vehicleRef, "driver-ana", deadlineAt, provider);
     }
 
-    /** Pedido com outro condutor: a {@code queryKey} muda, então não reutiliza consultas de outros testes. */
+    /**
+     * Pedido com outro condutor: a {@code queryKey} muda, então não reutiliza
+     * consultas de outros testes.
+     */
     static Request enrichment(String vehicleRef, String principalDriverRef, Instant deadlineAt, String provider) {
         String quoteId = "quote-" + UUID.randomUUID();
         String workRef = Identities.workRef(quoteId, 1, Identities.ENRICHMENT, null);

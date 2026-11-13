@@ -12,9 +12,12 @@ import java.util.function.Supplier;
 import org.jboss.logging.Logger;
 
 /**
- * Reconciliação agendada da quote (§9 do desenho): outbox pendente (M1, T19), waiters parados (T13), versões
- * com a execução encerrada (T20), ocorrências e o ciclo de vida delas (M5), resumo do {@code META},
- * {@code results-dlq} (T31) e {@code issues-dlq} (M5). WHY: um dever que falha não impede os seguintes; a falha
+ * Reconciliação agendada da quote (§9 do desenho): outbox pendente (M1, T19),
+ * waiters parados (T13), versões
+ * com a execução encerrada (T20), ocorrências e o ciclo de vida delas (M5),
+ * resumo do {@code META},
+ * {@code results-dlq} (T31) e {@code issues-dlq} (M5). WHY: um dever que falha
+ * não impede os seguintes; a falha
  * fica no log e o próximo ciclo tenta de novo.
  */
 @Singleton

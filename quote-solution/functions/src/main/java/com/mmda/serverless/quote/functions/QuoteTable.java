@@ -36,8 +36,10 @@ import software.amazon.awssdk.services.dynamodb.model.Update;
 import software.amazon.awssdk.services.dynamodb.model.UpdateItemRequest;
 
 /**
- * Acesso das functions à tabela da quote-solution: leituras consistentes, transações com repetição de
- * {@code TransactionConflict} e a atualização do resumo do {@code META} (§4 do desenho).
+ * Acesso das functions à tabela da quote-solution: leituras consistentes,
+ * transações com repetição de
+ * {@code TransactionConflict} e a atualização do resumo do {@code META} (§4 do
+ * desenho).
  */
 @ApplicationScoped
 public class QuoteTable {
@@ -73,14 +75,18 @@ public class QuoteTable {
         return item == null || item.isEmpty() ? Optional.empty() : Optional.of(item);
     }
 
-    /** Itens da partição cujo {@code sk} começa com {@code prefix}, com leitura consistente. */
+    /**
+     * Itens da partição cujo {@code sk} começa com {@code prefix}, com leitura
+     * consistente.
+     */
     List<Map<String, AttributeValue>> query(String pk, String prefix) {
         List<Map<String, AttributeValue>> items = new ArrayList<>();
         Map<String, AttributeValue> startKey = null;
         do {
             QueryResponse page = dynamoDb.query(prefixQuery(pk, prefix).exclusiveStartKey(startKey).build());
             items.addAll(page.items());
-            startKey = page.hasLastEvaluatedKey() && !page.lastEvaluatedKey().isEmpty() ? page.lastEvaluatedKey() : null;
+            startKey = page.hasLastEvaluatedKey() && !page.lastEvaluatedKey().isEmpty() ? page.lastEvaluatedKey()
+                    : null;
         } while (startKey != null);
         return items;
     }
@@ -92,7 +98,8 @@ public class QuoteTable {
             QueryResponse page = dynamoDb.query(prefixQuery(pk, prefix).select(Select.COUNT)
                     .exclusiveStartKey(startKey).build());
             count += page.count();
-            startKey = page.hasLastEvaluatedKey() && !page.lastEvaluatedKey().isEmpty() ? page.lastEvaluatedKey() : null;
+            startKey = page.hasLastEvaluatedKey() && !page.lastEvaluatedKey().isEmpty() ? page.lastEvaluatedKey()
+                    : null;
         } while (startKey != null);
         return count;
     }
@@ -106,7 +113,10 @@ public class QuoteTable {
                 .consistentRead(true);
     }
 
-    /** Executa a transação; {@code TransactionConflict} é repetido com backoff e jitter (§9 do desenho). */
+    /**
+     * Executa a transação; {@code TransactionConflict} é repetido com backoff e
+     * jitter (§9 do desenho).
+     */
     void transact(List<TransactWriteItem> writes) {
         TransactWriteItemsRequest request = TransactWriteItemsRequest.builder().transactItems(writes).build();
         retries.run(() -> dynamoDb.transactWriteItems(request), QuoteTable::isTransactionConflict);
@@ -149,7 +159,10 @@ public class QuoteTable {
         return TransactWriteItem.builder().update(update.build()).build();
     }
 
-    /** Item de outbox: o {@code INSERT} dele no stream aciona a {@code outbox-relay}. */
+    /**
+     * Item de outbox: o {@code INSERT} dele no stream aciona a
+     * {@code outbox-relay}.
+     */
     Map<String, AttributeValue> outboxItem(String eventId, String detailType, Map<String, Object> detail,
             String quoteId, int version, Instant now) {
         Map<String, AttributeValue> item = new HashMap<>();
@@ -169,15 +182,19 @@ public class QuoteTable {
     }
 
     /**
-     * Resumo da versão atual no {@code META}, com valores absolutos e condição {@code currentVersion = :v}.
-     * WHY: a condição falha quando a versão foi substituída, e o resumo da versão nova não pode ser
-     * sobrescrito pela antiga; o {@code reconciler} repara divergências (M4). Roda depois do commit do passo,
-     * então uma falha aqui só fica no log: derrubar o passo já gravado faria a máquina tratá-lo como falho.
+     * Resumo da versão atual no {@code META}, com valores absolutos e condição
+     * {@code currentVersion = :v}.
+     * WHY: a condição falha quando a versão foi substituída, e o resumo da versão
+     * nova não pode ser
+     * sobrescrito pela antiga; o {@code reconciler} repara divergências (M4). Roda
+     * depois do commit do passo,
+     * então uma falha aqui só fica no log: derrubar o passo já gravado faria a
+     * máquina tratá-lo como falho.
      */
     void refreshSummary(String quoteId, int version, Instant now) {
         try {
-            Optional<Map<String, AttributeValue>> versionItem =
-                    get(QuoteKeys.quotePk(quoteId), QuoteKeys.versionSk(version));
+            Optional<Map<String, AttributeValue>> versionItem = get(QuoteKeys.quotePk(quoteId),
+                    QuoteKeys.versionSk(version));
             if (versionItem.isEmpty()) {
                 return;
             }
@@ -192,7 +209,10 @@ public class QuoteTable {
         }
     }
 
-    /** Tira a versão {@code TERMINAL} do índice {@code SUMMARY_PENDING} depois que o resumo foi conferido. */
+    /**
+     * Tira a versão {@code TERMINAL} do índice {@code SUMMARY_PENDING} depois que o
+     * resumo foi conferido.
+     */
     void clearSummaryPending(String quoteId, int version) {
         updateIf(update(QuoteKeys.quotePk(quoteId), QuoteKeys.versionSk(version))
                 .updateExpression("REMOVE " + QuoteKeys.GSI2_PK + ", " + QuoteKeys.GSI2_SK)
@@ -202,7 +222,8 @@ public class QuoteTable {
     }
 
     /**
-     * Reparo do {@code reconciler} (M4): compara o resumo do {@code META} com o {@code V#currentVersion} e o
+     * Reparo do {@code reconciler} (M4): compara o resumo do {@code META} com o
+     * {@code V#currentVersion} e o
      * regrava só quando diverge. Devolve {@code true} quando reparou.
      */
     boolean repairSummary(String quoteId, int version, Instant now) {
@@ -210,7 +231,8 @@ public class QuoteTable {
         if (meta.isEmpty() || Attr.number(meta.get(), "currentVersion", 0) != version) {
             return false;
         }
-        Optional<Map<String, AttributeValue>> versionItem = get(QuoteKeys.quotePk(quoteId), QuoteKeys.versionSk(version));
+        Optional<Map<String, AttributeValue>> versionItem = get(QuoteKeys.quotePk(quoteId),
+                QuoteKeys.versionSk(version));
         if (versionItem.isEmpty()) {
             return false;
         }
@@ -233,8 +255,10 @@ public class QuoteTable {
                 ":offerCount", n(offerCount),
                 ":now", s(now.toString()),
                 ":v", n(version)));
-        // INVARIANT: fase e número de ofertas só crescem dentro de uma versão; uma leitura velha do V#n não grava
-        // uma fase anterior (VALIDATING sobre QUOTING, ou qualquer uma sobre TERMINAL) nem menos ofertas (M5)
+        // INVARIANT: fase e número de ofertas só crescem dentro de uma versão; uma
+        // leitura velha do V#n não grava
+        // uma fase anterior (VALIDATING sobre QUOTING, ou qualquer uma sobre TERMINAL)
+        // nem menos ofertas (M5)
         List<String> allowed = new ArrayList<>();
         for (Phase earlier : Phase.valueOf(phase).atOrBefore()) {
             String name = ":phase" + earlier.ordinal();
@@ -258,8 +282,10 @@ public class QuoteTable {
     }
 
     /**
-     * Grava ou atualiza a ocorrência, sem condição: a mesma situação observada de novo atualiza
-     * {@code lastSeenAt} e incrementa o {@code revision}, e {@code firstSeenAt} fica o da primeira vez.
+     * Grava ou atualiza a ocorrência, sem condição: a mesma situação observada de
+     * novo atualiza
+     * {@code lastSeenAt} e incrementa o {@code revision}, e {@code firstSeenAt}
+     * fica o da primeira vez.
      */
     TransactWriteItem issueWrite(QuoteIssue issue, Instant now) {
         Map<String, String> names = Map.of("#type", QuoteKeys.TYPE, "#status", "status", "#source", "source");
@@ -308,8 +334,10 @@ public class QuoteTable {
     }
 
     /**
-     * Resolve a ocorrência que se resolve sozinha quando a situação some (M5). A condição pela {@code revision}
-     * lida evita resolver uma ocorrência observada de novo no meio da revisão; devolve {@code false} nesse caso.
+     * Resolve a ocorrência que se resolve sozinha quando a situação some (M5). A
+     * condição pela {@code revision}
+     * lida evita resolver uma ocorrência observada de novo no meio da revisão;
+     * devolve {@code false} nesse caso.
      */
     boolean resolveIssue(Map<String, AttributeValue> issue, String safeSummary, Instant now) {
         String issueId = Attr.string(issue, "issueId");
@@ -334,7 +362,10 @@ public class QuoteTable {
                 .build());
     }
 
-    /** Itens de um valor do índice esparso {@code gsi2}, os de {@code gsi2sk} mais antigo primeiro, até {@code limit}. */
+    /**
+     * Itens de um valor do índice esparso {@code gsi2}, os de {@code gsi2sk} mais
+     * antigo primeiro, até {@code limit}.
+     */
     List<Map<String, AttributeValue>> indexed(String index, int limit) {
         List<Map<String, AttributeValue>> items = new ArrayList<>();
         Map<String, AttributeValue> startKey = null;
@@ -351,7 +382,8 @@ public class QuoteTable {
                     .build());
             items.addAll(page.items());
             remaining -= page.items().size();
-            startKey = page.hasLastEvaluatedKey() && !page.lastEvaluatedKey().isEmpty() ? page.lastEvaluatedKey() : null;
+            startKey = page.hasLastEvaluatedKey() && !page.lastEvaluatedKey().isEmpty() ? page.lastEvaluatedKey()
+                    : null;
         } while (startKey != null && remaining > 0);
         return items;
     }
@@ -360,7 +392,10 @@ public class QuoteTable {
         transact(List.of(issueWrite(issue, now)));
     }
 
-    /** Organização da cotação, lida do {@code META}; nula quando a cotação não existe. */
+    /**
+     * Organização da cotação, lida do {@code META}; nula quando a cotação não
+     * existe.
+     */
     String organizationOf(String quoteId) {
         return get(QuoteKeys.quotePk(quoteId), QuoteKeys.META).map(meta -> Attr.string(meta, "organizationId"))
                 .orElse(null);
@@ -371,8 +406,10 @@ public class QuoteTable {
     }
 
     /**
-     * Cancelamento por condição de algum item. WHY: throttling ou {@code TransactionConflict} que sobrou das
-     * repetições não dizem nada sobre o estado gravado; quem chama relança e a mensagem volta para nova
+     * Cancelamento por condição de algum item. WHY: throttling ou
+     * {@code TransactionConflict} que sobrou das
+     * repetições não dizem nada sobre o estado gravado; quem chama relança e a
+     * mensagem volta para nova
      * tentativa, em vez de virar resultado tardio ou repetido.
      */
     static boolean isConditionFailure(RuntimeException failure) {

@@ -31,15 +31,16 @@ import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsRequest;
 import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledException;
 
 /**
- * Acesso da API aos itens operacionais (§4, §8 e §11 do desenho, M5): ocorrências no {@code ISSUE#}, consultas
- * conhecidas no {@code QUERYREF#} e reconciliações no {@code OPERATION#}. Toda leitura confere a organização.
+ * Acesso da API aos itens operacionais (§4, §8 e §11 do desenho, M5):
+ * ocorrências no {@code ISSUE#}, consultas
+ * conhecidas no {@code QUERYREF#} e reconciliações no {@code OPERATION#}. Toda
+ * leitura confere a organização.
  */
 @ApplicationScoped
 public class OperationsStore {
 
     private static final String NOT_EXISTS = "attribute_not_exists(" + QuoteKeys.PK + ")";
-    private static final String UNAVAILABLE =
-            "Não foi possível registrar a reconciliação agora; reenvie com a mesma Idempotency-Key.";
+    private static final String UNAVAILABLE = "Não foi possível registrar a reconciliação agora; reenvie com a mesma Idempotency-Key.";
     static final String QUEUED_SUMMARY = "Pedido de reconciliação registrado; aguardando a provider.";
 
     private final DynamoDbClient dynamoDb;
@@ -64,8 +65,10 @@ public class OperationsStore {
     }
 
     /**
-     * Ocorrências da organização pelo {@code gsi1} ({@code ISSUES#<organizationId>}), as vistas por último primeiro,
-     * com {@code issueType} e {@code status} em {@code FilterExpression}, sem {@code Scan} (§11 do desenho).
+     * Ocorrências da organização pelo {@code gsi1}
+     * ({@code ISSUES#<organizationId>}), as vistas por último primeiro,
+     * com {@code issueType} e {@code status} em {@code FilterExpression}, sem
+     * {@code Scan} (§11 do desenho).
      */
     public IndexPages.Page issues(String organizationId, IssueFilter filter, String afterPosition, int limit) {
         List<String> conditions = new ArrayList<>();
@@ -84,10 +87,14 @@ public class OperationsStore {
                 new IndexPages.Filter(null, conditions.isEmpty() ? null : String.join(" AND ", conditions), names,
                         values, item -> true),
                 afterPosition, position -> Map.of(QuoteKeys.PK, s(QuoteKeys.issuePk(IndexPages.idOf(position))),
-                        QuoteKeys.SK, s(QuoteKeys.META)), limit);
+                        QuoteKeys.SK, s(QuoteKeys.META)),
+                limit);
     }
 
-    /** A consulta é conhecida da organização só quando o {@code issue-projector} gravou o {@code QUERYREF#} dela. */
+    /**
+     * A consulta é conhecida da organização só quando o {@code issue-projector}
+     * gravou o {@code QUERYREF#} dela.
+     */
     public boolean knownQuery(String queryId, String organizationId) {
         if (!Items.fitsKey(queryId)) {
             return false;
@@ -97,7 +104,10 @@ public class OperationsStore {
                 .isPresent();
     }
 
-    /** Reconciliação da organização; a de outra organização é tratada como inexistente. */
+    /**
+     * Reconciliação da organização; a de outra organização é tratada como
+     * inexistente.
+     */
     public Optional<Map<String, AttributeValue>> operation(String operationId, String organizationId) {
         if (!Items.fitsKey(operationId)) {
             return Optional.empty();
@@ -110,13 +120,18 @@ public class OperationsStore {
             String organizationId, String queryId, String reason, String requestedBy, Instant requestedAt) {
     }
 
-    /** Operação aceita: a criada agora ou a de um reenvio idêntico; a situação segue no {@code statusUrl}. */
+    /**
+     * Operação aceita: a criada agora ou a de um reenvio idêntico; a situação segue
+     * no {@code statusUrl}.
+     */
     public record AcceptedOperation(String operationId) {
     }
 
     /**
-     * Grava, numa transação, idempotência ({@code RECONCILE}, escopo {@code queryId}), {@code OPERATION#} em
-     * {@code QUEUED} com o motivo e quem pediu, e o outbox {@code QueryReconcileRequested} (§8 do desenho).
+     * Grava, numa transação, idempotência ({@code RECONCILE}, escopo
+     * {@code queryId}), {@code OPERATION#} em
+     * {@code QUEUED} com o motivo e quem pediu, e o outbox
+     * {@code QueryReconcileRequested} (§8 do desenho).
      */
     public AcceptedOperation request(NewReconcile reconcile) {
         try {
@@ -135,7 +150,8 @@ public class OperationsStore {
         if (recorded.isPresent()) {
             return replay(recorded.get(), reconcile);
         }
-        TransactWriteItemsRequest request = TransactWriteItemsRequest.builder().transactItems(writes(reconcile)).build();
+        TransactWriteItemsRequest request = TransactWriteItemsRequest.builder().transactItems(writes(reconcile))
+                .build();
         try {
             retries.run(() -> dynamoDb.transactWriteItems(request), QuoteStore::isTransactionConflict);
             return new AcceptedOperation(reconcile.operationId());
@@ -146,8 +162,8 @@ public class OperationsStore {
     }
 
     private AcceptedOperation replay(Map<String, AttributeValue> recorded, NewReconcile reconcile) {
-        if (Idempotency.compare(Items.string(recorded, "requestHash"), reconcile.requestHash())
-                == Idempotency.Decision.CONFLICT) {
+        if (Idempotency.compare(Items.string(recorded, "requestHash"),
+                reconcile.requestHash()) == Idempotency.Decision.CONFLICT) {
             throw new ApiException(409, "IDEMPOTENCY_CONFLICT", "A Idempotency-Key já foi usada com outro conteúdo.");
         }
         return new AcceptedOperation(Items.string(recorded, "operationId"));
@@ -180,7 +196,8 @@ public class OperationsStore {
         operation.put("requestedAt", s(now));
         operation.put("status", s(Operations.OperationStatus.QUEUED.name()));
         operation.put("safeSummary", s(QUEUED_SUMMARY));
-        // INVARIANT: o QueryReconciled da provider chega com revision 2 e substitui este QUEUED (§3 do desenho)
+        // INVARIANT: o QueryReconciled da provider chega com revision 2 e substitui
+        // este QUEUED (§3 do desenho)
         operation.put("revision", n(0));
         operation.put("updatedAt", s(now));
 

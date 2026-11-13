@@ -13,7 +13,8 @@ import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * {@code BETA#<providerRequestId>} e o auxiliar {@code BETAREF#<clientReference>} na tabela dos simuladores, com
+ * {@code BETA#<providerRequestId>} e o auxiliar
+ * {@code BETAREF#<clientReference>} na tabela dos simuladores, com
  * TTL de um dia: a situação só serve à reconciliação de pedidos recentes.
  */
 @Component
@@ -78,9 +79,9 @@ class DynamoBetaQuotes implements BetaQuotes {
 
     private Map<String, AttributeValue> get(String pk) {
         return dynamoDb.getItem(builder -> builder
-                        .tableName(properties.tableName())
-                        .consistentRead(true)
-                        .key(Map.of("pk", AttributeValue.fromS(pk))))
+                .tableName(properties.tableName())
+                .consistentRead(true)
+                .key(Map.of("pk", AttributeValue.fromS(pk))))
                 .item();
     }
 

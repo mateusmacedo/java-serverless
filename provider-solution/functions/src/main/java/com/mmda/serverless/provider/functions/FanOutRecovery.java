@@ -6,9 +6,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
- * Fan-out que o líder do enriquecimento não terminou (pendência do M2, desenho, §9): o líder concluiu, inclusive
- * com {@code FAILED}, e caiu antes de responder aos seguidores. O reconciler refaz o fan-out pela cadeia gravada
- * na conclusão, sem nenhuma chamada externa, mesmo que outra cadeia já tenha começado.
+ * Fan-out que o líder do enriquecimento não terminou (pendência do M2, desenho,
+ * §9): o líder concluiu, inclusive
+ * com {@code FAILED}, e caiu antes de responder aos seguidores. O reconciler
+ * refaz o fan-out pela cadeia gravada
+ * na conclusão, sem nenhuma chamada externa, mesmo que outra cadeia já tenha
+ * começado.
  */
 @Component
 class FanOutRecovery {
@@ -21,7 +24,7 @@ class FanOutRecovery {
     private final ReuseProperties reuse;
 
     FanOutRecovery(QueryLedger ledger, EnrichmentResolutions resolutions, ProviderProperties properties,
-                   ReuseProperties reuse) {
+            ReuseProperties reuse) {
         this.ledger = ledger;
         this.resolutions = resolutions;
         this.properties = properties;
@@ -29,8 +32,10 @@ class FanOutRecovery {
     }
 
     /**
-     * Só depois do tempo em que o próprio líder ainda pode estar no fan-out. INVARIANT: só antes de a lápide do
-     * {@code INFLIGHT#} e os {@code FOLLOWER#} vencerem; depois disso, uma cadeia nova recomeça nas mesmas versões,
+     * Só depois do tempo em que o próprio líder ainda pode estar no fan-out.
+     * INVARIANT: só antes de a lápide do
+     * {@code INFLIGHT#} e os {@code FOLLOWER#} vencerem; depois disso, uma cadeia
+     * nova recomeça nas mesmas versões,
      * e o fan-out antigo alcançaria seguidores dela.
      */
     int run(int limit, Instant now) {

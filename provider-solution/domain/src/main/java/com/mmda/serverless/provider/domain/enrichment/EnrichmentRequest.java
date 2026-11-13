@@ -4,7 +4,8 @@ import java.time.Instant;
 import java.util.Objects;
 
 /**
- * {@code detail} do {@code EnrichmentRequested} publicado pela quote-solution (desenho, §3). Campos
+ * {@code detail} do {@code EnrichmentRequested} publicado pela quote-solution
+ * (desenho, §3). Campos
  * desconhecidos são ignorados na leitura.
  */
 public record EnrichmentRequest(

@@ -3,8 +3,10 @@ package com.mmda.serverless.provider.domain.operations;
 import java.util.Objects;
 
 /**
- * {@code detail} do {@code QueryReconcileRequested}, publicado pela quote-solution (AsyncAPI da quote). O pedido
- * é deduplicado pelo {@code operationId}. Campos desconhecidos são ignorados na leitura.
+ * {@code detail} do {@code QueryReconcileRequested}, publicado pela
+ * quote-solution (AsyncAPI da quote). O pedido
+ * é deduplicado pelo {@code operationId}. Campos desconhecidos são ignorados na
+ * leitura.
  */
 public record QueryReconcileRequest(
         String eventId,

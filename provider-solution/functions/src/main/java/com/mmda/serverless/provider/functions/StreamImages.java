@@ -7,7 +7,8 @@ import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 
 /**
- * Converte o {@code AttributeValue} do modelo de eventos da Lambda para o do SDK v2, ao ler o
+ * Converte o {@code AttributeValue} do modelo de eventos da Lambda para o do
+ * SDK v2, ao ler o
  * {@code NewImage} do stream (desenho, §7).
  */
 final class StreamImages {
@@ -24,7 +25,8 @@ final class StreamImages {
         return converted;
     }
 
-    static AttributeValue toSdkValue(com.amazonaws.services.lambda.runtime.events.models.dynamodb.AttributeValue value) {
+    static AttributeValue toSdkValue(
+            com.amazonaws.services.lambda.runtime.events.models.dynamodb.AttributeValue value) {
         if (value.getS() != null) {
             return AttributeValue.fromS(value.getS());
         }

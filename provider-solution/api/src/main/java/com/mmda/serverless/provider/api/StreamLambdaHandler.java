@@ -11,7 +11,8 @@ import java.io.InputStream;
 import java.io.OutputStream;
 
 /**
- * Entrada da Lambda {@code api}, atrás do API Gateway {@code /v1/providers/{provider}/callbacks}. O handler é
+ * Entrada da Lambda {@code api}, atrás do API Gateway
+ * {@code /v1/providers/{provider}/callbacks}. O handler é
  * estático para o contexto Spring ser criado uma vez por container.
  */
 public class StreamLambdaHandler implements RequestStreamHandler {

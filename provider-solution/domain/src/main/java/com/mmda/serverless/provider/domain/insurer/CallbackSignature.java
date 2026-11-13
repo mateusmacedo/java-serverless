@@ -6,8 +6,10 @@ import java.util.HexFormat;
 import java.util.regex.Pattern;
 
 /**
- * Assinatura {@code X-Signature} dos callbacks de seguradoras (desenho, §8): {@code sha256=} seguido do
- * hexadecimal minúsculo do HMAC-SHA256 do corpo, exatamente como foi enviado, com o segredo
+ * Assinatura {@code X-Signature} dos callbacks de seguradoras (desenho, §8):
+ * {@code sha256=} seguido do
+ * hexadecimal minúsculo do HMAC-SHA256 do corpo, exatamente como foi enviado,
+ * com o segredo
  * {@code callback-secret} como chave.
  */
 public final class CallbackSignature {
@@ -25,7 +27,8 @@ public final class CallbackSignature {
     }
 
     /**
-     * Confere a assinatura em tempo constante em relação ao conteúdo: a comparação dos resumos não para no
+     * Confere a assinatura em tempo constante em relação ao conteúdo: a comparação
+     * dos resumos não para no
      * primeiro byte diferente. Cabeçalho ausente ou fora do formato nunca confere.
      */
     public static boolean verify(byte[] secret, byte[] body, String header) {

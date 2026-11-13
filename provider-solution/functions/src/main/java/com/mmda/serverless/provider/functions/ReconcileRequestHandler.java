@@ -9,9 +9,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
- * Um {@code QueryReconcileRequested} (desenho, §8): grava o {@code OPERATION#}, confere que a consulta é da mesma
- * organização, reconcilia pelo mesmo caminho do {@code reconciler} e publica {@code QueryReconciled} pelo outbox.
- * Consulta de outra organização responde como inexistente, para não revelar que ela existe.
+ * Um {@code QueryReconcileRequested} (desenho, §8): grava o {@code OPERATION#},
+ * confere que a consulta é da mesma
+ * organização, reconcilia pelo mesmo caminho do {@code reconciler} e publica
+ * {@code QueryReconciled} pelo outbox.
+ * Consulta de outra organização responde como inexistente, para não revelar que
+ * ela existe.
  */
 @Component
 class ReconcileRequestHandler {
@@ -25,7 +28,7 @@ class ReconcileRequestHandler {
     private final Clock clock;
 
     ReconcileRequestHandler(OperationLedger operations, QueryLedger ledger, QueryReconciliation reconciliation,
-                            EventJson json, Clock clock) {
+            EventJson json, Clock clock) {
         this.operations = operations;
         this.ledger = ledger;
         this.reconciliation = reconciliation;

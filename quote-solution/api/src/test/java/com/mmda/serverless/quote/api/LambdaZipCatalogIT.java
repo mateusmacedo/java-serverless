@@ -13,7 +13,8 @@ import java.util.zip.ZipInputStream;
 import org.junit.jupiter.api.Test;
 
 /**
- * O catálogo de {@code contracts/fixtures} precisa chegar ao zip da Lambda (§10 do desenho): a API o lê
+ * O catálogo de {@code contracts/fixtures} precisa chegar ao zip da Lambda (§10
+ * do desenho): a API o lê
  * do classpath. Roda no {@code integration-test}, depois do {@code package}.
  */
 class LambdaZipCatalogIT {

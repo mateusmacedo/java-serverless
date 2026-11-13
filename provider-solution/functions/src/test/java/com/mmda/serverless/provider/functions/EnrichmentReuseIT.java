@@ -38,9 +38,12 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * Reuso e liderança do {@code enrichmentWorker} no Floci (desenho, §8; PRD, T04, T05, T06 e T15). Cada caso usa
- * um veículo próprio, então começa sem {@code REUSE#} nem {@code INFLIGHT#} da sua {@code queryKey}. O
- * {@link TestClock} vence a validade da evidência e a lease da liderança sem espera real, e o espião no
+ * Reuso e liderança do {@code enrichmentWorker} no Floci (desenho, §8; PRD,
+ * T04, T05, T06 e T15). Cada caso usa
+ * um veículo próprio, então começa sem {@code REUSE#} nem {@code INFLIGHT#} da
+ * sua {@code queryKey}. O
+ * {@link TestClock} vence a validade da evidência e a lease da liderança sem
+ * espera real, e o espião no
  * {@link ReuseLedger} provoca as corridas entre a leitura e a escrita.
  */
 class EnrichmentReuseIT extends FlociIntegrationTest {
@@ -77,7 +80,8 @@ class EnrichmentReuseIT extends FlociIntegrationTest {
     }
 
     /**
-     * WHY: os líderes do T06 e do T15 esperam o teste soltar a resposta, além do 1 s de timeout HTTP da base; o
+     * WHY: os líderes do T06 e do T15 esperam o teste soltar a resposta, além do 1
+     * s de timeout HTTP da base; o
      * timeout fica acima do teto da retenção do {@link ProviderStub}.
      */
     @DynamicPropertySource
@@ -641,7 +645,10 @@ class EnrichmentReuseIT extends FlociIntegrationTest {
         assertThat(PROVIDERS.enrichmentCalls(vehicle)).isEqualTo(1);
     }
 
-    /** Líder que caiu no HTTP: liderança e consulta em voo, com a tentativa aberta há mais que o timeout do worker. */
+    /**
+     * Líder que caiu no HTTP: liderança e consulta em voo, com a tentativa aberta
+     * há mais que o timeout do worker.
+     */
     private static void givenInterruptedLeader(String queryKey, TestRequests.Request leader) {
         String startedAt = Timestamps.format(TestClock.INSTANCE.instant().minusSeconds(200));
         givenLeadershipInFlight(queryKey, leader, TestClock.INSTANCE.instant().minusSeconds(170));
@@ -663,7 +670,8 @@ class EnrichmentReuseIT extends FlociIntegrationTest {
     }
 
     /**
-     * A liderança, a consulta em voo e a {@code ATTEMPT#0001} que outra entrega do mesmo pedido grava ao liderar, com a
+     * A liderança, a consulta em voo e a {@code ATTEMPT#0001} que outra entrega do
+     * mesmo pedido grava ao liderar, com a
      * lease válida.
      */
     private void givenLiveLeader(String queryKey, TestRequests.Request leader) {
@@ -700,7 +708,10 @@ class EnrichmentReuseIT extends FlociIntegrationTest {
                 "leaseUntil", AttributeValue.fromS(Timestamps.format(leaseUntil)))));
     }
 
-    /** O estado da liderança, com a lease ainda válida e a evidência gravada pela conclusão. */
+    /**
+     * O estado da liderança, com a lease ainda válida e a evidência gravada pela
+     * conclusão.
+     */
     private void setLeadershipState(String queryKey, String state) {
         DYNAMO_DB.updateItem(builder -> builder.tableName(TABLE)
                 .key(Map.of("pk", AttributeValue.fromS("INFLIGHT#" + queryKey), "sk", AttributeValue.fromS("META")))
@@ -712,7 +723,10 @@ class EnrichmentReuseIT extends FlociIntegrationTest {
                                 TestClock.INSTANCE.instant().plus(reuse.lease()))))));
     }
 
-    /** {@code CONSUMED} gravado por outra entrega do mesmo pedido, como o {@code HIT} o grava. */
+    /**
+     * {@code CONSUMED} gravado por outra entrega do mesmo pedido, como o
+     * {@code HIT} o grava.
+     */
     private static void givenConsumed(TestRequests.Request request) {
         DYNAMO_DB.putItem(builder -> builder.tableName(TABLE).item(Map.of(
                 "pk", AttributeValue.fromS("CONSUMED#" + request.eventId()),
@@ -738,7 +752,10 @@ class EnrichmentReuseIT extends FlociIntegrationTest {
                 "fencingVersion", AttributeValue.fromN(Long.toString(fencingVersion)))));
     }
 
-    /** Pedido com prazo no relógio dos testes, para o avanço do relógio não vencer o prazo. */
+    /**
+     * Pedido com prazo no relógio dos testes, para o avanço do relógio não vencer o
+     * prazo.
+     */
     private static TestRequests.Request request(String vehicle) {
         return TestRequests.enrichment(vehicle, TestClock.INSTANCE.instant().plus(DEADLINE));
     }
@@ -765,7 +782,10 @@ class EnrichmentReuseIT extends FlociIntegrationTest {
                 "1", vehicle, driver);
     }
 
-    /** {@code EnrichmentResolved} gravado no outbox para o pedido, com o resultado da consulta {@code queryId}. */
+    /**
+     * {@code EnrichmentResolved} gravado no outbox para o pedido, com o resultado
+     * da consulta {@code queryId}.
+     */
     private JsonNode resolved(String queryId, TestRequests.Request recipient) {
         String eventId = EventIds.enrichmentResolved(queryId, recipient.workRef());
         Map<String, AttributeValue> outbox = item("OUTBOX#" + eventId, "META");
@@ -778,21 +798,21 @@ class EnrichmentReuseIT extends FlociIntegrationTest {
 
     private static List<Map<String, AttributeValue>> partition(String queryId) {
         return DYNAMO_DB.query(builder -> builder
-                        .tableName(TABLE)
-                        .consistentRead(true)
-                        .keyConditionExpression("pk = :pk")
-                        .expressionAttributeValues(Map.of(":pk", AttributeValue.fromS("QUERY#" + queryId))))
+                .tableName(TABLE)
+                .consistentRead(true)
+                .keyConditionExpression("pk = :pk")
+                .expressionAttributeValues(Map.of(":pk", AttributeValue.fromS("QUERY#" + queryId))))
                 .items();
     }
 
     private static List<Map<String, AttributeValue>> followers(String queryKey) {
         return DYNAMO_DB.query(builder -> builder
-                        .tableName(TABLE)
-                        .consistentRead(true)
-                        .keyConditionExpression("pk = :pk AND begins_with(sk, :prefix)")
-                        .expressionAttributeValues(Map.of(
-                                ":pk", AttributeValue.fromS("INFLIGHT#" + queryKey),
-                                ":prefix", AttributeValue.fromS("FOLLOWER#"))))
+                .tableName(TABLE)
+                .consistentRead(true)
+                .keyConditionExpression("pk = :pk AND begins_with(sk, :prefix)")
+                .expressionAttributeValues(Map.of(
+                        ":pk", AttributeValue.fromS("INFLIGHT#" + queryKey),
+                        ":prefix", AttributeValue.fromS("FOLLOWER#"))))
                 .items();
     }
 }

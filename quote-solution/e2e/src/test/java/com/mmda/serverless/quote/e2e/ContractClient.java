@@ -30,9 +30,12 @@ import java.util.regex.Pattern;
 import org.yaml.snakeyaml.Yaml;
 
 /**
- * Cliente da API da quote no e2e (T22): toda troca é conferida contra o {@code contracts/openapi.yaml}, o mesmo
- * arquivo que o frontend consome. A resposta é sempre conferida; a requisição, só quando a API a aceita, porque os
- * casos de erro a fazem inválida de propósito. Guarda as operações do contrato exercitadas.
+ * Cliente da API da quote no e2e (T22): toda troca é conferida contra o
+ * {@code contracts/openapi.yaml}, o mesmo
+ * arquivo que o frontend consome. A resposta é sempre conferida; a requisição,
+ * só quando a API a aceita, porque os
+ * casos de erro a fazem inválida de propósito. Guarda as operações do contrato
+ * exercitadas.
  */
 final class ContractClient {
 
@@ -65,18 +68,25 @@ final class ContractClient {
         return ids;
     }
 
-    /** {@code operationId} das operações que o e2e já exercitou nesta execução, com qualquer status. */
+    /**
+     * {@code operationId} das operações que o e2e já exercitou nesta execução, com
+     * qualquer status.
+     */
     Set<String> exercised() {
         return new TreeSet<>(exercised);
     }
 
-    /** {@code operationId} das operações com ao menos uma resposta 2xx conferida contra o contrato. */
+    /**
+     * {@code operationId} das operações com ao menos uma resposta 2xx conferida
+     * contra o contrato.
+     */
     Set<String> succeeded() {
         return new TreeSet<>(succeeded);
     }
 
     /**
-     * Envia a requisição e confere a troca contra o contrato. {@code token} nulo vai sem {@code Authorization};
+     * Envia a requisição e confere a troca contra o contrato. {@code token} nulo
+     * vai sem {@code Authorization};
      * {@code pathAndQuery} começa em {@code /v1}.
      */
     HttpResponse<String> send(String token, String method, String pathAndQuery, Map<String, String> headers,
@@ -136,7 +146,8 @@ final class ContractClient {
                 answer.withHeader(name, values);
             }
         });
-        // NOTE: nos erros a requisição pode ser inválida de propósito; só a resposta precisa seguir o contrato
+        // NOTE: nos erros a requisição pode ser inválida de propósito; só a resposta
+        // precisa seguir o contrato
         ValidationReport report = response.statusCode() < 300
                 ? validator.validate(request.build(), answer.build())
                 : validator.validateResponse(path, Request.Method.valueOf(method.toUpperCase(Locale.ROOT)),
@@ -155,7 +166,10 @@ final class ContractClient {
         });
     }
 
-    /** A operação de literal mais longo vence: {@code /v1/operations/issues} antes de {@code /v1/operations/{id}}. */
+    /**
+     * A operação de literal mais longo vence: {@code /v1/operations/issues} antes
+     * de {@code /v1/operations/{id}}.
+     */
     private Optional<String> operationOf(String method, String path) {
         return operations.stream()
                 .filter(operation -> operation.method().equalsIgnoreCase(method))

@@ -5,8 +5,10 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * {@code detail} do {@code InsurerQuoteRequested} (desenho, §3). {@code risk} é a cópia autorizada do
- * snapshot e {@code enrichment} o resumo do enriquecimento; a provider repassa os dois à seguradora sem
+ * {@code detail} do {@code InsurerQuoteRequested} (desenho, §3). {@code risk} é
+ * a cópia autorizada do
+ * snapshot e {@code enrichment} o resumo do enriquecimento; a provider repassa
+ * os dois à seguradora sem
  * interpretá-los, então eles ficam como mapas.
  */
 public record InsurerQuoteRequest(

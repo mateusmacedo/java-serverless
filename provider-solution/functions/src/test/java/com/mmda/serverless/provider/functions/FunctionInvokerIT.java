@@ -23,8 +23,10 @@ import software.amazon.awssdk.services.sqs.model.Message;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * O handler da Lambda ({@code FunctionInvoker}) com eventos no formato do serviço: confere a desserialização
- * de {@code SQSEvent} e {@code DynamodbEvent} e a resposta de falha parcial (§7 e §14).
+ * O handler da Lambda ({@code FunctionInvoker}) com eventos no formato do
+ * serviço: confere a desserialização
+ * de {@code SQSEvent} e {@code DynamodbEvent} e a resposta de falha parcial (§7
+ * e §14).
  */
 class FunctionInvokerIT extends FlociIntegrationTest {
 

@@ -12,9 +12,12 @@ import org.jboss.logging.Logger;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 
 /**
- * Ciclo de vida das ocorrências da quote (M5): revisa as do índice {@code ISSUE_OPEN} e resolve as que sumiram. Só
- * a {@code STUCK_VERSION} entra nele, e some quando a versão sai do {@code ACTIVE_VERSION} (§3 e §9 do desenho). Uma
- * ocorrência que segue aberta continua no índice; o próximo ciclo do {@code reconciler} a revisa de novo.
+ * Ciclo de vida das ocorrências da quote (M5): revisa as do índice
+ * {@code ISSUE_OPEN} e resolve as que sumiram. Só
+ * a {@code STUCK_VERSION} entra nele, e some quando a versão sai do
+ * {@code ACTIVE_VERSION} (§3 e §9 do desenho). Uma
+ * ocorrência que segue aberta continua no índice; o próximo ciclo do
+ * {@code reconciler} a revisa de novo.
  */
 @ApplicationScoped
 public class IssueReviewer {
@@ -29,7 +32,10 @@ public class IssueReviewer {
         this.config = config;
     }
 
-    /** Contadores: {@code open} (seguem abertas) e {@code resolved}. A falha de uma fica no log e não para as outras. */
+    /**
+     * Contadores: {@code open} (seguem abertas) e {@code resolved}. A falha de uma
+     * fica no log e não para as outras.
+     */
     Map<String, Integer> review(Instant now) {
         Map<String, Integer> report = new LinkedHashMap<>(Map.of("open", 0, "resolved", 0));
         for (Map<String, AttributeValue> indexed : table.indexed(QuoteKeys.ISSUE_OPEN, config.reconcilerBatchSize())) {
@@ -44,7 +50,8 @@ public class IssueReviewer {
     }
 
     private boolean reviewIssue(String issueId, Instant now) {
-        // WHY: o índice é eventualmente consistente; a leitura da tabela confirma que a ocorrência segue aberta
+        // WHY: o índice é eventualmente consistente; a leitura da tabela confirma que a
+        // ocorrência segue aberta
         Optional<Map<String, AttributeValue>> found = table.get(QuoteKeys.issuePk(issueId), QuoteKeys.META);
         if (found.isEmpty() || !QuoteIssues.Status.OPEN.name().equals(Attr.string(found.get(), "status"))) {
             return false;
@@ -67,8 +74,8 @@ public class IssueReviewer {
     }
 
     private boolean stillActive(String quoteId, int version) {
-        Optional<Map<String, AttributeValue>> versionItem =
-                table.get(QuoteKeys.quotePk(quoteId), QuoteKeys.versionSk(version));
+        Optional<Map<String, AttributeValue>> versionItem = table.get(QuoteKeys.quotePk(quoteId),
+                QuoteKeys.versionSk(version));
         return versionItem.isPresent()
                 && !Phase.TERMINAL.name().equals(Attr.string(versionItem.get(), "phase"))
                 && QuoteKeys.ACTIVE_VERSION.equals(Attr.string(versionItem.get(), QuoteKeys.GSI2_PK));

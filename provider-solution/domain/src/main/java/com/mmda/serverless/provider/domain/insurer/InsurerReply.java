@@ -3,8 +3,10 @@ package com.mmda.serverless.provider.domain.insurer;
 import java.util.List;
 
 /**
- * Corpo da resposta de uma seguradora simulada, no protocolo dela ({@code POST /sim/insurers/<id>/quotes}).
- * {@code outcome} é {@code OFFER}, {@code DECLINED} ou {@code PENDING_INFORMATION}; a resposta {@code 202}
+ * Corpo da resposta de uma seguradora simulada, no protocolo dela
+ * ({@code POST /sim/insurers/<id>/quotes}).
+ * {@code outcome} é {@code OFFER}, {@code DECLINED} ou
+ * {@code PENDING_INFORMATION}; a resposta {@code 202}
  * de uma seguradora assíncrona traz só {@code providerRequestId}.
  */
 public record InsurerReply(

@@ -11,8 +11,10 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Catálogo de fixtures do laboratório, lido do classpath ({@code contracts/fixtures/catalog.json}
- * empacotado no zip). Referências só se resolvem dentro da organização do usuário.
+ * Catálogo de fixtures do laboratório, lido do classpath
+ * ({@code contracts/fixtures/catalog.json}
+ * empacotado no zip). Referências só se resolvem dentro da organização do
+ * usuário.
  */
 @Singleton
 public class Catalog {

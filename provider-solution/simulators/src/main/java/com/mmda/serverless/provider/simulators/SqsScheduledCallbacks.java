@@ -4,7 +4,10 @@ import org.springframework.stereotype.Component;
 import software.amazon.awssdk.services.sqs.SqsClient;
 import tools.jackson.databind.ObjectMapper;
 
-/** Callbacks na fila {@code sim-callbacks}, com o atraso no {@code DelaySeconds} da mensagem. */
+/**
+ * Callbacks na fila {@code sim-callbacks}, com o atraso no {@code DelaySeconds}
+ * da mensagem.
+ */
 @Component
 class SqsScheduledCallbacks implements ScheduledCallbacks {
 

@@ -29,7 +29,8 @@ import software.amazon.awssdk.services.dynamodb.model.ConditionalCheckFailedExce
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItem;
 
 /**
- * Consultas, tentativas, evidências, quota e {@code CONSUMED} na tabela da provider. Toda gravação que
+ * Consultas, tentativas, evidências, quota e {@code CONSUMED} na tabela da
+ * provider. Toda gravação que
  * precisa ser atômica com o resultado passa por uma só transação (desenho, §8).
  */
 @Component
@@ -47,7 +48,7 @@ class QueryLedger {
     private final ReuseLedger reuse;
 
     QueryLedger(DynamoDbClient dynamoDb, Transactions transactions, OutboxStore outbox, ProviderProperties properties,
-                ReuseLedger reuse) {
+            ReuseLedger reuse) {
         this.dynamoDb = dynamoDb;
         this.transactions = transactions;
         this.outbox = outbox;
@@ -78,11 +79,15 @@ class QueryLedger {
     enum LeaderSettlement {
         SETTLED,
         /**
-         * Outra entrega do mesmo pedido já o tinha respondido ({@code HIT} ou {@code JOIN}): a conclusão foi
+         * Outra entrega do mesmo pedido já o tinha respondido ({@code HIT} ou
+         * {@code JOIN}): a conclusão foi
          * gravada sem o outbox e o {@code CONSUMED} próprios.
          */
         SETTLED_ALREADY_ANSWERED,
-        /** A lease foi transferida: a {@code fencingVersion} do {@code INFLIGHT#} não é mais a do líder. */
+        /**
+         * A lease foi transferida: a {@code fencingVersion} do {@code INFLIGHT#} não é
+         * mais a do líder.
+         */
         FENCED,
         REUSE_CHANGED,
         ALREADY_SETTLED
@@ -90,10 +95,10 @@ class QueryLedger {
 
     Optional<QueryRecord> load(String queryId) {
         List<Map<String, AttributeValue>> items = dynamoDb.query(builder -> builder
-                        .tableName(properties.tableName())
-                        .consistentRead(true)
-                        .keyConditionExpression("pk = :pk")
-                        .expressionAttributeValues(Map.of(":pk", s(Items.queryPk(queryId)))))
+                .tableName(properties.tableName())
+                .consistentRead(true)
+                .keyConditionExpression("pk = :pk")
+                .expressionAttributeValues(Map.of(":pk", s(Items.queryPk(queryId)))))
                 .items();
         Map<String, AttributeValue> meta = null;
         List<QueryRecord.Attempt> attempts = new ArrayList<>();
@@ -135,44 +140,55 @@ class QueryLedger {
         return ownerOf(queryId).map(QueryOwner::organizationId);
     }
 
-    /** Organização e cotação gravadas na {@code QUERY}; vazio quando a consulta não existe. */
+    /**
+     * Organização e cotação gravadas na {@code QUERY}; vazio quando a consulta não
+     * existe.
+     */
     Optional<QueryOwner> ownerOf(String queryId) {
         Map<String, AttributeValue> item = dynamoDb.getItem(builder -> builder
-                        .tableName(properties.tableName())
-                        .consistentRead(true)
-                        .key(Items.key(Items.queryPk(queryId), META)))
+                .tableName(properties.tableName())
+                .consistentRead(true)
+                .key(Items.key(Items.queryPk(queryId), META)))
                 .item();
-        return Items.string(item, "organizationId").map(organizationId ->
-                new QueryOwner(organizationId, Items.string(item, "quoteId").orElse(null)));
+        return Items.string(item, "organizationId")
+                .map(organizationId -> new QueryOwner(organizationId, Items.string(item, "quoteId").orElse(null)));
     }
 
     record QueryOwner(String organizationId, String quoteId) {
     }
 
-    /** Consultas do índice ({@code QUERY_IN_FLIGHT} ou {@code QUERY_UNKNOWN}) com {@code gsi2sk} antes do instante. */
+    /**
+     * Consultas do índice ({@code QUERY_IN_FLIGHT} ou {@code QUERY_UNKNOWN}) com
+     * {@code gsi2sk} antes do instante.
+     */
     List<String> indexedQueries(String gsi2pk, Instant before, int limit) {
         return dynamoDb.query(builder -> builder
-                        .tableName(properties.tableName())
-                        .indexName(GSI2)
-                        .keyConditionExpression("gsi2pk = :state AND gsi2sk < :before")
-                        .expressionAttributeValues(Map.of(
-                                ":state", s(gsi2pk),
-                                ":before", s(Timestamps.format(before))))
-                        .limit(limit))
+                .tableName(properties.tableName())
+                .indexName(GSI2)
+                .keyConditionExpression("gsi2pk = :state AND gsi2sk < :before")
+                .expressionAttributeValues(Map.of(
+                        ":state", s(gsi2pk),
+                        ":before", s(Timestamps.format(before))))
+                .limit(limit))
                 .items().stream()
                 .map(item -> Items.string(item, Items.PK).orElseThrow().substring("QUERY#".length()))
                 .toList();
     }
 
     /**
-     * Tira a consulta {@code UNKNOWN} do índice: sem API de situação, nada a conclui sozinho, e a ocorrência
-     * {@code UNKNOWN_QUERY} já aberta a acompanha. WHY: no índice, ela ocuparia o lote do reconciler para sempre.
+     * Tira a consulta {@code UNKNOWN} do índice: sem API de situação, nada a
+     * conclui sozinho, e a ocorrência
+     * {@code UNKNOWN_QUERY} já aberta a acompanha. WHY: no índice, ela ocuparia o
+     * lote do reconciler para sempre.
      */
     void leaveUnknownIndex(String queryId) {
         unknownIndex(queryId, "REMOVE gsi2pk, gsi2sk", Map.of());
     }
 
-    /** Leva a consulta {@code UNKNOWN} que continua sem conclusão para o fim do índice, atrás das não conferidas. */
+    /**
+     * Leva a consulta {@code UNKNOWN} que continua sem conclusão para o fim do
+     * índice, atrás das não conferidas.
+     */
     void deferUnknown(String queryId, Instant now) {
         unknownIndex(queryId, "SET gsi2sk = :now", Map.of(":now", s(Timestamps.format(now))));
     }
@@ -196,17 +212,17 @@ class QueryLedger {
 
     boolean isConsumed(String eventId) {
         return dynamoDb.getItem(builder -> builder
-                        .tableName(properties.tableName())
-                        .consistentRead(true)
-                        .key(Items.key(Items.consumedPk(eventId), META)))
+                .tableName(properties.tableName())
+                .consistentRead(true)
+                .key(Items.key(Items.consumedPk(eventId), META)))
                 .hasItem();
     }
 
     Optional<StoredEvidence> loadEvidence(String queryId, String evidenceId) {
         Map<String, AttributeValue> item = dynamoDb.getItem(builder -> builder
-                        .tableName(properties.tableName())
-                        .consistentRead(true)
-                        .key(Items.key(Items.queryPk(queryId), Items.evidenceSk(evidenceId))))
+                .tableName(properties.tableName())
+                .consistentRead(true)
+                .key(Items.key(Items.queryPk(queryId), Items.evidenceSk(evidenceId))))
                 .item();
         if (item.isEmpty()) {
             return Optional.empty();
@@ -220,8 +236,10 @@ class QueryLedger {
     }
 
     /**
-     * Antes do HTTP, numa transação (§8): a liderança, a conferência do índice lido, a consulta do líder em voo
-     * com a {@code fencingVersion}, a {@code ATTEMPT#0001} com {@code startedAt} e o débito da quota.
+     * Antes do HTTP, numa transação (§8): a liderança, a conferência do índice
+     * lido, a consulta do líder em voo
+     * com a {@code fencingVersion}, a {@code ATTEMPT#0001} com {@code startedAt} e
+     * o débito da quota.
      */
     Leading lead(QueryDraft draft, ReusePlan.Lead plan, QuotaReservation quota, Instant now) {
         Transactions.Result result = transactions.write(List.of(
@@ -242,7 +260,10 @@ class QueryLedger {
         return result.conditionFailedAt(1) ? Leading.REUSE_CHANGED : Leading.QUOTA_EXHAUSTED;
     }
 
-    /** Antes do HTTP: a consulta em voo, a {@code ATTEMPT#0001} com {@code startedAt} e o débito da quota. */
+    /**
+     * Antes do HTTP: a consulta em voo, a {@code ATTEMPT#0001} com
+     * {@code startedAt} e o débito da quota.
+     */
     Reservation reserveFirst(QueryDraft draft, QuotaReservation quota, Instant now) {
         Transactions.Result result = transactions.write(List.of(
                 putQuery(draft, QueryState.IN_FLIGHT, now),
@@ -254,7 +275,10 @@ class QueryLedger {
         return result.conditionFailedAt(0) ? Reservation.QUERY_EXISTS : Reservation.QUOTA_EXHAUSTED;
     }
 
-    /** Retry do worker: nova tentativa e nova reserva de quota, só com a consulta ainda em voo. */
+    /**
+     * Retry do worker: nova tentativa e nova reserva de quota, só com a consulta
+     * ainda em voo.
+     */
     Reservation reserveNext(String queryId, int sequence, QuotaReservation quota, Instant now) {
         Transactions.Result result = transactions.write(List.of(
                 TransactWriteItem.builder()
@@ -276,7 +300,10 @@ class QueryLedger {
         return Reservation.NOT_IN_FLIGHT;
     }
 
-    /** Encerra uma tentativa sem concluir a consulta, como depois de um erro transitório. */
+    /**
+     * Encerra uma tentativa sem concluir a consulta, como depois de um erro
+     * transitório.
+     */
     void finishAttempt(String queryId, Settlement.AttemptResult attempt, Instant now) {
         AttemptUpdate update = attemptUpdate(attempt, now);
         dynamoDb.updateItem(builder -> builder
@@ -288,9 +315,12 @@ class QueryLedger {
     }
 
     /**
-     * Grava a conclusão numa transação. Devolve {@code false} quando a consulta já não estava em voo (ou já
-     * existia, na conclusão sem chamada): outra entrega concluiu antes e nada foi gravado. Se só o outbox ou o
-     * {@code CONSUMED} próprios falharem, outra entrega já respondeu ao pedido: a consulta existente é concluída
+     * Grava a conclusão numa transação. Devolve {@code false} quando a consulta já
+     * não estava em voo (ou já
+     * existia, na conclusão sem chamada): outra entrega concluiu antes e nada foi
+     * gravado. Se só o outbox ou o
+     * {@code CONSUMED} próprios falharem, outra entrega já respondeu ao pedido: a
+     * consulta existente é concluída
      * sem eles, e a conclusão sem chamada não cria consulta.
      */
     boolean settle(Settlement settlement, Instant now) {
@@ -298,7 +328,8 @@ class QueryLedger {
     }
 
     /**
-     * {@link #settle} a partir dos estados dados. WHY: a reconciliação conclui também a consulta {@code UNKNOWN}
+     * {@link #settle} a partir dos estados dados. WHY: a reconciliação conclui
+     * também a consulta {@code UNKNOWN}
      * pela API de situação, como o callback que chega depois (§8).
      */
     boolean settleFrom(Settlement settlement, Set<QueryState> from, Instant now) {
@@ -306,9 +337,12 @@ class QueryLedger {
     }
 
     /**
-     * {@link #settle} só se nenhuma tentativa passou das {@code attempts} lidas. WHY: o reconciler conclui sem
-     * chamada a consulta sem tentativa aberta; uma reentrega do worker que reservou outra tentativa depois dessa
-     * leitura pode estar chamando o fornecedor, e a conclusão "antes da chamada" seria falsa (§9).
+     * {@link #settle} só se nenhuma tentativa passou das {@code attempts} lidas.
+     * WHY: o reconciler conclui sem
+     * chamada a consulta sem tentativa aberta; uma reentrega do worker que reservou
+     * outra tentativa depois dessa
+     * leitura pode estar chamando o fornecedor, e a conclusão "antes da chamada"
+     * seria falsa (§9).
      */
     boolean settleWithoutNewAttempt(Settlement settlement, int attempts, Instant now) {
         TransactWriteItem noNewAttempt = TransactWriteItem.builder()
@@ -321,7 +355,7 @@ class QueryLedger {
     }
 
     private boolean settleFrom(Settlement settlement, Set<QueryState> from, List<TransactWriteItem> guards,
-                               Instant now) {
+            Instant now) {
         List<TransactWriteItem> conclusion = new ArrayList<>();
         conclusion.add(settlement.newQuery() == null
                 ? settleQuery(settlement.queryId(), settlement.finalState(), from, now)
@@ -344,14 +378,19 @@ class QueryLedger {
     }
 
     /**
-     * Conclusão do líder (§8), numa transação: a consulta, a liderança como lápide (só com a própria
-     * {@code fencingVersion} e consulta), o índice de reuso quando o resultado é reutilizável ({@code reuseEntry}
-     * não nulo, condicionado à revisão lida), a tentativa, a evidência, o outbox próprio e o {@code CONSUMED}.
-     * WHY: outra entrega do mesmo pedido pode tê-lo respondido depois da conferência do {@code CONSUMED}; a
-     * liderança conclui mesmo assim, sem o outbox e o {@code CONSUMED} próprios, para os seguidores e o índice.
+     * Conclusão do líder (§8), numa transação: a consulta, a liderança como lápide
+     * (só com a própria
+     * {@code fencingVersion} e consulta), o índice de reuso quando o resultado é
+     * reutilizável ({@code reuseEntry}
+     * não nulo, condicionado à revisão lida), a tentativa, a evidência, o outbox
+     * próprio e o {@code CONSUMED}.
+     * WHY: outra entrega do mesmo pedido pode tê-lo respondido depois da
+     * conferência do {@code CONSUMED}; a
+     * liderança conclui mesmo assim, sem o outbox e o {@code CONSUMED} próprios,
+     * para os seguidores e o índice.
      */
     LeaderSettlement settleAsLeader(Settlement settlement, LeaderTerm term, ReuseIndexEntry reuseEntry,
-                                    Long expectedRevision, Instant now) {
+            Long expectedRevision, Instant now) {
         if (settlement.newQuery() != null || settlement.evidence() == null || settlement.event() == null) {
             throw new IllegalArgumentException("A leader settles its existing query with evidence and an event");
         }
@@ -397,14 +436,19 @@ class QueryLedger {
         return Optional.empty();
     }
 
-    /** O outbox ou o {@code CONSUMED} próprios, gravados a partir de {@code ownAnswerIndex}, já existiam. */
+    /**
+     * O outbox ou o {@code CONSUMED} próprios, gravados a partir de
+     * {@code ownAnswerIndex}, já existiam.
+     */
     private static boolean answeredBefore(Transactions.Result result, int ownAnswerIndex) {
         return result.conditionFailedAt(ownAnswerIndex) || result.conditionFailedAt(ownAnswerIndex + 1);
     }
 
     /**
-     * Resolução de um pedido sem consulta própria ({@code HIT} ou {@code JOIN}): o outbox e o {@code CONSUMED}
-     * do pedido, numa transação. Devolve {@code false} se o pedido já estava resolvido.
+     * Resolução de um pedido sem consulta própria ({@code HIT} ou {@code JOIN}): o
+     * outbox e o {@code CONSUMED}
+     * do pedido, numa transação. Devolve {@code false} se o pedido já estava
+     * resolvido.
      */
     boolean resolve(Settlement.OutboxEvent event, String requestEventId, String workRef, Instant now) {
         return transactions.write(List.of(outbox.put(event, now), putConsumed(requestEventId, workRef, now)))
@@ -431,9 +475,12 @@ class QueryLedger {
     }
 
     /**
-     * Resposta {@code 202}: grava o {@code providerRequestId} na consulta e na tentativa (§8, passo 3). A
-     * tentativa continua aberta: o resultado, que chega pelo callback, é que a conclui. Devolve {@code false}
-     * quando a consulta já não estava em voo, como depois de um callback com {@code clientReference} mais
+     * Resposta {@code 202}: grava o {@code providerRequestId} na consulta e na
+     * tentativa (§8, passo 3). A
+     * tentativa continua aberta: o resultado, que chega pelo callback, é que a
+     * conclui. Devolve {@code false}
+     * quando a consulta já não estava em voo, como depois de um callback com
+     * {@code clientReference} mais
      * rápido que esta gravação.
      */
     boolean recordAccepted(String queryId, int sequence, String providerRequestId, Integer httpStatus, Instant now) {
@@ -539,9 +586,12 @@ class QueryLedger {
     }
 
     /**
-     * Fan-out a fazer, gravado na conclusão do líder e encerrado depois dele (§8). WHY: se o líder cai entre a
-     * conclusão e o fan-out e outra cadeia começa antes da reentrega dele, só este item ainda diz quais seguidores
-     * esperam a evidência; o reconciler refaz o fan-out por ele (pendência do M2, §9).
+     * Fan-out a fazer, gravado na conclusão do líder e encerrado depois dele (§8).
+     * WHY: se o líder cai entre a
+     * conclusão e o fan-out e outra cadeia começa antes da reentrega dele, só este
+     * item ainda diz quais seguidores
+     * esperam a evidência; o reconciler refaz o fan-out por ele (pendência do M2,
+     * §9).
      */
     private TransactWriteItem putFanOut(LeaderTerm term, Settlement settlement, Instant now) {
         String concludedAt = Timestamps.format(now);
@@ -561,7 +611,10 @@ class QueryLedger {
                 .build();
     }
 
-    /** O fan-out da conclusão terminou: o item sai do índice do reconciler e fica como registro. */
+    /**
+     * O fan-out da conclusão terminou: o item sai do índice do reconciler e fica
+     * como registro.
+     */
     void markFannedOut(String queryId, Instant now) {
         try {
             dynamoDb.updateItem(builder -> builder
@@ -575,16 +628,19 @@ class QueryLedger {
         }
     }
 
-    /** Fan-outs gravados antes de {@code concludedBefore} e ainda não encerrados, mais antigos primeiro. */
+    /**
+     * Fan-outs gravados antes de {@code concludedBefore} e ainda não encerrados,
+     * mais antigos primeiro.
+     */
     List<PendingFanOut> pendingFanOuts(Instant concludedBefore, int limit) {
         return dynamoDb.query(builder -> builder
-                        .tableName(properties.tableName())
-                        .indexName(GSI2)
-                        .keyConditionExpression("gsi2pk = :pending AND gsi2sk < :before")
-                        .expressionAttributeValues(Map.of(
-                                ":pending", s(Items.FANOUT_PENDING),
-                                ":before", s(Timestamps.format(concludedBefore))))
-                        .limit(limit))
+                .tableName(properties.tableName())
+                .indexName(GSI2)
+                .keyConditionExpression("gsi2pk = :pending AND gsi2sk < :before")
+                .expressionAttributeValues(Map.of(
+                        ":pending", s(Items.FANOUT_PENDING),
+                        ":before", s(Timestamps.format(concludedBefore))))
+                .limit(limit))
                 .items().stream()
                 .map(item -> new PendingFanOut(
                         Items.string(item, "queryId").orElseThrow(),
@@ -599,7 +655,7 @@ class QueryLedger {
 
     /** Fan-out gravado na conclusão de um líder e ainda não encerrado. */
     record PendingFanOut(String queryId, LeaderTerm term, String leaderWorkRef, String evidenceId,
-                         Instant concludedAt) {
+            Instant concludedAt) {
     }
 
     private TransactWriteItem putAttempt(String queryId, int sequence, Instant now) {
@@ -648,7 +704,10 @@ class QueryLedger {
         return new AttemptUpdate(expression.toString(), values);
     }
 
-    /** Uma tentativa é encerrada uma vez só; {@code startedAt} e {@code finishedAt} nunca são reescritos. */
+    /**
+     * Uma tentativa é encerrada uma vez só; {@code startedAt} e {@code finishedAt}
+     * nunca são reescritos.
+     */
     private record AttemptUpdate(String expression, Map<String, AttributeValue> values) {
 
         static final String CONDITION = "attribute_exists(pk) AND attribute_not_exists(finishedAt)";

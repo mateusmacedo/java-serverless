@@ -3,10 +3,12 @@ package com.mmda.serverless.quote.domain;
 import java.util.List;
 
 /**
- * Regra de elegibilidade {@code elig-1}, só com dados de entrada, aplicada antes de qualquer chamada
+ * Regra de elegibilidade {@code elig-1}, só com dados de entrada, aplicada
+ * antes de qualquer chamada
  * externa paga (PRD §9, passo 2).
  * <p>
- * WHY: a entrada incompleta vem antes da recusa porque a precedência da consolidação (PRD §8) coloca
+ * WHY: a entrada incompleta vem antes da recusa porque a precedência da
+ * consolidação (PRD §8) coloca
  * {@code NEEDS_INFORMATION} acima de {@code INELIGIBLE}.
  */
 public final class EligibilityRule {

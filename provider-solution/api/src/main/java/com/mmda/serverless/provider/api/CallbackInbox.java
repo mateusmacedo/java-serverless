@@ -23,9 +23,12 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * Inbox dos callbacks (§8): grava o callback com {@code attribute_not_exists}, encontra a consulta pelo
- * {@code clientReference} ou pelo encontro no {@code CORR#} e conclui a consulta numa transação idempotente.
- * O {@code CONSUMED} do pedido vai nessa transação, junto do outbox, nunca antes.
+ * Inbox dos callbacks (§8): grava o callback com {@code attribute_not_exists},
+ * encontra a consulta pelo
+ * {@code clientReference} ou pelo encontro no {@code CORR#} e conclui a
+ * consulta numa transação idempotente.
+ * O {@code CONSUMED} do pedido vai nessa transação, junto do outbox, nunca
+ * antes.
  */
 @Component
 class CallbackInbox {
@@ -44,7 +47,10 @@ class CallbackInbox {
         this.clock = clock;
     }
 
-    /** {@code processingStatus} é {@code PROCESSED} quando o resultado já está gravado; senão, {@code RECEIVED}. */
+    /**
+     * {@code processingStatus} é {@code PROCESSED} quando o resultado já está
+     * gravado; senão, {@code RECEIVED}.
+     */
     record Receipt(String externalEventId, String processingStatus, boolean duplicate) {
 
         boolean processed() {
@@ -53,8 +59,10 @@ class CallbackInbox {
     }
 
     /**
-     * Um callback repetido é reconhecido pela inbox. Se ele já foi processado, nada muda; se ainda está
-     * {@code RECEIVED}, a associação é refeita, porque a entrega anterior pode ter caído antes dela.
+     * Um callback repetido é reconhecido pela inbox. Se ele já foi processado, nada
+     * muda; se ainda está
+     * {@code RECEIVED}, a associação é refeita, porque a entrega anterior pode ter
+     * caído antes dela.
      */
     Receipt receive(String provider, CallbackEnvelope callback, String payload) {
         Instant now = clock.instant();
@@ -105,7 +113,7 @@ class CallbackInbox {
     private static boolean belongs(CallbackTable.QueryView query, String provider, String providerRequestId) {
         return provider.equals(query.insurerId())
                 && (query.providerRequestId() == null || providerRequestId == null
-                || query.providerRequestId().equals(providerRequestId));
+                        || query.providerRequestId().equals(providerRequestId));
     }
 
     private void process(CallbackTable.QueryView query, String provider, String externalEventId) {
@@ -126,7 +134,7 @@ class CallbackInbox {
     }
 
     private CallbackTable.CallbackSettlement settlement(CallbackTable.QueryView query, String provider,
-                                                        CallbackTable.InboxEntry inbox, Instant now) {
+            CallbackTable.InboxEntry inbox, Instant now) {
         String queryId = query.queryId();
         InsurerVerdict verdict = InsurerProtocol.classifyCallback(result(inbox.payload()));
         Optional<CallbackTable.Attempt> attempt = query.callbackAttempt(inbox.providerRequestId());
@@ -154,7 +162,10 @@ class CallbackInbox {
                 query.workRef());
     }
 
-    /** Resultado guardado na inbox; ilegível vira {@code null}, que a classificação trata como {@code UNAVAILABLE}. */
+    /**
+     * Resultado guardado na inbox; ilegível vira {@code null}, que a classificação
+     * trata como {@code UNAVAILABLE}.
+     */
     private InsurerReply result(String payload) {
         try {
             InsurerCallback callback = objectMapper.readValue(payload, InsurerCallback.class);

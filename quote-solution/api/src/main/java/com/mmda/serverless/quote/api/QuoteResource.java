@@ -40,8 +40,10 @@ import org.jboss.logging.Logger;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 
 /**
- * Cotações da API de produto (contrato compartilhado). A criação só aceita duravelmente: a execução é
- * iniciada depois, pelo outbox, e a resposta 202 aponta o recurso de acompanhamento.
+ * Cotações da API de produto (contrato compartilhado). A criação só aceita
+ * duravelmente: a execução é
+ * iniciada depois, pelo outbox, e a resposta 202 aponta o recurso de
+ * acompanhamento.
  */
 @Path("/v1/quotes")
 @Authenticated
@@ -106,16 +108,19 @@ public class QuoteResource {
                 created.version(), organizationId, correlation.id());
         String statusUrl = QuoteKeys.statusUrl(created.quoteId(), created.version());
         return Response.accepted(new QuoteViews.QuoteAccepted(created.quoteId(), created.version(), created.phase(),
-                        statusUrl))
-                // WHY: location(URI) resolve o caminho contra a URI base da aplicação, que atrás do API Gateway não
+                statusUrl))
+                // WHY: location(URI) resolve o caminho contra a URI base da aplicação, que
+                // atrás do API Gateway não
                 // tem o stage; o contrato diz que o Location é o mesmo valor do statusUrl
                 .header(HttpHeaders.LOCATION, statusUrl)
                 .build();
     }
 
     /**
-     * Nova versão (T17): substitui a atual com o novo pedido, resolvido no catálogo como na criação. A versão
-     * substituída continua consultável, com os resultados dela isolados, e deixa de aceitar seleção.
+     * Nova versão (T17): substitui a atual com o novo pedido, resolvido no catálogo
+     * como na criação. A versão
+     * substituída continua consultável, com os resultados dela isolados, e deixa de
+     * aceitar seleção.
      */
     @POST
     @Path("/{quoteId}/versions")
@@ -152,13 +157,14 @@ public class QuoteResource {
                 created.version(), organizationId, correlation.id());
         String statusUrl = QuoteKeys.statusUrl(created.quoteId(), created.version());
         return Response.accepted(new QuoteViews.QuoteAccepted(created.quoteId(), created.version(), created.phase(),
-                        statusUrl))
+                statusUrl))
                 .header(HttpHeaders.LOCATION, statusUrl)
                 .build();
     }
 
     /**
-     * Cotações da organização, as mais novas primeiro, com o resumo da versão atual gravado no {@code META}. Os
+     * Cotações da organização, as mais novas primeiro, com o resumo da versão atual
+     * gravado no {@code META}. Os
      * filtros são combinados; ao mudar a combinação, o cliente recomeça sem cursor.
      */
     @GET
@@ -186,9 +192,12 @@ public class QuoteResource {
     }
 
     /**
-     * Seleção definitiva de uma oferta (RN13): registra a intenção de proposta, sem emitir proposta. A mesma oferta
-     * devolve a seleção existente, mesmo com outra chave (T28); a oferta expirada, de versão substituída ou fora da
-     * versão é recusada sem gravar nada (T18). Permitida durante {@code QUOTING}, enquanto as outras consultas seguem.
+     * Seleção definitiva de uma oferta (RN13): registra a intenção de proposta, sem
+     * emitir proposta. A mesma oferta
+     * devolve a seleção existente, mesmo com outra chave (T28); a oferta expirada,
+     * de versão substituída ou fora da
+     * versão é recusada sem gravar nada (T18). Permitida durante {@code QUOTING},
+     * enquanto as outras consultas seguem.
      */
     @POST
     @Path("/{quoteId}/versions/{version}/selection")
@@ -230,7 +239,8 @@ public class QuoteResource {
     @GET
     @Path("/{quoteId}/versions/{version}/offers")
     public QuoteViews.OffersPage offers(@PathParam("quoteId") String quoteId, @PathParam("version") String version,
-            @QueryParam("cursor") String cursor, @QueryParam("limit") @DefaultValue(Paging.DEFAULT_LIMIT) String limit) {
+            @QueryParam("cursor") String cursor,
+            @QueryParam("limit") @DefaultValue(Paging.DEFAULT_LIMIT) String limit) {
         String organizationId = caller.require(Permission.QUOTES_READ);
         int pageSize = Paging.limit(limit);
         int number = versionNumber(version);
@@ -242,7 +252,10 @@ public class QuoteResource {
         return views.offers(number, meta, items, Instant.now(clock), cursor, pageSize);
     }
 
-    /** Cotação de outra organização responde 404, como a inexistente: não revela que ela existe. */
+    /**
+     * Cotação de outra organização responde 404, como a inexistente: não revela que
+     * ela existe.
+     */
     private Map<String, AttributeValue> ownedMeta(String quoteId, String organizationId) {
         return store.meta(quoteId)
                 .filter(meta -> organizationId.equals(Items.string(meta, "organizationId")))
@@ -275,7 +288,8 @@ public class QuoteResource {
     }
 
     /**
-     * Posição de um cursor da listagem; fora do formato {@code <createdAt>#<quoteId>} ou maior que uma chave do
+     * Posição de um cursor da listagem; fora do formato
+     * {@code <createdAt>#<quoteId>} ou maior que uma chave do
      * índice, responde 400.
      */
     static String position(String cursor) {
@@ -294,7 +308,8 @@ public class QuoteResource {
                 return number;
             }
         } catch (NumberFormatException invalid) {
-            // WHY: versão malformada é tratada como recurso inexistente, sem revelar o formato interno
+            // WHY: versão malformada é tratada como recurso inexistente, sem revelar o
+            // formato interno
         }
         throw ApiException.notFound();
     }
