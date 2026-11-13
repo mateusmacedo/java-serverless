@@ -1,0 +1,84 @@
+<c-container [fluid]="true" class="border-bottom px-4">
+  <button
+    [cSidebarToggle]="sidebarId()"
+    ariaLabel="Mostrar ou esconder o menu lateral"
+    cHeaderToggler
+    class="btn"
+    style="margin-inline-start: -14px"
+    toggle="visible"
+  >
+    <svg aria-hidden="true" cIcon name="cilMenu" size="lg"></svg>
+  </button>
+  <c-header-nav class="ms-auto">
+    <div class="nav-item py-1">
+      <div class="vr h-100 mx-2 text-body text-opacity-75"></div>
+    </div>
+    <c-dropdown alignment="end" variant="nav-item">
+      <button [caret]="false" aria-label="Escolher o tema" cDropdownToggle>
+        <svg [name]="themeIcon()" aria-hidden="true" cIcon size="lg"></svg>
+      </button>
+      <div cDropdownMenu>
+        @for (mode of colorModes; track mode.name) {
+          <button
+            (click)="colorMode.set(mode.name)"
+            [active]="colorMode() === mode.name"
+            cDropdownItem
+            class="d-flex align-items-center"
+            type="button"
+          >
+            <svg [name]="mode.icon" aria-hidden="true" cIcon class="me-2" size="lg"></svg>
+            {{ mode.text }}
+          </button>
+        }
+      </div>
+    </c-dropdown>
+    <div class="nav-item py-1">
+      <div class="vr h-100 mx-2 text-body text-opacity-75"></div>
+    </div>
+  </c-header-nav>
+  <c-header-nav class="mx-0">
+    <c-dropdown [popperOptions]="{ placement: 'bottom-start' }" variant="nav-item">
+      <button
+        [caret]="false"
+        aria-label="Abrir o menu do usuário"
+        cDropdownToggle
+        class="py-0 pe-0"
+        type="button"
+      >
+        <c-avatar color="secondary" shape="rounded-1" size="md" textColor="white">
+          <svg aria-hidden="true" cIcon name="cilUser"></svg>
+        </c-avatar>
+      </button>
+      <ul cDropdownMenu class="pt-0 w-auto">
+        <li>
+          <h6
+            cDropdownHeader
+            class="bg-body-secondary text-body-secondary fw-semibold py-2 rounded-top"
+          >
+            {{ me()?.displayName || 'Conta' }}
+            @if (me()?.organizationId; as organizationId) {
+              <span class="d-block small fw-normal">Organização {{ organizationId }}</span>
+            }
+          </h6>
+        </li>
+        <li>
+          <button (click)="logout()" cDropdownItem type="button">
+            <svg aria-hidden="true" cIcon class="me-2" name="cilAccountLogout"></svg>
+            Sair
+          </button>
+        </li>
+      </ul>
+    </c-dropdown>
+  </c-header-nav>
+</c-container>
+<c-container [fluid]="true" class="px-4">
+  <c-breadcrumb class="m-0">
+    @for (crumb of crumbs(); track crumb.url; let last = $last) {
+      <c-breadcrumb-item
+        [active]="last"
+        [url]="last ? undefined : crumb.url"
+        >{{ crumb.label }}</c-breadcrumb-item
+      >
+    }
+  </c-breadcrumb>
+</c-container>

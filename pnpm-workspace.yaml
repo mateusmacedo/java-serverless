@@ -1,5 +1,12 @@
+packages:
+  - backoffice
+
+# WHY: os pacotes nativos trazem binários pré-compilados; os scripts só recompilam quando falta o binário da plataforma
 allowBuilds:
+  '@parcel/watcher': false
   aws-sdk: false
   es5-ext: false
   esbuild: false
+  lmdb: false
+  msgpackr-extract: false
   serverless: false

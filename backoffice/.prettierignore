@@ -1,0 +1,9 @@
+/dist
+/.angular
+/coverage
+/test-output
+/playwright-report
+/runtime
+/public/config.json
+# WHY: saída do gerador do cliente da API, que voltaria ao formato dele na próxima geração (pnpm codegen).
+/src/app/shared/api/generated/

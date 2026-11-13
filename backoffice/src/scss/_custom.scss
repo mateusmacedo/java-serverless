@@ -1,0 +1,57 @@
+@use 'scrollbar';
+
+// WHY: o `.visually-hidden` dos cabeçalhos é `position: absolute`; sem um ancestral posicionado dentro do
+// `.table-responsive`, ele escapa da rolagem da tabela e alarga a página no celular.
+.table-responsive {
+  position: relative;
+}
+
+// Pular para o conteúdo: só aparece com o foco do teclado.
+.skip-link:not(:focus) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+// Fases da cotação: a linha do tempo marca a fase atual sem depender só da cor (o texto diz o estado).
+.phase-timeline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--cui-spacer, 1rem) 0;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+  counter-reset: phase;
+
+  > li {
+    flex: 1 1 8rem;
+    padding-top: 0.75rem;
+    border-top: 4px solid var(--cui-border-color);
+    color: var(--cui-secondary-color);
+  }
+
+  > li.done {
+    border-top-color: var(--cui-success);
+    color: var(--cui-body-color);
+  }
+
+  > li.current {
+    border-top-color: var(--cui-primary);
+    color: var(--cui-body-color);
+    font-weight: 600;
+  }
+}
+
+// Comparação: a primeira coluna fica visível ao rolar a tabela no tablet.
+.comparison-table th[scope='row'] {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background-color: var(--cui-body-bg);
+}
+
+.comparison-table .divergent {
+  background-color: var(--cui-warning-bg-subtle);
+}
