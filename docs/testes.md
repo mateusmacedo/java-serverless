@@ -715,6 +715,17 @@ O `QuoteFlowE2E` passou nos 26 testes em 793,8 s (13:17 min no Maven), com a má
 | T01 com duas seguradoras: `POST` até a primeira oferta | 6,8 s |
 | T01 com duas seguradoras: `POST` até `TERMINAL` | 16,9 s |
 
+## Backoffice
+
+Os testes do painel ficam fora do Maven e não precisam de stack: as respostas da API e do Cognito saem de
+`contracts/fixtures`, só nos testes. Comandos, números e a cobertura de cada caso FT01 a FT17 do PRD de
+frontend estão no [README do backoffice](../backoffice/README.md#testes).
+
+| Nível | Comando | Precisa de | Tempo aproximado |
+|---|---|---|---|
+| Unidade e componente (Vitest) | `pnpm --filter backoffice test` | Node.js 24 | Segundos |
+| Navegador (Playwright) | `pnpm --filter backoffice e2e` | Chromium do Playwright | Cerca de 2 min |
+
 ## Limites conhecidos
 
 - A resposta `500` da API não tem teste.
@@ -747,5 +758,5 @@ O `QuoteFlowE2E` passou nos 26 testes em 793,8 s (13:17 min no Maven), com a má
   fica para o M6.
 - O `TransactionConflict` da corrida do T29 não é exercitado: o Floci serializa as transações
   condicionais.
-- O consumo do contrato e das fixtures pelo frontend não é conferido, porque o frontend ainda não existe no
-  repositório; a igualdade das fixtures está conferida no backend e nos simuladores.
+- O backoffice consome o contrato pelo cliente gerado e usa as fixtures como respostas nos próprios testes
+  ([Backoffice](#backoffice)), mas a jornada dele contra a stack implantada ainda não foi registrada.

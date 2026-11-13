@@ -49,7 +49,7 @@ barramento da plataforma e espera as respostas por task token. É uma das duas s
 |---|---|
 | Chamadas aos fornecedores, reuso de enriquecimento, liderança, quota, callbacks e API de situação | `provider-solution` ([cotação](../../docs/cotacao.md#módulos)) |
 | Barramento `platform-<stage>-events` | Stack `platform/events` ([platform/docs](../../platform/docs/README.md#barramento-de-eventos)) |
-| Frontend | Fora do repositório; segue o [`contracts/openapi.yaml`](../../contracts/openapi.yaml) |
+| Frontend | [`backoffice/`](../../backoffice/README.md), que gera o cliente a partir do [`contracts/openapi.yaml`](../../contracts/openapi.yaml) |
 | Emissão de proposta | Fora do MVP: a seleção registra só a intenção de proposta (RN13) |
 
 ## Módulos Maven

@@ -3,7 +3,8 @@
 Contexto da plataforma de cotação de seguros de automóvel: a `quote-solution` (Quarkus) recebe o pedido,
 orquestra a cotação de cada versão e expõe a API de produto; a `provider-solution` (Spring) fala com os
 fornecedores (enriquecimento e seguradoras), com reuso, quota, callbacks e reconciliação de consultas; as
-duas conversam pelo barramento `platform-<stage>-events`. Os requisitos estão nos PRDs de
+duas conversam pelo barramento `platform-<stage>-events`; o `backoffice` (Angular) é o painel do corretor e do
+operador sobre a API de produto. Os requisitos estão nos PRDs de
 [backend](prds/prd-cotacao-seguros-backend-v2.md) e de [frontend](prds/prd-cotacao-seguros-frontend-v2.md);
 o detalhe de implementação, no [desenho técnico](plataforma-de-cotacao.md).
 
@@ -26,6 +27,7 @@ Este arquivo é o ponto de entrada do contexto. O detalhe de cada módulo fica n
 | `platform/events` | Serverless, sem funções | Barramento `platform-<stage>-events`; sobe antes das duas soluções | [platform/docs](../platform/docs/README.md#barramento-de-eventos) e [ADR 0013](decisoes/0013-barramento-da-plataforma.md) |
 | `quote-solution` | Quarkus, Step Functions, DynamoDB | API de produto, máquina de estado `quote-flow`, regras de elegibilidade e de seleção de seguradoras, consolidação, seleção de oferta, outbox, waiters, operações e reconciliação das cotações | [quote-solution/docs](../quote-solution/docs/README.md) |
 | `provider-solution` | Spring, SQS, DynamoDB, S3 | Workers de enriquecimento e de seguradoras, reuso com liderança, quota por provedor, API de callbacks com inbox, reconciliação de consultas e simuladores de fornecedores | [provider-solution/docs](../provider-solution/docs/README.md) |
+| `backoffice` | Angular, CoreUI | Painel do PRD de frontend: lista, nova cotação, acompanhamento com polling, comparação, complementação, seleção e ocorrências, com login no user pool da `quote-solution` | [backoffice/README](../backoffice/README.md) e [ADR 0016](decisoes/0016-backoffice-angular-e-login-cognito.md) |
 
 Os módulos Maven de cada solução e os pacotes Java estão no [§1 do desenho](plataforma-de-cotacao.md#1-módulos);
 os recursos de cada stack, no [§2](plataforma-de-cotacao.md#2-recursos-por-stack).
@@ -49,7 +51,7 @@ os recursos de cada stack, no [§2](plataforma-de-cotacao.md#2-recursos-por-stac
 ## Contrato com os clientes
 
 - **API de produto:** [`contracts/openapi.yaml`](../contracts/openapi.yaml), OpenAPI 3.1 na versão `1.0.0`,
-  compartilhado com o frontend no caminho fixado pelos dois PRDs. Cobre as 14 operações da seção "Contrato
+  compartilhado com o [backoffice](../backoffice/README.md) no caminho fixado pelos dois PRDs. Cobre as 14 operações da seção "Contrato
   compartilhado de integração — versão 2.0", com a permissão de cada uma em `x-permissions`, paginação por
   cursor, `Idempotency-Key` nas mutações e o erro padrão.
 - **Fixtures:** [`contracts/fixtures/`](../contracts/fixtures) traz o `catalog.json` do laboratório (o mesmo
@@ -62,7 +64,8 @@ os recursos de cada stack, no [§2](plataforma-de-cotacao.md#2-recursos-por-stac
   no OpenAPI da provider.
 - **Como os testes conferem:** os testes de contrato da `quote-api` e o `ContractClient` do `quote-e2e`
   validam cada troca contra o `contracts/openapi.yaml`; os detalhes estão em
-  [Testes](testes.md#contrato). Os comandos de validação com as CLIs estão em
+  [Testes](testes.md#contrato). Os testes do backoffice respondem com as mesmas fixtures
+  ([Testes](testes.md#backoffice)). Os comandos de validação com as CLIs estão em
   [Como validar](README.md#como-validar).
 
 ## Diagrama de contexto
@@ -79,6 +82,7 @@ UpdateElementStyle("external_system", $bgColor="#FCE4EC", $fontColor="#37474F", 
 UpdateBoundaryStyle($elementName="enterprise", $bgColor="#FAFCFF", $fontColor="#1A237E", $borderColor="#1565C0", $type="contexto", $legendText="Plataforma de cotação")
 AddElementTag("quarkus", $bgColor="#1565C0", $fontColor="#FFFFFF", $borderColor="#0D47A1", $legendText="Solução em Quarkus")
 AddElementTag("spring", $bgColor="#2E7D32", $fontColor="#FFFFFF", $borderColor="#1B5E20", $legendText="Solução em Spring")
+AddElementTag("angular", $bgColor="#C2185B", $fontColor="#FFFFFF", $borderColor="#880E4F", $legendText="Frontend em Angular")
 AddElementTag("barramento", $bgColor="#F3E5F5", $fontColor="#4A148C", $borderColor="#6A1B9A", $legendText="Barramento da plataforma")
 AddElementTag("simulado", $bgColor="#FCE4EC", $fontColor="#37474F", $borderColor="#AD1457", $borderStyle=DashedLine(), $legendText="Fornecedor simulado no laboratório")
 AddRelTag("assincrono", $textColor="#6A1B9A", $lineColor="#6A1B9A", $lineStyle=DashedLine(), $legendText="Assíncrono (EventBridge e SQS)")
@@ -87,9 +91,8 @@ title $I_VEICULO Cotação de seguros — contexto (C4 nível 1)
 
 Person(usuario, "Usuário da organização", "Cria cotações, acompanha as versões e seleciona ofertas", $sprite="user")
 Person(operador, "Operador da organização", "Acompanha ocorrências e pede reconciliação de consultas", $sprite="user_cog")
-System_Ext(frontend, "Frontend da cotação", "Fora deste repositório; segue o contracts/openapi.yaml", $sprite="globe")
-
 Enterprise_Boundary(plataforma, "Plataforma de cotação") {
+    System(frontend, "backoffice", "Painel Angular: cotações, ofertas, seleção e ocorrências; cliente gerado do contracts/openapi.yaml", $sprite="globe", $tags="angular")
     System(quote, "quote-solution", "API de produto, quote-flow, consolidação, seleção, operações e reconciliação das cotações", $sprite="cubes", $tags="quarkus")
     System(bus, "platform-<stage>-events", "Barramento EventBridge da stack platform", $sprite="exchange_alt", $tags="barramento")
     System(provider, "provider-solution", "Enriquecimento com reuso, seguradoras, quota, callbacks e reconciliação de consultas", $sprite="leaf", $tags="spring")
@@ -133,6 +136,7 @@ provider; a regra de cada cenário está no [§10 do desenho](plataforma-de-cota
 | [0013](decisoes/0013-barramento-da-plataforma.md) | Barramento da plataforma em stack própria, regras com filas SQS como alvo |
 | [0014](decisoes/0014-cotacao-em-duas-solucoes-e-task-token.md) | Cotação em duas soluções, com o task token restrito à `quote-solution` |
 | [0015](decisoes/0015-modelo-dynamodb-e-outbox-da-cotacao.md) | Uma tabela por solução e outbox publicada por DynamoDB Streams |
+| [0016](decisoes/0016-backoffice-angular-e-login-cognito.md) | Backoffice em Angular com o template do marketplace e login no user pool da stack |
 
 ## Diagramas
 
