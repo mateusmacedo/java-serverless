@@ -130,4 +130,21 @@
             </plugins>
         </pluginManagement>
     </build>
+
+    <profiles>
+        <!-- WHY: o servidor Java do VS Code (m2e) compila junto com o Maven; com a mesma saída, ele reescreve
+             target/classes no meio de um mvn verify e quebra a compilação dos testes. A propriedade m2e.version
+             só existe dentro do m2e, então o mvn da linha de comando continua em target/ -->
+        <profile>
+            <id>ide</id>
+            <activation>
+                <property>
+                    <name>m2e.version</name>
+                </property>
+            </activation>
+            <build>
+                <directory>${project.basedir}/target-ide</directory>
+            </build>
+        </profile>
+    </profiles>
 </project>
