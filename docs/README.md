@@ -11,6 +11,7 @@ dia, comece pelo [README da raiz](../README.md).
 | [Fluxos](flows.md) | Máquina de estado e sequência dos caminhos de sucesso, falha e reprocessamento |
 | [API HTTP da sample-solution (OpenAPI 3.1)](api/openapi.yaml) | Contrato do `POST /requests` |
 | [API HTTP da receipt-solution (OpenAPI 3.1)](api/receipt-solution.openapi.yaml) | Contrato do `GET /receipts/{requestId}` e do `POST /receipts` |
+| [API de callbacks da provider-solution (OpenAPI 3.1)](api/provider-solution.openapi.yaml) | Contrato do `POST /v1/providers/{provider}/callbacks`, com a assinatura `X-Signature` |
 | [Eventos e mensagens da sample-solution (AsyncAPI 3.1)](events/asyncapi.yaml) | Estado entre os passos, SNS, EventBridge, filas `audit` e `dlq` e invocação do reprocessamento |
 | [Eventos da receipt-solution (AsyncAPI 3.1)](events/receipt-solution.asyncapi.yaml) | `RequestCompleted` consumido da sample-solution e `ReceiptIssued` publicado |
 | [Testes](testing.md) | Níveis de teste, o que cada um cobre e como rodar |
@@ -55,7 +56,7 @@ Execute na raiz do projeto. As ferramentas são baixadas sob demanda pelo `pnpm 
 
 ```bash
 # OpenAPI
-for spec in openapi receipt-solution.openapi; do
+for spec in openapi receipt-solution.openapi provider-solution.openapi; do
   pnpm --package=@redocly/cli@2.77.0 dlx redocly lint "docs/api/$spec.yaml"
 done
 

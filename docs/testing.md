@@ -8,7 +8,7 @@ convenção de nome, para o build do dia a dia não depender de deploy.
 |---|---|---|---|---|
 | Unitário e contrato | `*Test` | `mvn test` | Nada além do JDK | Segundos |
 | Integração com Floci | `*IT` | `mvn verify` | Docker | Cerca de 30 s |
-| Ponta a ponta | `*E2E` | `pnpm test:e2e` | Docker, Floci do `compose.yaml` no ar e login no Serverless | Cerca de 5 min, dos quais cerca de 3 min no `QuoteFlowE2E` (191,0 s na última rodada) |
+| Ponta a ponta | `*E2E` | `pnpm test:e2e` | Docker, Floci do `compose.yaml` no ar e login no Serverless | O `QuoteFlowE2E` leva cerca de 5 min (312,0 s na rodada de fechamento do M3), além do deploy e dos outros módulos |
 
 O `mvn verify` roda os dois primeiros níveis em todas as soluções. Os módulos `sample-solution/e2e`,
 `receipt-solution/e2e` e `quote-solution/e2e` só entram no build com o perfil `-Pe2e`.
@@ -18,7 +18,7 @@ seleciona só o POM agregador da solução e não roda teste nenhum:
 
 ```bash
 mvn -B verify -pl quote-solution/domain,quote-solution/api,quote-solution/functions -am
-mvn -B verify -pl provider-solution/domain,provider-solution/functions,provider-solution/simulators -am
+mvn -B verify -pl provider-solution/domain,provider-solution/api,provider-solution/functions,provider-solution/simulators -am
 ```
 
 Outra forma é acrescentar `-amd`, que inclui os módulos filhos: `mvn -B verify -pl quote-solution -am -amd`.
@@ -41,6 +41,15 @@ Quarkus, nas do BOM do Quarkus, com o AssertJ fixado no `quarkus-parent` na mesm
 | `receipt-functions` | `AnnounceReceiptHandlerTest` | `ReceiptIssued` com o comprovante no `detail` e erro quando o EventBridge rejeita o evento |
 | `receipt-api` | `ReceiptResourceTest` | `@QuarkusTest` com os clients trocados por `@InjectMock`: consulta `200` e `404`, emissão `202` com `{"detail": ...}` na entrada da execução, `400` e `415` sem iniciar execução |
 | `provider-domain` | `ReusePlanTest` | Decisão do pedido de enriquecimento diante do `REUSE#` e do `INFLIGHT#`: `HIT` só com evidência válida, reutilizável e da política de reuso em vigor (`NOT_FOUND` declarado sim, `FAILED` nunca); `JOIN` na lease válida, inclusive no próprio instante `leaseUntil`; liderança na versão seguinte, continuando a cadeia na lease vencida e começando outra depois de `COMPLETED`; nunca seguidor de si mesmo; conclusão que responde só aos seguidores da própria cadeia |
+| `provider-domain` | `CallbackSignatureTest` | Assinatura `sha256=` com o hexadecimal do HMAC dos bytes exatos do corpo; qualquer mudança no corpo, no segredo ou no cabeçalho é rejeitada; envelope do callback (`externalEventId`, correlação e `result`); as duas metades do encontro no `CORR#` |
+| `provider-domain` | `InsurerProtocolTest` (casos do M3) | Resultado do callback classificado como a resposta síncrona; `202` com um `providerRequestId` que nenhum callback poderia levar é `UNAVAILABLE` sem retry; veredito terminal convertido em resultado, com a resposta bruta só na oferta; `InsurerResultRecorded` montado da consulta gravada igual ao montado do pedido |
+| `provider-functions` | `ServerlessConfigurationTest` (casos do M3) | `sim-callbacks` com DLQ e visibilidade de 6 vezes o timeout do sender; só o callback do `vehicle-beta-late` passa da espera da seguradora na quote (o caso `dev` fica ignorado enquanto a quote não declara esse stage); rota de callbacks na `api`, com papel próprio que lê o `callback-secret`; os papéis da `api` e do `simCallbackSender` com exatamente as ações que o código e o consumo da fila usam, o do sender sem `sqs:ChangeMessageVisibility` (`callbackRolesGrantOnlyWhatTheirCodeAndTheQueueConsumerUse`); quota de cada provedor como parâmetro do stage |
+| `provider-simulators` | `BetaInsurerSimulatorControllerTest` | `202` com `providerRequestId` e callback agendado com o `clientReference`; recusa e pendência por callback; cenários silencioso, duplicado (mesmo evento duas vezes), atrasado e antecipado (sem atraso, só com o `providerRequestId`); situação `PROCESSING` até o resultado ficar pronto e 404 para referência desconhecida; pedido sem `clientReference` rejeitado |
+| `provider-simulators` | `SimCallbackSenderTest` | Callback assinado aceito pela validação da API de callbacks; callback antecipado sem `clientReference`; resposta recusada falha só a própria mensagem |
+| `quote-domain` | `RulesTest` (casos do M3) | `sel-1` com o ano do perfil enriquecido, conferido antes do uso; o T26 com veículo enriquecido anterior a 2000 e ano de entrada recente; o ano do snapshot como reserva quando o perfil não o traz |
+| `quote-domain` | `ConsolidationTest` (casos do M3) | Precedência do PRD §8 nos 15 pares de resultados terminais de duas seguradoras, nas duas ordens; o T07 (o motivo da recusa fica no resultado, e o `outcome` não tem motivo); recusa com pendência é `NEEDS_INFORMATION`, não `NO_OFFER` |
+| `quote-functions` | `FunctionTimingConfigurationTest` (casos do M3) | O orçamento cobre todas as seguradoras do laboratório, então nenhuma selecionada é cortada pelo limite; o `Map` despacha cada seguradora selecionada e registra a própria falha; timeouts estáticos, porque o Floci ignora `TimeoutSecondsPath` |
+| `quote-functions` | `ProviderEventsConsumptionTest` e `QuoteEventsContractTest` (casos do M3) | Os exemplos de `InsurerResultRecorded` de cada seguradora no AsyncAPI da provider viram `RESULT` e oferta; o `InsurerQuoteRequested` segue o contrato para cada seguradora |
 | `quote-functions` | `EnrichmentEvidenceRecordingTest` | Evidência usada gravada com `evidenceId`, `queryId` e `policyVersion` em `HIT`, `JOIN` e `MISS`; `NOT_FOUND` compartilhado com as referências declaradas; evento fora do contrato devolvido à fila sem evidência, antes e depois do prazo do waiter, sem virar evidência tardia; resultado tardio com a referência da evidência. Os 17 eventos fora do contrato cobrem `reuseDecision` ausente ou desconhecido, `evidenceId`, `queryId` ou `policyVersion` ausentes, `policyVersion` vazio, fora do pattern ou que não é texto, `queryId` e `evidenceId` fora do pattern, `HIT` de resultado `FAILED`, `FOUND` sem `result` e `NOT_FOUND` com `notFoundRefs` ausente, vazio, que não é lista, com referência que o pedido não tem ou que não é texto |
 
 Os testes das functions da `sample-solution` simulam os clients do SDK com
@@ -62,6 +71,14 @@ O teste pega divergência de verdade: com a resposta `415` removida do OpenAPI, 
 [OpenAPI da receipt](api/receipt-solution.openapi.yaml), com o `openapi-request-validator-restassured`
 como filtro do RestAssured. Ele também pega divergência: com um campo obrigatório a mais no
 `Receipt` do contrato, a consulta falha com `validation.response.body.schema.required`.
+
+`CallbackApiContractTest`, no `provider-api`, confere o controller de callbacks contra o
+[OpenAPI do callback](api/provider-solution.openapi.yaml), com o `openapi-request-validator-mockmvc` num
+`@WebMvcTest`. Cobre o callback processado (`200`), o retido na inbox (`202`), a assinatura errada
+(`401`, sem chegar à inbox), o envelope inválido e o provedor desconhecido (`400` e `404`), o `result`
+fora do schema que ainda chega à inbox, o corpo grande demais (`413`, sem chegar à inbox) e o pedido sem
+assinatura, que não escreve o caminho no log. Na quote, o `QuoteApiContractTest` ganhou no M3 a versão
+`PARTIAL` com uma seguradora em `TIMED_OUT` (T08).
 
 Entre as soluções, `CompletedRequestContractTest`, na `receipt-solution`, lê o exemplo do
 `RequestCompleted` documentado no [AsyncAPI da sample](events/asyncapi.yaml), copiado em
@@ -131,22 +148,48 @@ Casos do `EnrichmentReuseIT` (as regras estão no §5 e no §8 do [desenho técn
 | `requestThatLosesTheIndexToAnotherLeaderRereadsItAndUsesTheNewEvidence` | Pedido cuja liderança é cancelada pelo `REUSE#` trocado relê o índice e usa a evidência nova (`HIT`) |
 | `leaderThatLosesTheIndexAtTheConclusionRereadsTheRevisionAndStillIndexesItsEvidence` | Líder que encontra o `REUSE#` trocado na conclusão relê a revisão e grava a própria evidência no índice |
 
-Na última rodada, o `mvn verify` dos módulos da provider e da quote, com o `spring-aws` que entra pelo
-`-am`, rodou 341 testes em 2 min 10 s, todos aprovados:
+O M3 acrescenta o módulo `provider-api`, com o próprio `FlociIntegrationTest`, e casos de callback,
+quota e `Map` nas duas soluções. As regras estão no §8 e no §9 do [desenho técnico](quotation-platform.md).
+O `provider-functions` tem dependência de teste do `provider-api`, só das classes (exclusão `*:*` das
+transitivas, sem a pilha web), e a ponte `CallbackApi`, em
+`functions/src/test/java/com/mmda/serverless/provider/api`, usa o `CallbackInbox` real. Assim o
+`InsurerCallbackIT` cobre o encontro no `CORR#` com o código real das duas metades, nas duas ordens,
+inclusive o callback com `clientReference` que conclui a consulta antes de o `202` ser gravado
+(`recordAccepted` devolve `false`), disparado durante a chamada pelo `ProviderStub.beforeAnswering`. A
+ordem "callback retido na inbox antes do `202`" só é coberta aqui: no `quote-e2e`, o callback antecipado
+chega depois do `202` (§13 do desenho).
+
+| Classe | O que cobre |
+|---|---|
+| `CallbackApiFlociIT` | Callback assinado com `clientReference` grava o resultado com o pedido consumido; assinatura errada ou ausente não grava nada; T11 (repetição reconhecida pela inbox, um só resultado); T12 nas duas ordens (callback depois da metade do worker, associado pelo `CORR#`, e callback retido antes dela, associado de novo quando repetido); callback mais rápido que o `202`, encontrado pelo `clientReference`; consulta já concluída, em que só a inbox passa a `PROCESSED`; `result` ilegível ou com campo de tipo errado, guardado e convertido em `UNAVAILABLE`; callback fora do contrato ou de outro provedor recusado |
+| `StreamLambdaHandlerFlociIT` | A Lambda da `api` pelo handler real, com o evento de proxy do API Gateway: a assinatura confere com os bytes que o `serverless-java-container` entrega ao controller, e a errada é recusada |
+| `InsurerCallbackIT` | `202` mantém a consulta em voo até o callback; T12 nas duas ordens, com os callbacks pelo `CallbackApi`: retido antes do `202` e concluído pela metade do worker, ou chegado depois da metade do worker e concluído pela API; callback com `clientReference` durante a chamada, que conclui a consulta antes de o `202` ser gravado: o `202` não muda a consulta, e a metade do worker no `CORR#` não acha pendência nem grava outro resultado; o mesmo callback concluído pela API e pelo worker deixa os mesmos itens, com os mesmos atributos; reentrega com `providerRequestId` refaz a metade do worker sem chamar, com e sem callback pendente; T11 com vários callbacks pendentes para a mesma consulta e um só resultado; pendência de dados com os paths do snapshot |
+| `QuotaAcrossWorkflowsIT` | T21: 8 pedidos simultâneos de workflows diferentes, com quota 3, fazem 3 chamadas; na seguradora, os excedentes voltam à fila com atraso até a janela seguinte; no enriquecimento, com prazo que não alcança a janela seguinte, concluem com `FAILED` e `QUOTA_EXHAUSTED` |
+| `SimulatorsLambdaFlociIT` (casos do M3) | A beta aceita, agenda o callback e guarda a situação pelas duas referências; a Lambda do `simCallbackSender` entrega o callback da fila assinado com o `callback-secret` |
+| `QuoteFunctionsFlociIT` (casos do M3) | T01 com as duas seguradoras no `Map`, cada oferta com a sua evidência; T07; T08 (oferta visível antes de a outra seguradora expirar, versão `PARTIAL`); pendência da beta com e sem oferta da alpha; T11 (callback duplicado, uma oferta e retomada idempotente); T26 (veículo enriquecido anterior a 2000, `NO_OFFER` sem seguradora); seleção pelo ano enriquecido, e não pelo de entrada |
+| `QuoteApiFlociIT` (casos do M3) | T08 (oferta de uma seguradora visível enquanto a outra espera, e mantida depois do `PARTIAL`) e T07 (motivo da recusa ao lado da oferta da outra seguradora) |
+
+Na rodada de fechamento do M3, o `mvn verify` dos módulos da provider e da quote, com o `spring-aws`
+que entra pelo `-am`, rodou 435 testes: 434 aprovados, nenhuma falha e 1 ignorado, o caso `dev` do
+`ServerlessConfigurationTest` que compara o atraso dos callbacks da beta com a espera da seguradora,
+porque a quote ainda não declara o stage `dev` (entra no M6).
 
 | Módulo | Testes |
 |---|---|
 | `spring-aws` | 5 |
-| `provider-domain` | 55 |
-| `provider-functions` | 86 (38 unitários e 48 de integração, 17 deles no `EnrichmentReuseIT`) |
-| `provider-simulators` | 14 |
-| `quote-domain` | 65 |
-| `quote-api` | 30 |
-| `quote-functions` | 86 (75 unitários, 39 deles no `EnrichmentEvidenceRecordingTest`, e 11 no `QuoteFunctionsFlociIT`) |
-| Total | 341 |
+| `provider-domain` | 63 |
+| `provider-api` | 18 (7 de contrato e 11 de integração) |
+| `provider-functions` | 107 (48 unitários, 1 deles ignorado, e 59 de integração, 17 no `EnrichmentReuseIT`, 9 no `InsurerCallbackIT` e 2 no `QuotaAcrossWorkflowsIT`) |
+| `provider-simulators` | 27 (23 unitários e 4 de integração) |
+| `quote-domain` | 85 (39 no `ConsolidationTest`) |
+| `quote-api` | 33 (22 de contrato e 11 de integração) |
+| `quote-functions` | 97 (79 unitários, 39 deles no `EnrichmentEvidenceRecordingTest`, e 18 no `QuoteFunctionsFlociIT`) |
+| Total | 435 (1 ignorado) |
+
+No fechamento do M2, eram 341.
 
 ```bash
-mvn -B verify -pl provider-solution/domain,provider-solution/functions,provider-solution/simulators,quote-solution/domain,quote-solution/api,quote-solution/functions -am
+mvn -B verify -pl provider-solution/domain,provider-solution/api,provider-solution/functions,provider-solution/simulators,quote-solution/domain,quote-solution/api,quote-solution/functions -am
 ```
 
 ## Ponta a ponta
@@ -172,13 +215,14 @@ fluxo, e não contagens exatas de reinício.
 
 A regra e a fila que capturam o `ReceiptIssued` são criadas pelo teste e removidas ao final.
 
-`QuoteFlowE2E`, no módulo `quote-solution/e2e`, cobre o M1 e o M2 da plataforma de cotação, com o
-barramento da plataforma, a `provider-solution` e a `quote-solution` implantados. São 11 testes:
+`QuoteFlowE2E`, no módulo `quote-solution/e2e`, cobre o M1, o M2 e o M3 da plataforma de cotação, com o
+barramento da plataforma, a `provider-solution` e a `quote-solution` implantados. São 18 testes, os 11 do
+M1 e do M2 e os 7 do M3:
 
 - **T01, variante com uma seguradora:** `vehicle-van-2022` com uso `COMMERCIAL` cota só na alpha e
   termina `COMPLETED`, com uma oferta selecionável, a evidência do enriquecimento na quote e na provider
   (`MISS`), a evidência da seguradora e uma única execução `SUCCEEDED`. O T01 do PRD, com duas
-  seguradoras, entra no M3.
+  seguradoras, é um teste do M3 (abaixo).
 - **T02:** o reenvio com a mesma chave, durante a execução (com o body reordenado e indentado) e depois
   do fim, devolve a mesma cotação, sem execução nova.
 - **T03:** a mesma chave com outro body responde `409 IDEMPOTENCY_CONFLICT`, e a cotação original não
@@ -209,6 +253,32 @@ barramento da plataforma, a `provider-solution` e a `quote-solution` implantados
 - **T27:** provedor de enriquecimento fora do ar termina `TECHNICAL_FAILURE` (`ENRICHMENT_FAILED`), sem
   perfil inventado e sem seguradora; a evidência usada é `MISS`, e não há `REUSE#` para o par, porque
   `FAILED` nunca entra no índice.
+- **T01 com duas seguradoras** (`t01_twoInsurersQuoteAndEveryOfferLinksItsEvidence`): a alpha responde
+  na chamada e a beta por callback; a versão termina `COMPLETED`, com uma oferta selecionável de cada
+  seguradora, cada uma apontando a consulta e a evidência da provider, e o callback da beta `PROCESSED` na
+  inbox, com a resposta bruta guardada na evidência.
+- **T07:** a beta recusa (`vehicle-beta-declines`) e a alpha oferece; a versão termina `COMPLETED`, com
+  uma oferta e o motivo `RISK_NOT_ACCEPTED` no resultado da beta.
+- **T08:** a beta aceita e não responde (`vehicle-beta-silent`); a oferta da alpha aparece no GET com a
+  fase `QUOTING` e a beta `PROCESSING`, e a versão termina `PARTIAL`, com a mesma oferta e a beta
+  `TIMED_OUT` (`STEP_TIMEOUT`). A consulta da beta fica `IN_FLIGHT` ou `UNKNOWN`, para a reconciliação do
+  M4.
+- **T11:** a beta entrega o mesmo callback duas vezes (`vehicle-beta-duplicate`); depois da conclusão, o
+  harness reenvia o callback assinado (a API responde 200 com `duplicate = true`) e republica o
+  `InsurerResultRecorded`. Como o descarte não grava nada, o teste espera a linha
+  `result <eventId> already consumed, discarded` no log `/aws/lambda/quote-solution-<stage>-resume`,
+  lida pelo `FilterLogEvents` do CloudWatch Logs do Floci (o `quote-e2e` tem a dependência de teste
+  `cloudwatchlogs`). A cotação, a consulta e a inbox não mudam, e há um só `CONSUMED` do evento.
+- **T12:** o callback antecipado (`vehicle-beta-early`) só com o `providerRequestId` é associado pelo
+  encontro no `CORR#`, com as duas metades gravadas, e a oferta chega sem perda. No Floci, ele chega
+  depois do `202`; a ordem inversa fica no `CallbackApiFlociIT` e no `InsurerCallbackIT`, este com o
+  código real das duas metades.
+- **T21:** com o `QUOTA#alpha` da janela atual reservado até sobrarem 2 chamadas e o da seguinte
+  esgotado, 5 cotações simultâneas fazem só 2 chamadas: 2 terminam `COMPLETED` e 3 `TECHNICAL_FAILURE`,
+  com a alpha `UNAVAILABLE` e `QUOTA_EXHAUSTED`, e nenhuma janela passa do limite.
+- **T26:** o veículo enriquecido anterior a 2000 termina `NO_OFFER` com `NO_APPLICABLE_INSURER`, sem
+  oferta, resultado, waiter nem consulta de seguradora; a seleção gravou `selectedInsurers` vazio com o
+  `selectionRuleVersion`.
 
 Cada caso de reuso usa um par veículo/condutor próprio: T01 e T02, `vehicle-van-2022` com
 `driver-acme-bruno`; T04, `vehicle-sedan-2019` com `driver-acme-ana`; T05, `vehicle-classic-1998` com
@@ -219,33 +289,54 @@ termina `NO_OFFER` sem chamar seguradora. Antes de T01, T04, T05 e T06, o harnes
 apaga o `REUSE#` e a partição `INFLIGHT#` (`META` e `FOLLOWER#`) dela; as consultas e evidências
 anteriores ficam.
 
+Nos casos do M3, o T01 com duas seguradoras usa `vehicle-hatch-2021` com `driver-acme-ana`, com o reuso
+do par apagado antes, como no T01 do M1, que continua; os casos da beta (T07, T08, T11 e T12) usam
+`driver-acme-bruno`; o T21 usa o `vehicle-van-2022` comercial, que só cota na alpha; o T26 usa
+`vehicle-classic-1998` com `driver-acme-ana`, o par do T05, e aceita `HIT` ou `MISS`. O harness lê
+também o `provider-solution/<stage>/callback-secret` do Floci local, para o T11 assinar o callback que
+reenvia. No T21, ele lê o limite da alpha do `serverless.yml` da provider, grava os dois `QUOTA#alpha` e
+os apaga no `finally`, para os casos seguintes terem a quota real da janela. O lado do enriquecimento
+do T21 fica no `QuotaAcrossWorkflowsIT`.
+
 O usuário de teste é criado pelas APIs administrativas do Cognito (`AdminCreateUser`,
 `AdminSetUserPassword` e `AdminAddUserToGroup`, nos grupos da organização e das permissões), e o
 access token vem de `InitiateAuth` com `USER_PASSWORD_AUTH`. Quem valida o token é a Lambda da API. O
 orçamento de cada espera é lido do bloco `params` do `serverless.yml` da quote, para o teste esperar o
 mesmo prazo que a máquina de estado tem: o T01, o T02 e cada cotação do T04 usam a invariante de
 orçamento com uma seguradora (70 s no local); o T05, o T25 e o T27, a mesma invariante sem seguradora
-(50 s); o T03, o T23 e o T24, o `stepsMarginSeconds` (30 s). O polling segue o `retryAfterSeconds`
-(3 s). O T06 usa uma espera única, que confere todas as cotações a cada intervalo de polling, de 50 s
+(50 s); o T03, o T23 e o T24, o `stepsMarginSeconds` (30 s). Os casos com duas seguradoras (T01 com
+duas, T07, T08, T11 e T12) usam a invariante com ceil(2 / `mapConcurrency`) = 1 espera de seguradora
+(70 s no local); o T26, a invariante sem seguradora (50 s); cada cotação do T21, a invariante com uma
+seguradora mais 1 s por cotação disparada (75 s). O polling segue o `retryAfterSeconds` (3 s). O T06 usa uma espera única, que confere todas as cotações a cada intervalo de polling, de 50 s
 mais N segundos (62 s com N = 12), porque o worker do Floci recebe cerca de 1 pedido por segundo. O
 T19 depende do agendamento, não da máquina: espera até 3 min, com polling de 5 s. Ele também é coberto
 pela integração do `quote-functions`.
 
-Na última rodada, os 11 testes do `QuoteFlowE2E` passaram em 191,0 s:
+Na rodada de fechamento do M3, os 18 testes do `QuoteFlowE2E` passaram em 312,0 s (5:15 min no
+Maven), sem build em paralelo e sem aquecer funções antes: a cadeia fria da beta cabe na espera de 20 s
+da seguradora ([desenho técnico](quotation-platform.md), §12). No fechamento do M2, os 11 testes
+levaram 191,0 s. Tempos por teste na rodada de fechamento do M3:
 
 | Teste | Tempo |
 |---|---|
-| T01 | 13,3 s |
+| T01, variante com uma seguradora | 10,3 s |
 | T02 | 9,2 s |
 | T03 | 3,1 s |
-| T04 | 18,3 s |
-| T05 | 12,3 s |
-| T06 (N = 12) | 30,0 s |
-| T19 | 70,2 s |
+| T04 | 18,4 s |
+| T05 | 12,4 s |
+| T06 (N = 12) | 29,5 s |
+| T19 | 55,3 s |
 | T23 | 3,1 s |
-| T24 | 8,7 s |
-| T25 | 15,2 s |
+| T24 | 9,1 s |
+| T25 | 6,2 s |
 | T27 | 6,1 s |
+| T01 com duas seguradoras | 31,7 s |
+| T07 | 12,2 s |
+| T08 | 24,2 s |
+| T11 | 23,4 s |
+| T12 | 9,3 s |
+| T21 | 40,8 s |
+| T26 | 6,2 s |
 
 ```bash
 docker compose up -d
