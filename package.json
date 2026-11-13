@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "deploy:local": "mvn -B -q package -DskipTests && pnpm run deploy:sample && pnpm run deploy:receipt",
+    "deploy:local": "mvn -B -q package -DskipTests && pnpm run deploy:platform && pnpm run deploy:sample && pnpm run deploy:receipt",
+    "deploy:platform": "cd platform/events && AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1 sls deploy --stage local",
     "deploy:sample": "cd sample-solution && AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1 sls deploy --stage local",
     "deploy:receipt": "cd receipt-solution && AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1 sls deploy --stage local",
     "test:e2e": "pnpm run deploy:local && mvn -B verify -Pe2e -pl sample-solution/e2e,receipt-solution/e2e"

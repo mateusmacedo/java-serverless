@@ -1,0 +1,35 @@
+service: platform
+
+frameworkVersion: "4"
+
+plugins:
+  - serverless-localstack
+
+custom:
+  names:
+    # Convenção <service>-<stage>-events: as soluções chegam ao barramento pelo nome, sem referência entre stacks (ADR 0013)
+    eventBus: ${self:service}-${sls:stage}-events
+  localstack:
+    stages:
+      - local
+    host: http://localhost
+    edgePort: 4566
+    autostart: false
+
+provider:
+  name: aws
+  region: us-east-1
+  stage: ${opt:stage, 'local'}
+
+resources:
+  Resources:
+    PlatformEventBus:
+      Type: AWS::Events::EventBus
+      Properties:
+        Name: ${self:custom.names.eventBus}
+
+  Outputs:
+    PlatformEventBusName:
+      Value: !Ref PlatformEventBus
+    PlatformEventBusArn:
+      Value: !GetAtt PlatformEventBus.Arn

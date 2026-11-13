@@ -16,6 +16,8 @@
         <module>platform/spring-aws</module>
         <module>sample-solution</module>
         <module>receipt-solution</module>
+        <module>provider-solution</module>
+        <module>quote-solution</module>
     </modules>
 
     <properties>
