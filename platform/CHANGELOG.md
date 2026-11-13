@@ -5,6 +5,24 @@ Todas as mudanças relevantes deste projeto ficam registradas aqui.
 O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e as versões seguem o
 [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [2.0.0] - 2026-11-13
+
+### Adicionado
+
+- `events`: stack `platform` com o barramento `platform-<stage>-events`, onde a `quote-solution` e a
+  `provider-solution` publicam eventos e declaram as regras. As soluções chegam a ele pelo nome, sem
+  referência entre stacks ([ADR 0013](../docs/decisoes/0013-barramento-da-plataforma.md)).
+
+### Alterado
+
+- `spring-parent`: exclui também o `apache5-client` de cada service do AWS SDK, que o SDK 2.57 passou a
+  trazer em runtime; o pacote segue só com o cliente HTTP do CRT.
+- Raiz: o build da IDE (perfil do m2e) grava em `target-ide`, para o servidor Java do VS Code não reescrever
+  o `target/classes` durante um build do Maven.
+- `spring-parent` e `quarkus-parent` passam a servir só à plataforma de cotação: a `sample-solution` e a
+  `receipt-solution` saíram do repositório
+  ([ADR 0017](../docs/decisoes/0017-remocao-das-solucoes-iniciais.md)).
+
 ## [1.0.0] - 2026-11-11
 
 Primeira versão estável.
@@ -24,4 +42,5 @@ Primeira versão estável.
   ([ADR 0012](../docs/decisoes/0012-aws-crt-com-nativos-linux-no-pacote.md)).
 - Versão do `openapi-request-validator` gerenciada nos dois parents, para os testes de contrato OpenAPI.
 
+[2.0.0]: https://github.com/mateusmacedo/java-serverless/releases/tag/v2.0.0
 [1.0.0]: https://github.com/mateusmacedo/java-serverless/releases/tag/v1.0.0
