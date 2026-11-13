@@ -16,60 +16,103 @@ tem o próprio [desenho técnico](plataforma-de-cotacao.md); as versões das pe�
 
 ## Contexto
 
-```mermaid
-flowchart LR
-    client([Cliente HTTP])
-    dev([Desenvolvedor])
-    subgraph solution[sample-solution - Spring]
-        api[API HTTP]
-        flow[Fluxo de processamento]
-    end
-    subgraph receipt[receipt-solution - Quarkus]
-        receiptApi[API HTTP]
-        receiptFlow[Emissão do comprovante]
-    end
-    aws[(Serviços AWS ou Floci)]
-    client -->|POST /requests| api
-    client -->|GET e POST /receipts| receiptApi
-    api --> flow
-    flow -->|RequestCompleted no EventBridge| receiptFlow
-    receiptApi -->|emissão manual| receiptFlow
-    solution -->|AWS SDK v2| aws
-    receipt -->|AWS SDK v2| aws
-    dev -->|pnpm deploy:local| aws
+```plantuml
+@startuml contexto
+!include diagramas/tema-plataforma.iuml
+left to right direction
+hide stereotype
+skinparam componentStyle rectangle
+title Contexto
+
+actor "Cliente HTTP" as client
+actor "Desenvolvedor" as dev
+rectangle "$I_SPRING sample-solution - Spring" as solution {
+    component "$I_API API HTTP" as api <<entrada>>
+    component "Fluxo de processamento" as flow
+}
+rectangle "$I_QUARKUS receipt-solution - Quarkus" as receipt {
+    component "$I_API API HTTP" as receiptApi <<entrada>>
+    component "Emissão do comprovante" as receiptFlow
+}
+database "Serviços AWS ou Floci" as aws
+
+client --> api : POST /requests
+client --> receiptApi : GET e POST /receipts
+api --> flow
+flow --> receiptFlow : RequestCompleted no EventBridge
+receiptApi --> receiptFlow : emissão manual
+solution --> aws : AWS SDK v2
+receipt --> aws : AWS SDK v2
+dev --> aws : pnpm deploy:local
+
+$legenda_camadas()
+@enduml
 ```
 
 ## Contêineres
 
-```mermaid
-flowchart TB
-    client([Cliente HTTP]) -->|POST /requests| apigw[API Gateway REST]
-    apigw --> apiFn[Lambda api - Spring MVC]
-    apiFn -->|PutObject| s3[(S3 payloads)]
-    apiFn -->|StartExecution| sfn{{Step Functions request-flow}}
-    sfn --> validate[Lambda validate]
-    sfn --> persist[Lambda persist]
-    sfn --> notify[Lambda notify]
-    sfn -->|em caso de falha| dlq[[SQS dlq]]
-    validate --> ssm[(SSM max-payload-bytes)]
-    validate --> secrets[(Secrets Manager signing-key)]
-    validate -->|GetObject| s3
-    persist -->|PutItem| ddb[(DynamoDB requests)]
-    notify -->|Publish| sns[[SNS notifications]]
-    notify -->|PutEvents| bus[[EventBridge events]]
-    bus -->|regra RequestCompleted| audit[[SQS audit]]
-    scheduler[EventBridge Scheduler - a cada 5 min] --> reprocess[Lambda reprocess]
-    reprocess -->|ReceiveMessage e DeleteMessage| dlq
-    reprocess -->|StartExecution| sfn
-    bus -->|regra da receipt-solution| receiptSfn{{Step Functions receipt-flow}}
-    receiptSfn --> issue[Lambda issue - Quarkus]
-    receiptSfn --> announce[Lambda announce - Quarkus]
-    issue -->|PutItem condicional| receipts[(DynamoDB receipts)]
-    announce -->|PutEvents ReceiptIssued| receiptBus[[EventBridge receipt events]]
-    client -->|GET e POST /receipts| receiptGw[API Gateway REST da receipt]
-    receiptGw --> receiptApiFn[Lambda api - Quarkus REST]
-    receiptApiFn -->|GetItem| receipts
-    receiptApiFn -->|StartExecution| receiptSfn
+```plantuml
+@startuml conteineres
+!include diagramas/tema-plataforma.iuml
+hide stereotype
+skinparam componentStyle rectangle
+title Contêineres
+
+actor "Cliente HTTP" as client
+component "$I_API API Gateway REST" as apigw <<entrada>>
+component "$I_LAMBDA Lambda api - Spring MVC" as apiFn
+database "$I_S3 S3 payloads" as s3
+hexagon "$I_MAQUINA Step Functions request-flow" as sfn $COR_APLICACAO;line:%substr($BORDA_APLICACAO, 1)
+component "$I_LAMBDA Lambda validate" as validate
+component "$I_LAMBDA Lambda persist" as persist
+component "$I_LAMBDA Lambda notify" as notify
+queue "$I_DLQ SQS dlq" as dlq
+database "SSM max-payload-bytes" as ssm
+database "$I_SEGREDO Secrets Manager signing-key" as secrets
+database "$I_DYNAMODB DynamoDB requests" as ddb
+queue "$I_SNS SNS notifications" as sns
+queue "$I_EVENTBRIDGE EventBridge events" as bus
+queue "$I_SQS SQS audit" as audit
+component "$I_AGENDADOR EventBridge Scheduler - a cada 5 min" as scheduler <<infra>>
+component "$I_LAMBDA Lambda reprocess" as reprocess
+hexagon "$I_MAQUINA Step Functions receipt-flow" as receiptSfn $COR_APLICACAO;line:%substr($BORDA_APLICACAO, 1)
+component "$I_LAMBDA Lambda issue - Quarkus" as issue
+component "$I_LAMBDA Lambda announce - Quarkus" as announce
+database "$I_DYNAMODB DynamoDB receipts" as receipts
+queue "$I_EVENTBRIDGE EventBridge receipt events" as receiptBus
+component "$I_API API Gateway REST da receipt" as receiptGw <<entrada>>
+component "$I_LAMBDA Lambda api - Quarkus REST" as receiptApiFn
+
+client --> apigw : POST /requests
+apigw --> apiFn
+apiFn --> s3 : PutObject
+apiFn --> sfn : StartExecution
+sfn --> validate
+sfn --> persist
+sfn --> notify
+sfn --> dlq : em caso de falha
+validate --> ssm
+validate --> secrets
+validate --> s3 : GetObject
+persist --> ddb : PutItem
+notify --> sns : Publish
+notify --> bus : PutEvents
+bus --> audit : regra RequestCompleted
+scheduler --> reprocess
+reprocess --> dlq : ReceiveMessage e DeleteMessage
+reprocess --> sfn : StartExecution
+bus --> receiptSfn : regra da receipt-solution
+receiptSfn --> issue
+receiptSfn --> announce
+issue --> receipts : PutItem condicional
+announce --> receiptBus : PutEvents ReceiptIssued
+client --> receiptGw : GET e POST /receipts
+receiptGw --> receiptApiFn
+receiptApiFn --> receipts : GetItem
+receiptApiFn --> receiptSfn : StartExecution
+
+$legenda_camadas()
+@enduml
 ```
 
 As Lambdas `api`, `validate`, `persist`, `notify` e `reprocess` da parte de cima são da
@@ -80,7 +123,7 @@ As Lambdas `api`, `validate`, `persist`, `notify` e `reprocess` da parte de cima
 | Módulo | Empacotamento | Responsabilidade |
 |---|---|---|
 | `serverless-parent` (raiz) | `pom` | Neutro: Java 21, versões e configuração dos plugins Maven e `testcontainers-floci-aws` ([ADR 0010](decisoes/0010-raiz-neutra-e-parents-por-framework.md)) |
-| `platform/spring-parent` | `pom` | Importa os BOMs do Spring Boot, do AWS SDK e do Spring Cloud; exclui `apache-client` e `netty-nio-client` de cada service do SDK; define o empacotamento em zip para Lambda, herdado pelo módulo que declarar `maven-dependency-plugin` e `maven-assembly-plugin` |
+| `platform/spring-parent` | `pom` | Importa os BOMs do Spring Boot, do AWS SDK e do Spring Cloud; exclui `apache-client`, `apache5-client` e `netty-nio-client` de cada service do SDK; define o empacotamento em zip para Lambda, herdado pelo módulo que declarar `maven-dependency-plugin` e `maven-assembly-plugin` |
 | `platform/quarkus-parent` | `pom` | Importa os BOMs do Quarkus e do Quarkus Amazon Services (extensões e AWS SDK); configura o `quarkus-maven-plugin` e monta o `<artifactId>-lambda.zip` de cada módulo, com o `aws-crt` só nos jars Linux; fixa versões fora do BOM (`aws-crt`, AssertJ e `openapi-request-validator-restassured`) |
 | `platform/spring-aws` | `jar` | Só para soluções Spring: autoconfiguração dos clients síncronos do SDK, cada um com o próprio `AwsCrtHttpClient` e criado só quando o SDK correspondente está no classpath ([ADR 0005](decisoes/0005-clients-sincronos-com-crt.md)) |
 | `sample-solution` | `pom` | Herda do `spring-parent`; agrega `api` e `functions` e, com `-Pe2e`, o `e2e` |
@@ -227,15 +270,37 @@ continuam com o jar completo ([ADR 0012](decisoes/0012-aws-crt-com-nativos-linux
 
 ## Ambiente local
 
-```mermaid
-flowchart LR
-    dev([Desenvolvedor]) -->|pnpm deploy:local| sls[Serverless Framework v4 e serverless-localstack]
-    sls -->|CloudFormation em localhost:4566, cinco stacks na ordem do README| floci[Floci]
-    floci -->|socket do Docker| lambdas[Contêineres das Lambdas - imagem java 21]
-    lambdas -->|AWS_ENDPOINT_URL floci:4566| floci
-    dev -->|pnpm sls offline --stage local, em sample-solution| offline[serverless-offline na porta 3000]
-    offline -->|container na rede floci| apiC[Lambda api]
-    apiC -->|floci:4566| floci
+```plantuml
+@startuml ambiente-local
+!include diagramas/tema-plataforma.iuml
+left to right direction
+hide stereotype
+skinparam componentStyle rectangle
+title Ambiente local
+
+actor "Desenvolvedor" as dev
+component "Serverless Framework v4 e serverless-localstack" as sls <<entrada>>
+component "$I_FLOCI Floci" as floci <<infra>>
+component "Contêineres das Lambdas - imagem java 21" as lambdas
+component "serverless-offline na porta 3000" as offline <<entrada>>
+component "$I_LAMBDA Lambda api" as apiC
+
+dev --> sls : pnpm deploy:local
+sls --> floci : CloudFormation em localhost:4566, cinco stacks na ordem do README
+floci --> lambdas : socket do Docker
+lambdas --> floci : AWS_ENDPOINT_URL floci:4566
+dev --> offline : pnpm sls offline --stage local, em sample-solution
+offline --> apiC : container na rede floci
+apiC --> floci : floci:4566
+
+legend right
+    <b>Leitura</b>
+    <back:$COR_ATOR>    </back> Ator
+    <back:$COR_ENTRADA>    </back> Ferramenta de implantação ou execução
+    <back:$COR_APLICACAO>    </back> Lambda
+    <back:$COR_INFRA>    </back> Emulador da AWS
+endlegend
+@enduml
 ```
 
 - O Floci cria um container por Lambda a partir da imagem oficial `public.ecr.aws/lambda/java:21` e

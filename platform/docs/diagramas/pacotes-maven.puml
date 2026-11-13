@@ -10,7 +10,7 @@ package "pom.xml da raiz\nserverless-parent (pom)" as raiz {
 }
 
 package "platform/" {
-    component "spring-parent (pom)\nBOM do Spring Boot primeiro, Spring Cloud, AWS SDK;\nexclui apache-client e netty-nio-client;\nzip da Lambda (maven-dependency + maven-assembly)" as springparent <<aplicacao>>
+    component "spring-parent (pom)\nBOM do Spring Boot primeiro, Spring Cloud, AWS SDK;\nexclui apache-client, apache5-client e netty-nio-client;\nzip da Lambda (maven-dependency + maven-assembly)" as springparent <<aplicacao>>
     component "quarkus-parent (pom)\nBOMs do Quarkus e do Quarkus Amazon Services;\nquarkus-maven-plugin; function.zip copiado\npara <artifactId>-lambda.zip" as quarkusparent <<aplicacao>>
     component "spring-aws (jar)\nAwsClientsAutoConfiguration" as springaws <<dominio>>
 }

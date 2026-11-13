@@ -427,17 +427,9 @@ Arquivos PlantUML em [`diagramas/`](diagramas), todos com o tema
 
 ## Divergências conhecidas
 
-1. **Tamanho do lote do `reconciler`.** O Javadoc de `reconcilerBatchSize` em
-   [`QuoteFunctionsConfig`](../functions/src/main/java/com/mmda/serverless/quote/functions/QuoteFunctionsConfig.java)
-   diz "Itens de outbox republicados por execução do reconciler", mas o mesmo limite vale para todos os deveres:
-   `OutboxReconciler`, `WaiterReconciler`, `VersionReconciler` (separado para `ACTIVE_VERSION` e
-   `SUMMARY_PENDING`), `IssueReviewer` e `DeadLetterReprocessor`. O §9 do desenho já descreve o uso correto.
-2. **Atributos da oferta e do resultado tardio (§4 do desenho).** A `OFFER` gravada pelo `resume` tem também
-   `offerId` e `queryId`, e o `LATE` tem `eventId`; o §4 não os lista. Sem `queryId` no evento, o `sk` do `LATE`
-   termina no `eventId`, e não no `queryId`.
-3. **`ListStreams` em `*`.** O `OutboxRelayRole` libera `dynamodb:ListStreams` em `*`; a restrição a
+1. **`ListStreams` em `*`.** O `OutboxRelayRole` libera `dynamodb:ListStreams` em `*`; a restrição a
    `table/<tabela>/stream/*` fica para conferir na AWS (M6).
-4. **Ocorrências que não se resolvem.** `WORKFLOW_FAILED`, `TASK_EXPIRED` e o `DEAD_LETTER` da quote ficam
+2. **Ocorrências que não se resolvem.** `WORKFLOW_FAILED`, `TASK_EXPIRED` e o `DEAD_LETTER` da quote ficam
    `OPEN`; não há reconhecimento manual no MVP, e a listagem com `status=OPEN` cresce com elas (decisão do M5).
-5. **429 declarado e não emitido.** O contrato declara 429 com `Retry-After` em todas as rotas; a API não o
+3. **429 declarado e não emitido.** O contrato declara 429 com `Retry-After` em todas as rotas; a API não o
    emite no MVP, e na AWS ele pode vir só do throttling do API Gateway.

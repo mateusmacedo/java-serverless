@@ -123,6 +123,13 @@ O `reprocess` reinicia a mensagem com `attempt + 1` enquanto `attempt < maxAttem
 descartado ([Fluxos § Reprocessamento](../../docs/fluxos.md#reprocessamento)). Para reprocessar sem esperar o
 agendamento, use o `lambda invoke` de [README § Fluxo de exemplo](../../README.md#fluxo-de-exemplo).
 
+O `DeleteMessage` vem depois do `StartExecution`. Se o `StartExecution` voltar com
+`ExecutionAlreadyExistsException`, a execução `requestId-<attempt>` daquela tentativa já existe, iniciada por
+uma entrega anterior da mesma mensagem: a mensagem duplicada é apagada com um log `INFO`, não conta como
+`restarted` nem `discarded`, e a rodada segue com as demais. Qualquer outra falha do `StartExecution`
+interrompe a rodada com erro; a mensagem não é apagada e volta a ficar visível na DLQ depois do tempo de
+visibilidade.
+
 ## Segurança e IAM
 
 - **API:** sem autorizador nem chave de API; quem tem a URL pode chamar o `POST /requests`.
@@ -158,6 +165,7 @@ A solução não declara alarmes, métricas próprias nem rastreamento (X-Ray), 
 | Execução `FAILED` com erro `RequestFailed` | Histórico da execução `request-flow` (Step Functions ou console do Floci em `localhost:4500`) |
 | Mensagem parada na DLQ | Fila `dlq`; nenhum alarme avisa |
 | Descarte depois de `maxAttempts` | Log da `reprocess`: `Discarding request <id> after <n> attempts` |
+| Mensagem repetida cuja tentativa já foi reiniciada | Log da `reprocess`: `Request <id> attempt <n> was already restarted; deleting the duplicate message` |
 | Resultado de uma rodada do `reprocess` | Retorno `{restarted, discarded}` da invocação |
 | Logs das funções | `/aws/lambda/sample-solution-<stage>-<função>` |
 
@@ -263,19 +271,6 @@ docker run --rm -u "$(id -u):$(id -g)" -v "$PWD":/w -w /w plantuml/plantuml:late
 
 ## Divergências conhecidas
 
-1. **Ordem do deploy em Arquitetura.** O diagrama de ambiente local de
-   [`arquitetura.md`](../../docs/arquitetura.md#ambiente-local) diz "sample e depois receipt", mas o
-   `deploy:local` do `package.json` implanta cinco stacks: plataforma, sample, receipt, provider e quote.
-2. **Caminho do tema.** O [`docs/README.md`](../../docs/README.md#diagramas) e o cabeçalho do tema indicam
-   `!include ../../docs/diagramas/tema-plataforma.iuml` para `<solução>/docs/diagramas/`; esse caminho não
-   renderiza. O certo, usado aqui, é `../../../docs/diagramas/tema-plataforma.iuml`.
-3. **Comando de renderização.** O comando de [`docs/README.md`](../../docs/README.md#diagramas) grava tudo em
-   `build/diagramas/`, e diagramas de mesmo nome em soluções diferentes (como `c4-conteiner.puml`) se
-   sobrescrevem. O comando da seção [Diagramas](#diagramas) grava numa pasta por solução.
-4. **Repetição depois do `Persist`.** Se o `Notify` falhar depois do `Persist`, a tentativa seguinte
+1. **Repetição depois do `Persist`.** Se o `Notify` falhar depois do `Persist`, a tentativa seguinte
    regrava o item (o `PutItem` não tem condição) e o SNS pode receber a mesma requisição de novo. O
    `RequestCompleted` só sai quando o `Notify` termina sem erro.
-5. **`StartExecution` que falha no `reprocess`.** O `DeleteMessage` vem depois do `StartExecution`: se o
-   reinício falhar, por exemplo com `ExecutionAlreadyExists` numa mensagem entregue duas vezes depois de a
-   execução `requestId-<attempt>` terminar, a rodada para com erro, a mensagem não é apagada e volta depois
-   da visibilidade. Esse caso não tem teste.

@@ -6,7 +6,7 @@ envolvidos em cada etapa. A [última parte](#como-as-lambdas-da-receipt-solution
 o mesmo para a `receipt-solution`, em Quarkus.
 
 Para a referência de componentes e recursos, veja [Arquitetura](arquitetura.md). Para os diagramas
-de execução em Mermaid, veja [Fluxos](fluxos.md).
+de execução em PlantUML, veja [Fluxos](fluxos.md).
 
 ## Por que o fluxo não aparece navegando pelo código Java
 

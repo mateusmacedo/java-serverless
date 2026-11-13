@@ -183,13 +183,21 @@ curl -X POST -H "Content-Type: application/json" -d '{"origem":"offline"}' \
 
 ## Remover a implantação do Floci
 
-A `receipt-solution` sai primeiro, porque a regra dela fica no barramento da `sample-solution`. O
-bucket de payloads precisa estar vazio antes da remoção da sample:
+A `receipt-solution` sai antes da `sample-solution`, porque a regra dela fica no barramento da sample. A
+`quote-solution` e a `provider-solution` saem antes da plataforma (`platform/events`), porque as regras
+delas ficam no barramento da plataforma; entre as duas, a ordem não importa
+([ADR 0013](docs/decisoes/0013-barramento-da-plataforma.md)). Os dois grupos são independentes. O bucket
+de payloads da sample e o da provider precisam estar vazios antes da remoção de cada uma:
 
 ```bash
 (cd receipt-solution && pnpm sls remove --stage local)
 aws --profile localstack s3 rm s3://sample-solution-local-payloads --recursive
 (cd sample-solution && pnpm sls remove --stage local)
+
+(cd quote-solution && pnpm sls remove --stage local)
+aws --profile localstack s3 rm s3://provider-solution-local-payloads --recursive
+(cd provider-solution && pnpm sls remove --stage local)
+(cd platform/events && pnpm sls remove --stage local)
 ```
 
 ## Perfil do AWS CLI
@@ -220,8 +228,11 @@ aws configure set aws_secret_access_key test --profile localstack
   ([parâmetros por stage](docs/plataforma-de-cotacao.md#12-parâmetros-por-stage)).
 - O `pnpm-workspace.yaml` nega os scripts de instalação de `serverless`, `aws-sdk`, `es5-ext` e
   `esbuild`; nenhum deles é necessário para o uso atual.
-- Os pacotes das Lambdas têm entre 21 e 43 MiB. O `aws-crt` entra só com os nativos de Linux, para
+- Os pacotes das Lambdas têm entre 21 e 41 MiB. O `aws-crt` entra só com os nativos de Linux, para
   x86_64 e arm64; os testes usam o jar completo, com os nativos de todas as plataformas
   ([ADR 0012](docs/decisoes/0012-aws-crt-com-nativos-linux-no-pacote.md)).
 - O EventBridge Scheduler dispara o `reprocess` no Floci a cada 5 minutos (observado nos logs da
   função às 20:08:56 e 20:14:02 de 10/11/2026); para testar sem esperar, invoque a função direto.
+- O servidor Java do VS Code (m2e) compila em `target-ide/`, pelo perfil `ide` do `pom.xml` raiz, que a
+  propriedade `m2e.version` ativa. Assim ele não reescreve o `target/classes` no meio de um `mvn verify`; o
+  `mvn` da linha de comando continua em `target/`.

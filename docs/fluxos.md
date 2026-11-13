@@ -8,17 +8,30 @@ componentes estão descritos em [Arquitetura](arquitetura.md); os formatos das m
 
 Definida em `stepFunctions.stateMachines.requestFlow` no `sample-solution/serverless.yml`.
 
-```mermaid
-stateDiagram-v2
-    [*] --> Validate
-    Validate --> Persist
-    Persist --> Notify
-    Notify --> [*]
-    Validate --> SendToDeadLetterQueue: erro, States.ALL
-    Persist --> SendToDeadLetterQueue: erro, States.ALL
-    Notify --> SendToDeadLetterQueue: erro, States.ALL
-    SendToDeadLetterQueue --> RequestFailed
-    RequestFailed --> [*]
+```plantuml
+@startuml estados-request-flow
+!include diagramas/tema-plataforma.iuml
+hide empty description
+title Máquina de estado request-flow
+
+state Validate <<ativo>>
+state Persist <<ativo>>
+state Notify <<ativo>>
+state SendToDeadLetterQueue <<erro>>
+state RequestFailed <<erro>>
+
+[*] --> Validate
+Validate --> Persist
+Persist --> Notify
+Notify --> [*]
+Validate -[$BORDA_ERRO]-> SendToDeadLetterQueue : erro, States.ALL
+Persist -[$BORDA_ERRO]-> SendToDeadLetterQueue : erro, States.ALL
+Notify -[$BORDA_ERRO]-> SendToDeadLetterQueue : erro, States.ALL
+SendToDeadLetterQueue -[$BORDA_ERRO]-> RequestFailed
+RequestFailed -[$BORDA_ERRO]-> [*]
+
+$legenda_erros()
+@enduml
 ```
 
 | Estado | Tipo | O que faz |
@@ -34,39 +47,46 @@ e a execução segue para `SendToDeadLetterQueue`.
 
 ## Caminho de sucesso
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor C as Cliente
-    participant GW as API Gateway
-    participant API as Lambda api
-    participant S3 as S3
-    participant SFN as Step Functions
-    participant V as Lambda validate
-    participant CFG as SSM e Secrets Manager
-    participant P as Lambda persist
-    participant DDB as DynamoDB
-    participant N as Lambda notify
-    participant SNS as SNS
-    participant EB as EventBridge
-    participant AQ as SQS audit
-    C->>GW: POST /requests com JSON
-    GW->>API: evento proxy
-    API->>S3: PutObject em requests/requestId.json
-    API->>SFN: StartExecution com requestId, s3Key e attempt 1
-    API-->>C: 202 com requestId e executionArn
-    SFN->>V: RequestContext
-    V->>CFG: GetParameter e GetSecretValue
-    V->>S3: GetObject
-    V-->>SFN: RequestContext com signature e payloadBytes
-    SFN->>P: RequestContext
-    P->>DDB: PutItem
-    P-->>SFN: RequestContext
-    SFN->>N: RequestContext
-    N->>SNS: Publish
-    N->>EB: PutEvents RequestCompleted
-    EB->>AQ: regra entrega o evento
-    N-->>SFN: RequestContext
+```plantuml
+@startuml sequencia-sucesso
+!include diagramas/tema-plataforma.iuml
+hide stereotype
+title Caminho de sucesso
+autonumber
+actor "Cliente" as C <<ator>>
+participant "$I_API\nAPI Gateway" as GW <<entrada>>
+participant "$I_LAMBDA\nLambda api" as API <<aplicacao>>
+participant "$I_S3\nS3" as S3 <<infra>>
+participant "$I_MAQUINA\nStep Functions" as SFN <<aplicacao>>
+participant "$I_LAMBDA\nLambda validate" as V <<aplicacao>>
+participant "$I_SEGREDO\nSSM e Secrets Manager" as CFG <<infra>>
+participant "$I_LAMBDA\nLambda persist" as P <<aplicacao>>
+participant "$I_DYNAMODB\nDynamoDB" as DDB <<infra>>
+participant "$I_LAMBDA\nLambda notify" as N <<aplicacao>>
+participant "$I_SNS\nSNS" as SNS <<infra>>
+participant "$I_EVENTBRIDGE\nEventBridge" as EB <<infra>>
+participant "$I_SQS\nSQS audit" as AQ <<infra>>
+
+C -> GW : POST /requests com JSON
+GW -> API : evento proxy
+API -> S3 : PutObject em requests/requestId.json
+API -> SFN : StartExecution com requestId, s3Key e attempt 1
+API --> C : 202 com requestId e executionArn
+SFN -> V : RequestContext
+V -> CFG : GetParameter e GetSecretValue
+V -> S3 : GetObject
+V --> SFN : RequestContext com signature e payloadBytes
+SFN -> P : RequestContext
+P -> DDB : PutItem
+P --> SFN : RequestContext
+SFN -> N : RequestContext
+N -> SNS : Publish
+N -> EB : PutEvents RequestCompleted
+EB -> AQ : regra entrega o evento
+N --> SFN : RequestContext
+
+$legenda_camadas()
+@enduml
 ```
 
 O cliente recebe `202` assim que a execução é iniciada; o processamento continua de forma
@@ -77,17 +97,24 @@ na máquina de estado
 
 ## Caminho de falha
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant SFN as Step Functions
-    participant V as Lambda validate
-    participant DLQ as SQS dlq
-    SFN->>V: RequestContext
-    V-->>SFN: erro InvalidRequestException
-    Note over SFN: Catch States.ALL grava o erro em $.error
-    SFN->>DLQ: sqs sendMessage com a entrada e o erro
-    Note over SFN: RequestFailed encerra a execução como FAILED
+```plantuml
+@startuml sequencia-falha
+!include diagramas/tema-plataforma.iuml
+hide stereotype
+title Caminho de falha
+autonumber
+participant "$I_MAQUINA\nStep Functions" as SFN <<aplicacao>>
+participant "$I_LAMBDA\nLambda validate" as V <<aplicacao>>
+participant "$I_DLQ\nSQS dlq" as DLQ <<infra>>
+
+SFN -> V : RequestContext
+V --> SFN : <color:$BORDA_ERRO>erro InvalidRequestException</color>
+note over SFN : Catch States.ALL grava o erro em $.error
+SFN -[$BORDA_ERRO]> DLQ : sqs sendMessage com a entrada e o erro
+note over SFN : RequestFailed encerra a execução como FAILED
+
+$legenda_erros()
+@enduml
 ```
 
 Validado no Floci com um payload de 5012 bytes: o `validate` falhou com
@@ -96,24 +123,31 @@ Validado no Floci com um payload de 5012 bytes: o `validate` falhou com
 
 ## Reprocessamento
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant SCH as EventBridge Scheduler
-    participant R as Lambda reprocess
-    participant DLQ as SQS dlq
-    participant SFN as Step Functions
-    SCH->>R: maxMessages 10, a cada 5 minutos
-    R->>DLQ: GetQueueUrl e ReceiveMessage, até 10 mensagens
-    loop para cada mensagem
-        alt attempt abaixo de maxAttempts, padrão 3
-            R->>SFN: StartExecution com attempt + 1, nome requestId-attempt
-        else limite de tentativas atingido
-            Note over R: descarta e registra um aviso no log
-        end
-        R->>DLQ: DeleteMessage
+```plantuml
+@startuml sequencia-reprocessamento
+!include diagramas/tema-plataforma.iuml
+hide stereotype
+title Reprocessamento
+autonumber
+participant "$I_AGENDADOR\nEventBridge Scheduler" as SCH <<infra>>
+participant "$I_LAMBDA\nLambda reprocess" as R <<aplicacao>>
+participant "$I_DLQ\nSQS dlq" as DLQ <<infra>>
+participant "$I_MAQUINA\nStep Functions" as SFN <<aplicacao>>
+
+SCH -> R : maxMessages 10, a cada 5 minutos
+R -> DLQ : GetQueueUrl e ReceiveMessage, até 10 mensagens
+loop para cada mensagem
+    alt $COR_DOMINIO attempt abaixo de maxAttempts, padrão 3
+        R -> SFN : StartExecution com attempt + 1, nome requestId-attempt
+    else $COR_ERRO limite de tentativas atingido
+        note over R : descarta e registra um aviso no log
     end
-    R-->>SCH: restarted e discarded
+    R -> DLQ : DeleteMessage
+end
+R --> SCH : restarted e discarded
+
+$legenda_erros()
+@enduml
 ```
 
 A nova execução recomeça do `Validate`, com `signature` e `payloadBytes` limpos. Um payload que
@@ -126,28 +160,35 @@ A `receipt-solution`, em Quarkus, reage ao mesmo `RequestCompleted`. Uma regra q
 barramento da `sample-solution` inicia a máquina de estado `receipt-flow` direto, sem Lambda no meio
 ([ADR 0011](decisoes/0011-integracao-entre-solucoes-por-eventbridge.md)).
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant N as Lambda notify (sample, Spring)
-    participant EB as EventBridge sample events
-    participant RSFN as Step Functions receipt-flow
-    participant I as Lambda issue (receipt, Quarkus)
-    participant RDDB as DynamoDB receipts
-    participant A as Lambda announce (receipt, Quarkus)
-    participant REB as EventBridge receipt events
-    N->>EB: PutEvents RequestCompleted
-    EB->>RSFN: regra da receipt-solution inicia a execução com o evento
-    RSFN->>I: detail do evento (InputPath $.detail)
-    I->>RDDB: PutItem se requestId ainda não existe
-    alt evento repetido
-        RDDB-->>I: ConditionalCheckFailed
-        I->>RDDB: GetItem com leitura consistente
-    end
-    I-->>RSFN: Receipt
-    RSFN->>A: Receipt
-    A->>REB: PutEvents ReceiptIssued
-    A-->>RSFN: Receipt
+```plantuml
+@startuml sequencia-integracao-receipt
+!include diagramas/tema-plataforma.iuml
+hide stereotype
+title Integração com a receipt-solution
+autonumber
+participant "$I_LAMBDA\nLambda notify\n(sample, Spring)" as N <<aplicacao>>
+participant "$I_EVENTBRIDGE\nEventBridge\nsample events" as EB <<infra>>
+participant "$I_MAQUINA\nStep Functions\nreceipt-flow" as RSFN <<aplicacao>>
+participant "$I_LAMBDA\nLambda issue\n(receipt, Quarkus)" as I <<aplicacao>>
+participant "$I_DYNAMODB\nDynamoDB\nreceipts" as RDDB <<infra>>
+participant "$I_LAMBDA\nLambda announce\n(receipt, Quarkus)" as A <<aplicacao>>
+participant "$I_EVENTBRIDGE\nEventBridge\nreceipt events" as REB <<infra>>
+
+N -> EB : PutEvents RequestCompleted
+EB -> RSFN : regra da receipt-solution inicia a execução com o evento
+RSFN -> I : detail do evento (InputPath $.detail)
+I -> RDDB : PutItem se requestId ainda não existe
+alt evento repetido
+    RDDB --> I : ConditionalCheckFailed
+    I -> RDDB : GetItem com leitura consistente
+end
+I --> RSFN : Receipt
+RSFN -> A : Receipt
+A -> REB : PutEvents ReceiptIssued
+A --> RSFN : Receipt
+
+$legenda_camadas()
+@enduml
 ```
 
 O EventBridge entrega cada evento pelo menos uma vez, e o alvo nativo não deixa escolher o nome da
@@ -157,23 +198,30 @@ mesmo `issuedAt`. Os dois passos têm 2 novas tentativas, com intervalo inicial 
 
 ## API da receipt-solution
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor C as Cliente
-    participant GW as API Gateway da receipt
-    participant API as Lambda api (Quarkus REST)
-    participant RDDB as DynamoDB receipts
-    participant RSFN as Step Functions receipt-flow
-    C->>GW: GET /receipts/requestId
-    GW->>API: evento proxy
-    API->>RDDB: GetItem com leitura consistente
-    API-->>C: 200 com o comprovante ou 404
-    C->>GW: POST /receipts com requestId, signature e payloadBytes
-    GW->>API: evento proxy
-    API->>RSFN: StartExecution com detail igual ao corpo
-    API-->>C: 202 com requestId e executionArn
-    Note over RSFN: segue igual ao caminho do evento: issue e depois announce
+```plantuml
+@startuml sequencia-api-receipt
+!include diagramas/tema-plataforma.iuml
+hide stereotype
+title API da receipt-solution
+autonumber
+actor "Cliente" as C <<ator>>
+participant "$I_API\nAPI Gateway\nda receipt" as GW <<entrada>>
+participant "$I_LAMBDA\nLambda api\n(Quarkus REST)" as API <<aplicacao>>
+participant "$I_DYNAMODB\nDynamoDB\nreceipts" as RDDB <<infra>>
+participant "$I_MAQUINA\nStep Functions\nreceipt-flow" as RSFN <<aplicacao>>
+
+C -> GW : GET /receipts/requestId
+GW -> API : evento proxy
+API -> RDDB : GetItem com leitura consistente
+API --> C : 200 com o comprovante ou 404
+C -> GW : POST /receipts com requestId, signature e payloadBytes
+GW -> API : evento proxy
+API -> RSFN : StartExecution com detail igual ao corpo
+API --> C : 202 com requestId e executionArn
+note over RSFN : segue igual ao caminho do evento: issue e depois announce
+
+$legenda_camadas()
+@enduml
 ```
 
 A emissão manual entra na mesma máquina e no mesmo formato do evento, então reaproveita o `issue`

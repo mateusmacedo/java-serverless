@@ -86,9 +86,10 @@ para o ADR que a substitui.
 - Documentação em PT-BR, versionada junto do código; nomes de classes, propriedades e recursos ficam
   como estão no código. Nomes de arquivo em kebab-case, sem acento.
 - Cada assunto tem uma fonte única; os outros documentos apontam para ela por link, em vez de copiar.
-- Os diagramas de cada solução são PlantUML, em `<solução>/docs/diagramas/`, com o tema único da
-  [seção Diagramas](#diagramas). A [Arquitetura](arquitetura.md) e os [Fluxos](fluxos.md) ainda têm
-  diagramas [Mermaid](https://mermaid.js.org/) dentro do próprio Markdown.
+- Todos os diagramas são PlantUML, com o tema único da [seção Diagramas](#diagramas): os de cada
+  solução ficam em `<solução>/docs/diagramas/`, e os de `docs/*.md`, como os da
+  [Arquitetura](arquitetura.md), dos [Fluxos](fluxos.md) e da [Cotação](cotacao.md), em blocos
+  `plantuml` dentro do próprio Markdown.
 - Fatos sobre o sistema vêm do código e do `serverless.yml` de cada solução. Exemplos de mensagens
   foram capturados no Floci; quando não foi possível observar, o documento diz isso.
 - Cada solução documenta, em `contracts/<solução>/`, os eventos que publica. Quem consome referencia o
@@ -107,16 +108,19 @@ caminho relativo: `!include tema-plataforma.iuml` em `docs/diagramas/`,
 biblioteca padrão embutida no PlantUML, sem rede.
 
 Os renderizados vão para `build/diagramas/<pasta>/`, que o `.gitignore` ignora (`**/build/`); nenhum SVG ou
-PNG é versionado. Cada solução grava na própria pasta, porque há diagramas de mesmo nome em soluções
-diferentes. Para renderizar tudo, na raiz do projeto:
+PNG é versionado. Cada solução e cada documento de `docs/` gravam na própria pasta, porque há diagramas
+de mesmo nome em pastas diferentes. Num `.md`, o PlantUML renderiza cada bloco `@startuml` com o nome
+dado nele. Para renderizar tudo, na raiz do projeto:
 
 ```bash
 for dir in platform sample-solution receipt-solution quote-solution provider-solution; do
   docker run --rm -u "$(id -u):$(id -g)" -v "$PWD":/w -w /w plantuml/plantuml:latest \
     -tsvg -o "/w/build/diagramas/$dir" "$dir/docs/diagramas/*.puml"
 done
-docker run --rm -u "$(id -u):$(id -g)" -v "$PWD":/w -w /w plantuml/plantuml:latest \
-  -tsvg -o /w/build/diagramas/cotacao docs/cotacao.md
+for doc in arquitetura fluxos cotacao; do
+  docker run --rm -u "$(id -u):$(id -g)" -v "$PWD":/w -w /w plantuml/plantuml:latest \
+    -tsvg -o "/w/build/diagramas/$doc" "docs/$doc.md"
+done
 ```
 
 ## Como validar
@@ -134,16 +138,10 @@ done
 for spec in contracts/*/asyncapi.yaml; do
   pnpm --config.ignore-scripts=true --package=@asyncapi/cli@6.3.0 dlx asyncapi validate "$spec"
 done
-
-# Diagramas Mermaid: renderiza cada bloco em SVG e falha em erro de sintaxe;
-# troque <caminho do Chrome> pelo executável do Chrome da sua máquina
-mkdir -p build/diagramas
-echo '{"executablePath":"<caminho do Chrome>","args":["--no-sandbox"]}' > build/puppeteer.json
-for doc in arquitetura fluxos; do
-  PUPPETEER_SKIP_DOWNLOAD=true pnpm --package=@mermaid-js/mermaid-cli@12.2.0 dlx mmdc \
-    -p build/puppeteer.json -i "docs/$doc.md" -o "build/diagramas/$doc.md"
-done
 ```
+
+Os diagramas são validados pelo comando da [seção Diagramas](#diagramas): quando um diagrama tem erro
+de sintaxe, o `docker run` correspondente sai com o código 200 e indica o arquivo e a linha do erro.
 
 Resultado registrado na última validação com as CLIs, feita nos contratos da `sample-solution` e da
 `receipt-solution`; os demais contratos são conferidos pelos testes de contrato, descritos no `README.md`
@@ -155,4 +153,6 @@ de cada pasta de `contracts/`:
 - **AsyncAPI:** os dois documentos válidos, sem apontamentos de governança; o da `receipt-solution`
   resolve a referência ao `RequestCompleted` no da `sample-solution`. A CLI envia métricas anônimas de uso
   enquanto `~/.asyncapi-analytics` estiver com `analyticsEnabled` ligado.
-- **Mermaid:** um SVG por diagrama (3 em `arquitetura.md` e 6 em `fluxos.md`).
+- **PlantUML:** 103 SVGs, um por diagrama, sem erro: 93 dos `.puml` de `docs/diagramas/` da `platform` e
+  das quatro soluções e 10 dos blocos de `docs/*.md` (3 em `arquitetura.md`, 6 em `fluxos.md` e 1 em
+  `cotacao.md`).

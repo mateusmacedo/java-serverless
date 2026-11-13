@@ -304,10 +304,10 @@ devolve. Os dois precisam ser iguais: `alpha` é "Alpha Seguros" e `beta`, "Beta
 | Cotação | `QUOTE#<quoteId>` | `META` | `organizationId`, `createdBy`, `currentVersion`, `createdAt`, `gsi1pk`, `gsi1sk`, resumo da versão atual (`phase`, `outcome`, `offerCount`, que só avançam desde o M5; abaixo), `selectionId`, `selectedVersion`, `selectedOfferId` (M5, gravados pela seleção, §8), `updatedAt` |
 | Versão | `QUOTE#<quoteId>` | `V#<nnnn>` | `snapshot` (JSON), `inputHash`, `phase`, `outcome`, `outcomeReason`, `missingFields`, `eligibilityDecision`, `eligibilityReasonCode`, `eligibilityMissingFields`, `eligibilityRuleVersion`, `selectedInsurers`, `selectionRuleVersion`, `workflowVersion`, `executionName`, `executionArn`, `deadlineAt`, `supersededAt`, `revision`, `updatedAt`, `gsi2pk = ACTIVE_VERSION` enquanto não terminal; no `TERMINAL`, `gsi2pk = SUMMARY_PENDING`, com `gsi2sk` no instante da consolidação, até o `refreshSummary` gravar o resumo do `META` ou o `reconciler` conferi-lo e, se diverge, repará-lo (M4) |
 | Resultado da seguradora | `QUOTE#<quoteId>` | `V#<nnnn>#RESULT#<insurerId>` | `insurerName`, `status` (`PENDING`, `PROCESSING` ou terminal), `reasonCode`, `missingFields`, `queryRef`, `attemptRef`, `resultEventId` (o `eventId` do resultado gravado pela retomada; M4), `revision`, `updatedAt` |
-| Oferta | `QUOTE#<quoteId>` | `V#<nnnn>#OFFER#<offerId>` | `insurerId`, `insurerName`, `externalOfferId`, `premiumTotal`, `currency`, `installments`, `coverages`, `deductibles`, `validUntil`, `rawResponseRef`, `createdAt` |
+| Oferta | `QUOTE#<quoteId>` | `V#<nnnn>#OFFER#<offerId>` | `offerId`, `insurerId`, `insurerName`, `externalOfferId`, `premiumTotal`, `currency`, `installments`, `coverages`, `deductibles`, `validUntil`, `rawResponseRef`, `queryId` (quando o resultado o traz), `createdAt` |
 | Seleção | `QUOTE#<quoteId>` | `V#<nnnn>#SELECTION` | `quoteId`, `version`, `selectionId`, `offerId`, `selectedAt`, `selectedBy` (o `sub` de quem selecionou); uma por versão, gravada com `attribute_not_exists` (M5, §8) |
 | Evidência usada | `QUOTE#<quoteId>` | `V#<nnnn>#EVIDENCE#<workRef>` | `evidenceId`, `queryId`, `reuseDecision`, `resultType`, `policyVersion` (sempre presente: evento sem ele é rejeitado, §8), `summary`, `resultEventId` (M4), `receivedAt` |
-| Resultado tardio | `QUOTE#<quoteId>` | `V#<nnnn>#LATE#<alvo>#<queryId>` | `alvo` = `insurerId` ou `ENRICHMENT`; `reason` (`LATE`, `DUPLICATE`), `status`, `queryRef`, `attemptRef`, `rawResponseRef`, resumo da oferta, `receivedAt`; no enriquecimento, também `evidenceId`, `reuseDecision` e `policyVersion`, que rastreiam a evidência de um resultado tardio ou repetido (RN10, T15) |
+| Resultado tardio | `QUOTE#<quoteId>` | `V#<nnnn>#LATE#<alvo>#<queryId>` | `alvo` = `insurerId` ou `ENRICHMENT`; sem `queryId` no evento, o `sk` termina no `eventId`; `reason` (`LATE`, `DUPLICATE`), `eventId`, `status`, `queryRef`, `attemptRef`, `rawResponseRef`, resumo da oferta, `receivedAt`; no enriquecimento, também `evidenceId`, `reuseDecision` e `policyVersion`, que rastreiam a evidência de um resultado tardio ou repetido (RN10, T15) |
 | Idempotência | `IDEMPOTENCY#<orgId>#<operation>#<scope>#<key>` | `META` | `requestHash`, `resourceRef`, `createdAt` e o que o reenvio devolve: na seleção, `quoteId`, `version`, `selectionId`, `offerId` e `selectedAt`; na reconciliação, `operationId` e `queryId` (M5) |
 | Waiter | `WAITER#<workRef>` | `META` | `tokenCiphertext`, `quoteId`, `version`, `kind`, `insurerId`, `executionArn`, `expiresAt`, `status` (`WAITING`, `RESUMING`, `DONE`, `EXPIRED`), `resultEventId`, `resumePayload`, `updatedAt`, `gsi2pk = WAITER_RESUMING` quando `RESUMING`; `gsi2pk = WAITER_EXPIRED`, com `gsi2sk` no instante da expiração, quando `EXPIRED`, até o `reconciler` conferir a entrega (M4) |
 | Outbox | `OUTBOX#<eventId>` | `META` | `detailType`, `detail`, `createdAt`, `publishedAt`, `attempts`, `lastError`, `gsi2pk = OUTBOX_PENDING` até publicar, `gsi2sk` = `createdAt` até a primeira falha permanente e, depois dela, o instante da última falha permanente (§7) |
@@ -417,7 +417,7 @@ continuam idênticos e o T22 continua válido.
 
 | Item | `pk` | `sk` | Atributos principais |
 |---|---|---|---|
-| Consulta | `QUERY#<queryId>` | `META` | `queryKey` (só `ENRICH`), `provider`, `operation` (`ENRICH`, `QUOTE`), `contractVersion`, `organizationId`, `state` (`IN_FLIGHT`, `COMPLETED`, `FAILED`, `UNKNOWN`), `clientReference`, `providerRequestId`, `fencingVersion` (só `ENRICH`), `workRef`, `quoteId`, `version`, `insurerId`, `deadlineAt`, `requestEventId` (só `QUOTE`: o `eventId` do pedido), `gsi2pk = QUERY_IN_FLIGHT` em voo e `QUERY_UNKNOWN` quando `UNKNOWN`, com `gsi2sk` no instante em que ficou `UNKNOWN` e, depois, no da última conferência sem conclusão (M4) |
+| Consulta | `QUERY#<queryId>` | `META` | `queryKey` (só `ENRICH`), `provider`, `operation` (`ENRICH`, `QUOTE`), `providerOperation` (só `ENRICH`: a operação no protocolo do fornecedor, como `VEHICLE_DRIVER_PROFILE`), `contractVersion`, `organizationId`, `state` (`IN_FLIGHT`, `COMPLETED`, `FAILED`, `UNKNOWN`), `clientReference`, `providerRequestId`, `fencingVersion` (só `ENRICH`), `workRef`, `quoteId`, `version`, `insurerId`, `deadlineAt`, `requestEventId` (só `QUOTE`: o `eventId` do pedido), `gsi2pk = QUERY_IN_FLIGHT` em voo, com `gsi2sk = deadlineAt`, pelo qual o `reconciler` acha as consultas vencidas (§9), e `QUERY_UNKNOWN` quando `UNKNOWN`, com `gsi2sk` no instante em que ficou `UNKNOWN` e, depois, no da última conferência sem conclusão (M4) |
 | Tentativa | `QUERY#<queryId>` | `ATTEMPT#<nnnn>` | `startedAt` (gravado antes do HTTP); `acceptedAt`, `httpStatus` e `providerRequestId` (gravados no `202`); `finishedAt`, `outcome` e `errorClass` (gravados na resposta síncrona ou no callback) |
 | Evidência | `QUERY#<queryId>` | `EVIDENCE#<evidenceId>` | `normalizedResult`, `rawResponseRef`, `observedAt`, `receivedAt`, `reusableUntil`, `resultType`, `checksum`, `fencingVersion` (na evidência de quem liderou), `policyVersion` |
 | Índice de reuso | `REUSE#<queryKey>` | `META` | `evidenceId`, `queryId`, `reusableUntil`, `resultType` (`FOUND` ou `NOT_FOUND`), `revision`, `policyVersion`, `updatedAt` |
@@ -1428,7 +1428,10 @@ ciclo seguinte. Ele:
   `STALE_OUTBOX`: com o barramento fora do ar, cada ocorrência geraria outro evento pendente, em cadeia, e
   a idade deles já está no `OutboxPendingAgeSeconds`;
 - refaz o fan-out dos itens `FANOUT_PENDING` (§5) concluídos há mais de `workerTimeoutSeconds` + 5 s,
-  pela cadeia gravada no item, sem chamada externa, mesmo que outra cadeia já tenha começado;
+  pela cadeia gravada no item, sem chamada externa, mesmo que outra cadeia já tenha começado. O item
+  concluído há `inflightTombstoneSeconds` ou mais é descartado com log de erro: o `reconciler` grava o
+  `fannedOutAt`, que o tira do índice, sem responder aos seguidores, porque depois da lápide uma cadeia
+  nova recomeça nas mesmas versões e o fan-out antigo alcançaria seguidores dela;
 - trata as consultas `QUERY_IN_FLIGHT` além do `deadlineAt` e sem entrega viva (§8), sem nunca repetir a
   chamada. No enriquecimento, o líder interrompido conclui a liderança com `FAILED` e faz o fan-out, e a
   consulta fica `UNKNOWN`. Na seguradora com `202` ou com tentativa aberta, a consulta fica `UNKNOWN`;
@@ -1451,7 +1454,8 @@ ciclo seguinte. Ele:
 - refaz o encontro da inbox `RECEIVED` parada e marca `UNMATCHED` o callback sem correlação, com
   `UNMATCHED_CALLBACK` (§8). O callback do `INBOX_UNMATCHED` que segue sem correlação recebe no `gsi2sk` o
   instante da revisão (§5);
-- reprocessa as 4 DLQs (regra acima);
+- reprocessa as 4 DLQs (regra acima), com um `ReceiveMessage` de até 10 mensagens por DLQ a cada ciclo;
+  um acúmulo maior é drenado ao longo de vários ciclos;
 - confere as ocorrências do `ISSUE_OPEN`, onde só entram os tipos que se resolvem sozinhos (`DEAD_LETTER`
   não entra), e resolve as que sumiram: a consulta deixou de ser `UNKNOWN`, o callback foi processado ou o
   evento foi publicado (§5). A que continua aberta recebe no `gsi2sk` o instante da revisão;
@@ -1763,6 +1767,7 @@ do §9 valem.
 | `enrichmentValiditySeconds` | 900 | 900 | Validade do enriquecimento simulado, contada de min(`observedAt`, `receivedAt`) (§5) |
 | `offerValiditySeconds` | 1800 | 1800 | Validade da oferta simulada |
 | `enrichmentSimQuotaPerMinute`, `alphaQuotaPerMinute`, `betaQuotaPerMinute` | 30 cada | 30 cada | Quota por provedor e credencial, numa janela de 1 min comum a todos os workflows (§9, T21); chega às funções da provider em `ENRICHMENT_SIM_QUOTA_PER_MINUTE`, `ALPHA_QUOTA_PER_MINUTE` e `BETA_QUOTA_PER_MINUTE` |
+| `providerCredentialRef` | `default` | `default` | Credencial que compõe a chave do `QUOTA#<provider>#<credentialRef>#<janela>` (§5, §9), a mesma para todos os provedores no MVP; chega às funções da provider em `PROVIDER_CREDENTIAL_REF` |
 | `betaCallbackDelaySeconds` | 3 | 3 | Atraso do callback simulado; menor que `insurerTimeoutSeconds` da quote no mesmo stage |
 | `betaLateCallbackDelaySeconds` | 120 | 30 | Atraso do callback do `vehicle-beta-late`, maior que `insurerTimeoutSeconds` da quote no mesmo stage (20 no local, 90 na AWS): mantém 3 < 90 < 120 na AWS. O `ServerlessConfigurationTest` confere as duas relações nos stages `local` e `dev` |
 | `simCallbackSenderTimeoutSeconds` | 15 | 15 | Timeout da função `simCallbackSender` |
