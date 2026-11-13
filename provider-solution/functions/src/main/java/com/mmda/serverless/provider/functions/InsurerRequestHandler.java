@@ -24,8 +24,8 @@ import org.springframework.stereotype.Component;
 
 /**
  * Um {@code InsurerQuoteRequested} (§8): {@code QUERY}, {@code ATTEMPT} e quota antes do HTTP; evidência e
- * outbox {@code InsurerResultRecorded} depois. A reentrega relê a consulta e nunca repete uma chamada que
- * pode ter chegado à seguradora.
+ * outbox {@code InsurerResultRecorded} depois, ou, na resposta {@code 202}, o encontro com o callback. A
+ * reentrega relê a consulta e nunca repete uma chamada que pode ter chegado à seguradora.
  */
 @Component
 class InsurerRequestHandler {
@@ -34,6 +34,7 @@ class InsurerRequestHandler {
 
     private final QueryLedger ledger;
     private final ProviderClients clients;
+    private final PendingCallbacks callbacks;
     private final RawResponses rawResponses;
     private final DelayedRedelivery redelivery;
     private final EventJson json;
@@ -43,11 +44,13 @@ class InsurerRequestHandler {
     private final Sleeper sleeper;
     private final RandomGenerator jitter;
 
-    InsurerRequestHandler(QueryLedger ledger, ProviderClients clients, RawResponses rawResponses,
-                          DelayedRedelivery redelivery, EventJson json, ProviderProperties properties,
-                          RetryPolicy retryPolicy, Clock clock, Sleeper sleeper, RandomGenerator jitter) {
+    InsurerRequestHandler(QueryLedger ledger, ProviderClients clients, PendingCallbacks callbacks,
+                          RawResponses rawResponses, DelayedRedelivery redelivery, EventJson json,
+                          ProviderProperties properties, RetryPolicy retryPolicy, Clock clock, Sleeper sleeper,
+                          RandomGenerator jitter) {
         this.ledger = ledger;
         this.clients = clients;
+        this.callbacks = callbacks;
         this.rawResponses = rawResponses;
         this.redelivery = redelivery;
         this.json = json;
@@ -136,27 +139,16 @@ class InsurerRequestHandler {
             return;
         }
         if (verdict instanceof InsurerVerdict.Accepted accepted) {
-            ledger.recordAccepted(queryId, new Settlement.AttemptResult(sequence, "ACCEPTED", exchange.httpStatus(),
-                    null, accepted.providerRequestId()), now);
-            LOGGER.info("Insurer accepted the request: queryId={} insurerId={}", queryId, request.insurerId());
+            accepted(request, queryId, sequence, accepted.providerRequestId(), exchange.httpStatus(), now);
             return;
         }
         String rawResponseRef = exchange.hasBody() ? rawResponses.store(queryId, sequence, exchange.rawBody()) : null;
-        InsurerResultRecorded.Outcome outcome = switch (verdict) {
-            case InsurerVerdict.Quoted quoted -> InsurerResultRecorded.Outcome.quoted(
-                    quoted.offer().withRawResponseRef(rawResponseRef));
-            case InsurerVerdict.Declined declined -> InsurerResultRecorded.Outcome.declined(declined.reasonCode());
-            case InsurerVerdict.NeedsInformation needs -> InsurerResultRecorded.Outcome.needsInformation(
-                    needs.reasonCode(), needs.missingFields());
-            case InsurerVerdict.Unavailable unavailable ->
-                    InsurerResultRecorded.Outcome.unavailable(unavailable.reasonCode());
-            default -> throw new IllegalStateException("Unexpected verdict " + verdict);
-        };
+        InsurerResultRecorded.Outcome outcome = InsurerResultRecorded.Outcome.of(verdict, rawResponseRef);
         String receivedAt = Timestamps.format(now);
         EvidenceDraft evidence = new EvidenceDraft(
                 Identities.evidenceId(queryId, sequence),
                 outcome.status().name(),
-                json.write(normalizedResult(outcome)),
+                json.write(outcome.evidenceBody()),
                 rawResponseRef,
                 receivedAt,
                 receivedAt,
@@ -171,6 +163,22 @@ class InsurerRequestHandler {
                 ? QueryState.FAILED
                 : QueryState.COMPLETED;
         settle(request, queryId, null, state, attempt, evidence, Identities.attemptRef(queryId, sequence), outcome, now);
+    }
+
+    /**
+     * Resposta {@code 202} (§8, passo 3): uma transação grava o {@code providerRequestId} na consulta e na
+     * tentativa; depois vem a metade do worker no {@code CORR#}. Ela roda mesmo se um callback com
+     * {@code clientReference} já concluiu a consulta, para marcar como processado o que chegou só com o
+     * {@code providerRequestId}.
+     */
+    private void accepted(InsurerQuoteRequest request, String queryId, int sequence, String providerRequestId,
+                          Integer httpStatus, Instant now) {
+        if (ledger.recordAccepted(queryId, sequence, providerRequestId, httpStatus, now)) {
+            LOGGER.info("Insurer accepted the request: queryId={} insurerId={}", queryId, request.insurerId());
+        } else {
+            LOGGER.info("Insurer query was settled before its 202 was recorded: queryId={}", queryId);
+        }
+        callbacks.meet(request.insurerId(), providerRequestId, queryId);
     }
 
     private void unavailable(InsurerQuoteRequest request, String queryId, int lastSequence, String reasonCode) {
@@ -197,7 +205,7 @@ class InsurerRequestHandler {
             return;
         }
         if (query.providerRequestId() != null) {
-            LOGGER.info("Insurer query waits for the callback: queryId={}", queryId);
+            callbacks.meet(request.insurerId(), query.providerRequestId(), queryId);
             return;
         }
         Instant now = clock.instant();
@@ -290,15 +298,6 @@ class InsurerRequestHandler {
         }
     }
 
-    private static Object normalizedResult(InsurerResultRecorded.Outcome outcome) {
-        if (outcome.offer() != null) {
-            return outcome.offer();
-        }
-        return outcome.missingFields() == null
-                ? Map.of("reasonCode", outcome.reasonCode())
-                : Map.of("reasonCode", outcome.reasonCode(), "missingFields", outcome.missingFields());
-    }
-
     private EvidenceDraft unavailableEvidence(String queryId, int sequence, String reasonCode, Instant now) {
         String receivedAt = Timestamps.format(now);
         return new EvidenceDraft(Identities.evidenceId(queryId, sequence), "UNAVAILABLE",
@@ -308,6 +307,6 @@ class InsurerRequestHandler {
     private static QueryDraft draft(InsurerQuoteRequest request, String queryId) {
         return new QueryDraft(queryId, QueryDraft.QUOTE, request.insurerId(), null, null, request.organizationId(),
                 request.workRef(), request.quoteId(), request.version(), request.insurerId(), null,
-                request.deadlineAt());
+                request.deadlineAt()).answering(request.eventId());
     }
 }

@@ -27,7 +27,7 @@ provider:
   enrichment-validity-seconds: ${ENRICHMENT_VALIDITY_SECONDS:900}
   outbox-republish-after-seconds: ${OUTBOX_REPUBLISH_AFTER_SECONDS:30}
   credential-ref: ${PROVIDER_CREDENTIAL_REF:default}
-  supported-insurers: alpha
+  supported-insurers: alpha,beta
   quota-per-minute:
     enrichment-sim: ${ENRICHMENT_SIM_QUOTA_PER_MINUTE:30}
     alpha: ${ALPHA_QUOTA_PER_MINUTE:30}

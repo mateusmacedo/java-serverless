@@ -23,6 +23,15 @@
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>dynamodb</artifactId>
         </dependency>
+        <!-- Callbacks da beta: agendados na fila sim-callbacks e assinados com o callback-secret -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>sqs</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>secretsmanager</artifactId>
+        </dependency>
         <!-- O serverless-java-container substitui o servidor embutido, então o Tomcat sai -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -46,6 +55,12 @@
         <dependency>
             <groupId>io.floci</groupId>
             <artifactId>testcontainers-floci-aws</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- WHY: só nos testes, para conferir a assinatura do simCallbackSender com a validação da API -->
+        <dependency>
+            <groupId>com.mmda.serverless</groupId>
+            <artifactId>provider-domain</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

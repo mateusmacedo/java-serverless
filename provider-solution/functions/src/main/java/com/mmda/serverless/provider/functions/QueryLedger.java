@@ -102,7 +102,8 @@ class QueryLedger {
                         Items.number(item, "sequence").orElseThrow().intValue(),
                         Items.string(item, "startedAt").orElse(null),
                         Items.string(item, "finishedAt").orElse(null),
-                        Items.string(item, "outcome").orElse(null)));
+                        Items.string(item, "outcome").orElse(null),
+                        Items.string(item, "providerRequestId").orElse(null)));
             }
         }
         if (meta == null) {
@@ -114,7 +115,13 @@ class QueryLedger {
                 Items.string(meta, "providerRequestId").orElse(null),
                 Items.string(meta, "queryKey").orElse(null),
                 Items.number(meta, "fencingVersion").orElse(null),
-                attempts));
+                attempts,
+                Items.string(meta, "provider").orElse(null),
+                Items.string(meta, "workRef").orElse(null),
+                Items.string(meta, "quoteId").orElse(null),
+                Items.number(meta, "version").map(Long::intValue).orElse(null),
+                Items.string(meta, "insurerId").orElse(null),
+                Items.string(meta, "requestEventId").orElse(null)));
     }
 
     boolean isConsumed(String eventId) {
@@ -323,8 +330,14 @@ class QueryLedger {
                 putConsumed(settlement.consumedEventId(), settlement.workRef(), now));
     }
 
-    /** Resposta {@code 202}: grava o {@code providerRequestId} na consulta e na tentativa (§8, passo 3). */
-    boolean recordAccepted(String queryId, Settlement.AttemptResult attempt, Instant now) {
+    /**
+     * Resposta {@code 202}: grava o {@code providerRequestId} na consulta e na tentativa (§8, passo 3). A
+     * tentativa continua aberta: o resultado, que chega pelo callback, é que a conclui. Devolve {@code false}
+     * quando a consulta já não estava em voo, como depois de um callback com {@code clientReference} mais
+     * rápido que esta gravação.
+     */
+    boolean recordAccepted(String queryId, int sequence, String providerRequestId, Integer httpStatus, Instant now) {
+        String acceptedAt = Timestamps.format(now);
         TransactWriteItem query = TransactWriteItem.builder()
                 .update(update -> update
                         .tableName(properties.tableName())
@@ -333,11 +346,28 @@ class QueryLedger {
                         .conditionExpression(STATE + " = :inFlight")
                         .expressionAttributeNames(STATE_NAME)
                         .expressionAttributeValues(Map.of(
-                                ":requestId", s(attempt.providerRequestId()),
-                                ":now", s(Timestamps.format(now)),
+                                ":requestId", s(providerRequestId),
+                                ":now", s(acceptedAt),
                                 ":inFlight", s(QueryState.IN_FLIGHT.name()))))
                 .build();
-        return transactions.write(List.of(query, finishAttemptItem(queryId, attempt, now))).committed();
+        Map<String, AttributeValue> values = new HashMap<>();
+        values.put(":requestId", s(providerRequestId));
+        values.put(":now", s(acceptedAt));
+        String status = "";
+        if (httpStatus != null) {
+            values.put(":status", n(httpStatus));
+            status = ", httpStatus = :status";
+        }
+        String expression = "SET providerRequestId = :requestId, acceptedAt = :now" + status;
+        TransactWriteItem attempt = TransactWriteItem.builder()
+                .update(update -> update
+                        .tableName(properties.tableName())
+                        .key(Items.key(Items.queryPk(queryId), Items.attemptSk(sequence)))
+                        .updateExpression(expression)
+                        .conditionExpression(AttemptUpdate.CONDITION)
+                        .expressionAttributeValues(values))
+                .build();
+        return transactions.write(List.of(query, attempt)).committed();
     }
 
     private TransactWriteItem putQuery(QueryDraft draft, QueryState state, Instant now) {
@@ -355,6 +385,7 @@ class QueryLedger {
         item.put("version", n(draft.version()));
         putIfPresent(item, "insurerId", draft.insurerId());
         putIfPresent(item, "queryKey", draft.queryKey());
+        putIfPresent(item, "requestEventId", draft.requestEventId());
         if (draft.fencingVersion() != null) {
             item.put("fencingVersion", n(draft.fencingVersion()));
         }
@@ -414,7 +445,7 @@ class QueryLedger {
                 .build();
     }
 
-    private TransactWriteItem finishAttemptItem(String queryId, Settlement.AttemptResult attempt, Instant now) {
+    TransactWriteItem finishAttemptItem(String queryId, Settlement.AttemptResult attempt, Instant now) {
         AttemptUpdate update = attemptUpdate(attempt, now);
         return TransactWriteItem.builder()
                 .update(builder -> builder
@@ -468,7 +499,7 @@ class QueryLedger {
                 .build();
     }
 
-    private TransactWriteItem putEvidence(String queryId, EvidenceDraft evidence) {
+    TransactWriteItem putEvidence(String queryId, EvidenceDraft evidence) {
         Map<String, AttributeValue> item = Items.item(Items.queryPk(queryId), Items.evidenceSk(evidence.evidenceId()),
                 Items.TYPE_EVIDENCE);
         item.put("evidenceId", s(evidence.evidenceId()));
@@ -493,7 +524,7 @@ class QueryLedger {
                 .build();
     }
 
-    private TransactWriteItem putConsumed(String eventId, String workRef, Instant now) {
+    TransactWriteItem putConsumed(String eventId, String workRef, Instant now) {
         Map<String, AttributeValue> item = Items.item(Items.consumedPk(eventId), META, Items.TYPE_CONSUMED);
         item.put("consumedAt", s(Timestamps.format(now)));
         putIfPresent(item, "workRef", workRef);

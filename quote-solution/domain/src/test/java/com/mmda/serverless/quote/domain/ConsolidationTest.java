@@ -7,6 +7,8 @@ import com.mmda.serverless.quote.domain.Consolidation.InsurerResultView;
 import java.util.List;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 /** Precedência completa do PRD §8, linha a linha, e os casos-limite que a reconciliação encontra. */
 class ConsolidationTest {
@@ -155,6 +157,8 @@ class ConsolidationTest {
                     result(Insurers.BETA, InsurerStatus.DECLINED));
 
             assertThat(result.outcome()).isEqualTo(Outcome.COMPLETED);
+            assertThat(result.outcomeReason()).isNull();
+            assertThat(result.missingFields()).isEmpty();
         }
 
         @Test
@@ -241,6 +245,48 @@ class ConsolidationTest {
             assertThat(insurers(result(Insurers.ALPHA, InsurerStatus.DECLINED),
                     result(Insurers.BETA, InsurerStatus.PROCESSING)).outcome())
                     .isEqualTo(Outcome.TECHNICAL_FAILURE);
+        }
+
+        @Test
+        void declineAndPendencyIsNeedsInformationNotNoOffer() {
+            MissingField license = new MissingField("risk.principalDriver.licenseDate", "MISSING_LICENSE_DATE");
+
+            ConsolidationResult result = insurers(result(Insurers.ALPHA, InsurerStatus.DECLINED),
+                    result(Insurers.BETA, InsurerStatus.NEEDS_INFORMATION, license));
+
+            assertThat(result.outcome()).isEqualTo(Outcome.NEEDS_INFORMATION);
+            assertThat(result.outcomeReason()).isEqualTo(OutcomeReason.INSURER_NEEDS_INFORMATION);
+            assertThat(result.missingFields()).containsExactly(license);
+        }
+
+        /** As linhas do PRD §8 para duas seguradoras, nas duas ordens: a precedência não depende de quem respondeu. */
+        @ParameterizedTest(name = "{0} + {1} = {2}")
+        @CsvSource({
+                "QUOTED,            QUOTED,            COMPLETED,",
+                "QUOTED,            DECLINED,          COMPLETED,",
+                "QUOTED,            NEEDS_INFORMATION, PARTIAL,",
+                "QUOTED,            UNAVAILABLE,       PARTIAL,",
+                "QUOTED,            TIMED_OUT,         PARTIAL,",
+                "NEEDS_INFORMATION, NEEDS_INFORMATION, NEEDS_INFORMATION, INSURER_NEEDS_INFORMATION",
+                "NEEDS_INFORMATION, DECLINED,          NEEDS_INFORMATION, INSURER_NEEDS_INFORMATION",
+                "NEEDS_INFORMATION, UNAVAILABLE,       NEEDS_INFORMATION, INSURER_NEEDS_INFORMATION",
+                "NEEDS_INFORMATION, TIMED_OUT,         NEEDS_INFORMATION, INSURER_NEEDS_INFORMATION",
+                "UNAVAILABLE,       UNAVAILABLE,       TECHNICAL_FAILURE, INSURER_TECHNICAL_FAILURE",
+                "UNAVAILABLE,       TIMED_OUT,         TECHNICAL_FAILURE, INSURER_TECHNICAL_FAILURE",
+                "TIMED_OUT,         TIMED_OUT,         TECHNICAL_FAILURE, INSURER_TECHNICAL_FAILURE",
+                "DECLINED,          UNAVAILABLE,       TECHNICAL_FAILURE, INSURER_TECHNICAL_FAILURE",
+                "DECLINED,          TIMED_OUT,         TECHNICAL_FAILURE, INSURER_TECHNICAL_FAILURE",
+                "DECLINED,          DECLINED,          NO_OFFER,          ALL_INSURERS_DECLINED"
+        })
+        void everyPairOfTerminalResultsFollowsThePrecedence(InsurerStatus first, InsurerStatus second, Outcome outcome,
+                OutcomeReason reason) {
+            ConsolidationResult alphaFirst = insurers(result(Insurers.ALPHA, first), result(Insurers.BETA, second));
+            ConsolidationResult betaFirst = insurers(result(Insurers.ALPHA, second), result(Insurers.BETA, first));
+
+            for (ConsolidationResult result : List.of(alphaFirst, betaFirst)) {
+                assertThat(result.outcome()).isEqualTo(outcome);
+                assertThat(result.outcomeReason()).isEqualTo(reason);
+            }
         }
 
         @Test

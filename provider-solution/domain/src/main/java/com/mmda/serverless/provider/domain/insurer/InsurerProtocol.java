@@ -30,11 +30,21 @@ public final class InsurerProtocol {
         };
     }
 
+    /**
+     * Resultado entregue por callback: classificado como a resposta {@code 200} da seguradora síncrona. Sem
+     * resultado legível, é {@code UNAVAILABLE} com {@code INVALID_PROVIDER_RESPONSE}.
+     */
+    public static InsurerVerdict classifyCallback(InsurerReply result) {
+        return result == null ? invalidResponse() : classifyDecision(result);
+    }
+
     private static InsurerVerdict classifyResponse(CallOutcome.Responded<InsurerReply> responded) {
         int status = responded.statusCode();
         InsurerReply reply = responded.reply();
         if (status == 202) {
-            return reply != null && reply.providerRequestId() != null
+            // WHY: um providerRequestId fora do formato do callback faria todo callback dele ser recusado com 400,
+            // e a consulta esperaria em voo um resultado que nunca seria aceito
+            return reply != null && InsurerCallback.isExternalId(reply.providerRequestId())
                     ? new InsurerVerdict.Accepted(reply.providerRequestId())
                     : invalidResponse();
         }

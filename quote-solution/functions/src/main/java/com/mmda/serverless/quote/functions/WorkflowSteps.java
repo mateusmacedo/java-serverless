@@ -139,9 +139,8 @@ public class WorkflowSteps {
         if (evidence.isEmpty()) {
             return selectionOutput(List.of());
         }
-        QuoteSnapshot snapshot = snapshot(versionItem);
-        InsurerSelectionRule.InsurerSelection selection = InsurerSelectionRule.select(snapshot.risk().usage(),
-                enrichedVehicleYear(evidence.get(), snapshot), config.maxInsurers());
+        InsurerSelectionRule.InsurerSelection selection = InsurerSelectionRule.select(snapshot(versionItem),
+                readTree(Attr.string(evidence.get(), "summary")).path("result"), config.maxInsurers());
         Instant now = Instant.now(clock);
         Map<String, AttributeValue> values = new HashMap<>(Map.of(
                 ":insurers", Attr.list(selection.insurerIds()),
@@ -345,12 +344,6 @@ public class WorkflowSteps {
     private Optional<Map<String, AttributeValue>> enrichmentEvidence(String quoteId, int version) {
         WorkRef workRef = WorkRef.of(quoteId, version, WorkRef.Kind.ENRICHMENT, null);
         return table.get(QuoteKeys.quotePk(quoteId), QuoteKeys.evidenceSk(version, workRef));
-    }
-
-    /** Ano do veículo no perfil enriquecido; o do snapshot quando o perfil não o informa. */
-    private int enrichedVehicleYear(Map<String, AttributeValue> evidence, QuoteSnapshot snapshot) {
-        JsonNode year = readTree(Attr.string(evidence, "summary")).at("/result/vehicle/year");
-        return year.canConvertToInt() ? year.asInt() : snapshot.risk().vehicle().year();
     }
 
     private EligibilityResult storedEligibility(Map<String, AttributeValue> versionItem) {

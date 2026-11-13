@@ -24,7 +24,15 @@ class RawResponses {
 
     /** Grava o corpo e devolve a chave do objeto, que é o {@code rawResponseRef}. */
     String store(String queryId, int attemptSequence, String body) {
-        String key = "raw/" + queryId + "/" + Identities.sequence(attemptSequence) + ".json";
+        return put("raw/" + queryId + "/" + Identities.sequence(attemptSequence) + ".json", body);
+    }
+
+    /** Corpo de um callback; a chave leva o {@code externalEventId}, então cada callback tem o seu objeto. */
+    String storeCallback(String queryId, String externalEventId, String body) {
+        return put("raw/" + queryId + "/callback-" + externalEventId + ".json", body);
+    }
+
+    private String put(String key, String body) {
         s3.putObject(builder -> builder
                         .bucket(properties.payloadsBucket())
                         .key(key)

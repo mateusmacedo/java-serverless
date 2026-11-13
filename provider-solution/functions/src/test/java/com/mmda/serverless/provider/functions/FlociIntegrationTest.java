@@ -42,6 +42,10 @@ abstract class FlociIntegrationTest {
     static final String QUERY_KEY_SECRET = "it/provider/query-key-secret";
     static final String ENRICHMENT_PROVIDER = "enrichment-sim";
     static final String CAPPED_PROVIDER = "capped";
+    /** Provedores com quota pequena, só do T21: nenhum outro teste gasta a janela deles. */
+    static final String T21_INSURER = "t21-insurer";
+    static final String T21_ENRICHMENT = "t21-enrichment";
+    static final int T21_QUOTA_PER_MINUTE = 3;
     static final ProviderStub PROVIDERS;
     static final DynamoDbClient DYNAMO_DB;
     static final SqsClient SQS;
@@ -95,8 +99,11 @@ abstract class FlociIntegrationTest {
         registry.add("RETRY_BACKOFF_MAX_SECONDS", () -> "0");
         registry.add("ENRICHMENT_SIM_QUOTA_PER_MINUTE", () -> "1000");
         registry.add("ALPHA_QUOTA_PER_MINUTE", () -> "1000");
+        registry.add("BETA_QUOTA_PER_MINUTE", () -> "1000");
         registry.add("provider.quota-per-minute[" + CAPPED_PROVIDER + "]", () -> "1");
-        registry.add("provider.supported-insurers", () -> "alpha," + CAPPED_PROVIDER);
+        registry.add("provider.quota-per-minute[" + T21_INSURER + "]", () -> String.valueOf(T21_QUOTA_PER_MINUTE));
+        registry.add("provider.quota-per-minute[" + T21_ENRICHMENT + "]", () -> String.valueOf(T21_QUOTA_PER_MINUTE));
+        registry.add("provider.supported-insurers", () -> "alpha,beta," + CAPPED_PROVIDER + "," + T21_INSURER);
     }
 
     static Map<String, AttributeValue> item(String pk, String sk) {

@@ -2,6 +2,7 @@ package com.mmda.serverless.provider.functions;
 
 import com.mmda.serverless.provider.domain.QueryState;
 import com.mmda.serverless.provider.domain.Timestamps;
+import com.mmda.serverless.provider.domain.insurer.InsurerResultRecorded;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
@@ -12,10 +13,12 @@ import java.util.stream.Stream;
 
 /**
  * Consulta lida com {@code ConsistentRead}, com as tentativas, para decidir a reentrega (§8).
- * {@code queryKey} só existe no enriquecimento e {@code fencingVersion}, só na consulta de um líder.
+ * {@code queryKey} só existe no enriquecimento e {@code fencingVersion}, só na consulta de um líder. Os campos
+ * do pedido de origem ({@code workRef} a {@code requestEventId}) permitem gravar o resultado de um callback.
  */
 record QueryRecord(String queryId, QueryState state, String providerRequestId, String queryKey, Long fencingVersion,
-                   List<Attempt> attempts) {
+                   List<Attempt> attempts, String provider, String workRef, String quoteId, Integer version,
+                   String insurerId, String requestEventId) {
 
     /** Folga para diferença de relógio entre as instâncias que gravaram e leram as tentativas. */
     static final Duration CLOCK_SKEW = Duration.ofSeconds(5);
@@ -53,6 +56,23 @@ record QueryRecord(String queryId, QueryState state, String providerRequestId, S
         return attempts.size();
     }
 
-    record Attempt(int sequence, String startedAt, String finishedAt, String outcome) {
+    /**
+     * Tentativa que o callback conclui: a que recebeu o {@code 202} com o mesmo {@code providerRequestId}; sem
+     * ela, como no callback que chega antes da gravação do {@code 202}, a última ainda aberta.
+     */
+    Optional<Attempt> callbackAttempt(String callbackProviderRequestId) {
+        return attempts.stream()
+                .filter(attempt -> attempt.providerRequestId() != null
+                        && attempt.providerRequestId().equals(callbackProviderRequestId))
+                .findFirst()
+                .or(() -> attempts.stream().filter(attempt -> attempt.finishedAt() == null).reduce((first, last) -> last))
+                .or(() -> attempts.stream().reduce((first, last) -> last));
+    }
+
+    InsurerResultRecorded.Origin origin() {
+        return new InsurerResultRecorded.Origin(workRef, quoteId, version == null ? 0 : version, insurerId);
+    }
+
+    record Attempt(int sequence, String startedAt, String finishedAt, String outcome, String providerRequestId) {
     }
 }

@@ -38,7 +38,10 @@ info:
     `missingFields` (`path` relativo ao snapshot e `reasonCode`) e, com `QUOTED`, `offer`
     (`externalOfferId`, `insurerName`, `premiumTotal`, `currency`, `installments`, `coverages`,
     `deductibles`, `validUntil`, `rawResponseRef`), no formato do schema `Offer` de `contracts/openapi.yaml`.
-    Campos desconhecidos são ignorados.
+    A alpha responde na chamada e a beta por callback, mas as duas publicam esse mesmo contrato, e a quote
+    as trata igual: o resultado que chega depois do prazo do pedido ou do `TIMED_OUT` vira evidência `LATE`,
+    e outro resultado para um pedido já retomado vira `DUPLICATE`, sem nova oferta. A repetição do mesmo
+    `eventId` é descartada. Campos desconhecidos são ignorados.
 
     Os exemplos usam identificadores calculados pelas regras acima para a cotação do exemplo.
 channels:

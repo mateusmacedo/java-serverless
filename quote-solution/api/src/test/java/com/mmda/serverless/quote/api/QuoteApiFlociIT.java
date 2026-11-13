@@ -15,6 +15,7 @@ import io.restassured.http.ContentType;
 import jakarta.inject.Inject;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -182,6 +183,65 @@ class QuoteApiFlociIT {
     }
 
     @Test
+    void t08_offerOfOneInsurerIsVisibleWhileTheOtherWaitsAndStaysAfterThePartialOutcome() {
+        String quoteId = create(writerToken, UUID.randomUUID().toString(), BODY).path("quoteId");
+        setVersion(quoteId, "QUOTING", null);
+        putResult(quoteId, "alpha", "Alpha Seguros", "QUOTED", null);
+        putResult(quoteId, "beta", "Beta Seguros", "PROCESSING", null);
+        putOffer(quoteId, "of_alpha", Instant.now().plusSeconds(1800));
+
+        given().header("Authorization", "Bearer " + readerToken)
+                .when().get("/v1/quotes/" + quoteId + "/versions/1")
+                .then().statusCode(200)
+                .body("phase", equalTo("QUOTING"))
+                .body("outcome", nullValue())
+                .body("retryAfterSeconds", equalTo(3))
+                .body("insurerResults.insurerId", contains("alpha", "beta"))
+                .body("insurerResults.insurerName", contains("Alpha Seguros", "Beta Seguros"))
+                .body("insurerResults.status", contains("QUOTED", "PROCESSING"));
+        given().header("Authorization", "Bearer " + readerToken)
+                .when().get("/v1/quotes/" + quoteId + "/versions/1/offers")
+                .then().statusCode(200)
+                .body("items.insurerId", contains("alpha"))
+                .body("items[0].insurerName", equalTo("Alpha Seguros"))
+                .body("items[0].selectable", equalTo(true));
+
+        putResult(quoteId, "beta", "Beta Seguros", "TIMED_OUT", "STEP_TIMEOUT");
+        setVersion(quoteId, "TERMINAL", "PARTIAL");
+
+        given().header("Authorization", "Bearer " + readerToken)
+                .when().get("/v1/quotes/" + quoteId + "/versions/1")
+                .then().statusCode(200)
+                .body("phase", equalTo("TERMINAL"))
+                .body("outcome", equalTo("PARTIAL"))
+                .body("outcomeReason", nullValue())
+                .body("retryAfterSeconds", nullValue())
+                .body("insurerResults.status", contains("QUOTED", "TIMED_OUT"))
+                .body("insurerResults[1].reasonCode", equalTo("STEP_TIMEOUT"));
+        given().header("Authorization", "Bearer " + readerToken)
+                .when().get("/v1/quotes/" + quoteId + "/versions/1/offers")
+                .then().statusCode(200)
+                .body("items.id", contains("of_alpha"));
+    }
+
+    @Test
+    void t07_declineReasonIsShownNextToTheOfferOfTheOtherInsurer() {
+        String quoteId = create(writerToken, UUID.randomUUID().toString(), BODY).path("quoteId");
+        putResult(quoteId, "alpha", "Alpha Seguros", "QUOTED", null);
+        putResult(quoteId, "beta", "Beta Seguros", "DECLINED", "RISK_NOT_ACCEPTED");
+        putOffer(quoteId, "of_alpha", Instant.now().plusSeconds(1800));
+        setVersion(quoteId, "TERMINAL", "COMPLETED");
+
+        given().header("Authorization", "Bearer " + readerToken)
+                .when().get("/v1/quotes/" + quoteId + "/versions/1")
+                .then().statusCode(200)
+                .body("outcome", equalTo("COMPLETED"))
+                .body("outcomeReason", nullValue())
+                .body("insurerResults.status", contains("QUOTED", "DECLINED"))
+                .body("insurerResults[1].reasonCode", equalTo("RISK_NOT_ACCEPTED"));
+    }
+
+    @Test
     void cognitoAccessTokenIsAcceptedAndIdTokenIsRejected() {
         given().header("Authorization", "Bearer " + writerToken)
                 .when().get("/v1/me")
@@ -228,6 +288,40 @@ class QuoteApiFlociIT {
                 Map.entry("deductibles", AttributeValue.fromS("[]")),
                 Map.entry("validUntil", AttributeValue.fromS(validUntil.toString())),
                 Map.entry("createdAt", AttributeValue.fromS(Instant.now().toString())))));
+    }
+
+    /** Fase e resultado da versão como os passos da máquina gravam, com a {@code revision} incrementada. */
+    private void setVersion(String quoteId, String phase, String outcome) {
+        Map<String, AttributeValue> values = new HashMap<>(Map.of(":phase", AttributeValue.fromS(phase),
+                ":one", AttributeValue.fromN("1"), ":now", AttributeValue.fromS(Instant.now().toString())));
+        String expression = "SET phase = :phase, revision = revision + :one, updatedAt = :now";
+        if (outcome != null) {
+            values.put(":outcome", AttributeValue.fromS(outcome));
+            expression += ", outcome = :outcome, missingFields = :missing";
+            values.put(":missing", AttributeValue.fromS("[]"));
+        }
+        String update = expression;
+        dynamoDb.updateItem(builder -> builder.tableName(FlociResource.TABLE)
+                .key(Map.of("pk", AttributeValue.fromS("QUOTE#" + quoteId), "sk", AttributeValue.fromS("V#0001")))
+                .updateExpression(update).expressionAttributeValues(values));
+    }
+
+    /** {@code RESULT} com os atributos que a seleção, a {@code dispatch} e o {@code resume} gravam. */
+    private void putResult(String quoteId, String insurerId, String insurerName, String status, String reasonCode) {
+        Map<String, AttributeValue> result = new HashMap<>(Map.of(
+                "pk", AttributeValue.fromS("QUOTE#" + quoteId),
+                "sk", AttributeValue.fromS("V#0001#RESULT#" + insurerId),
+                "type", AttributeValue.fromS("RESULT"),
+                "insurerId", AttributeValue.fromS(insurerId),
+                "insurerName", AttributeValue.fromS(insurerName),
+                "status", AttributeValue.fromS(status),
+                "missingFields", AttributeValue.fromS("[]"),
+                "revision", AttributeValue.fromN("PROCESSING".equals(status) ? "2" : "3"),
+                "updatedAt", AttributeValue.fromS(Instant.now().toString())));
+        if (reasonCode != null) {
+            result.put("reasonCode", AttributeValue.fromS(reasonCode));
+        }
+        dynamoDb.putItem(builder -> builder.tableName(FlociResource.TABLE).item(result));
     }
 
     private Map<String, AttributeValue> item(String pk, String sk) {

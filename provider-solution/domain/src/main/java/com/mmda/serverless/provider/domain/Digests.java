@@ -30,10 +30,15 @@ public final class Digests {
 
     /** HMAC-SHA256 do texto em UTF-8 com a chave dada, em hexadecimal minúsculo. */
     public static String hmacSha256Hex(byte[] key, String value) {
+        return HEX.formatHex(hmacSha256(key, value.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    /** HMAC-SHA256 dos bytes com a chave dada. */
+    public static byte[] hmacSha256(byte[] key, byte[] value) {
         try {
             Mac mac = Mac.getInstance("HmacSHA256");
             mac.init(new SecretKeySpec(key, "HmacSHA256"));
-            return HEX.formatHex(mac.doFinal(value.getBytes(StandardCharsets.UTF_8)));
+            return mac.doFinal(value);
         } catch (GeneralSecurityException exception) {
             throw new IllegalStateException("HmacSHA256 is not available", exception);
         }

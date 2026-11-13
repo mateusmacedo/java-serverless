@@ -7,3 +7,6 @@ spring:
 simulators:
   table-name: ${SIMULATORS_TABLE_NAME}
   offer-validity-seconds: ${OFFER_VALIDITY_SECONDS:1800}
+  sim-callbacks-queue-url: ${SIM_CALLBACKS_QUEUE_URL:}
+  beta-callback-delay-seconds: ${BETA_CALLBACK_DELAY_SECONDS:3}
+  beta-late-callback-delay-seconds: ${BETA_LATE_CALLBACK_DELAY_SECONDS:30}

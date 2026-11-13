@@ -120,7 +120,7 @@ public class ResultResumer {
             boolean redelivered = "RESUMING".equals(current.status()) && eventId.equals(current.resultEventId());
             if (!redelivered) {
                 if (table.get(QuoteKeys.consumedPk(eventId), QuoteKeys.META).isPresent()) {
-                    return Disposition.DISCARDED;
+                    return discarded(eventId);
                 }
                 String reason = current.resultEventId() != null ? "DUPLICATE" : "LATE";
                 return recordLate(current, detail, eventId, reason, now);
@@ -288,11 +288,17 @@ public class ResultResumer {
             if (!QuoteTable.isConditionFailure(canceled)) {
                 throw canceled;
             }
-            return Disposition.DISCARDED;
+            return discarded(eventId);
         }
         LOG.infof("%s result %s kept as evidence for workRef of quoteId=%s version=%d", reason, eventId,
                 waiter.quoteId(), waiter.version());
         return "DUPLICATE".equals(reason) ? Disposition.DUPLICATE : Disposition.LATE;
+    }
+
+    /** O descarte não grava nada; a linha de log com o {@code eventId} é o rastro dele. */
+    private static Disposition discarded(String eventId) {
+        LOG.infof("result %s already consumed, discarded", eventId);
+        return Disposition.DISCARDED;
     }
 
     private Map<String, AttributeValue> consumed(String eventId, Instant now) {

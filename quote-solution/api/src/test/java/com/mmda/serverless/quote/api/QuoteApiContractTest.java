@@ -314,6 +314,24 @@ class QuoteApiContractTest {
     }
 
     @Test
+    void t08_partialVersionWithATimedOutInsurerFollowsTheContract() {
+        stubQuote("TERMINAL", "PARTIAL", "TIMED_OUT", "STEP_TIMEOUT");
+
+        given().filter(CONTRACT).header("Authorization", reader)
+                .when().get("/v1/quotes/q-1/versions/1")
+                .then().statusCode(200)
+                .body("outcome", equalTo("PARTIAL"))
+                .body("outcomeReason", nullValue())
+                .body("retryAfterSeconds", nullValue())
+                .body("insurerResults.status", contains("QUOTED", "TIMED_OUT"))
+                .body("insurerResults[1].reasonCode", equalTo("STEP_TIMEOUT"));
+        given().filter(CONTRACT).header("Authorization", reader)
+                .when().get("/v1/quotes/q-1/versions/1/offers")
+                .then().statusCode(200)
+                .body("items.insurerId", contains("alpha"));
+    }
+
+    @Test
     void offersFollowTheContract() {
         stubQuote();
 
@@ -383,6 +401,11 @@ class QuoteApiContractTest {
     }
 
     private void stubQuote() {
+        stubQuote("QUOTING", null, "PROCESSING", null);
+    }
+
+    /** Versão com a oferta da alpha e o resultado informado da beta; {@code outcome} só na fase terminal. */
+    private void stubQuote(String phase, String outcome, String betaStatus, String betaReason) {
         String now = Instant.now().toString();
         String validUntil = Instant.now().plusSeconds(1800).toString();
         Map<String, AttributeValue> meta = Map.of(
@@ -390,16 +413,22 @@ class QuoteApiContractTest {
                 "organizationId", AttributeValue.fromS("org-acme"), "currentVersion", AttributeValue.fromN("1"));
         Map<String, AttributeValue> version = new HashMap<>(Map.of(
                 "pk", AttributeValue.fromS("QUOTE#q-1"), "sk", AttributeValue.fromS("V#0001"),
-                "snapshot", AttributeValue.fromS(SNAPSHOT), "phase", AttributeValue.fromS("QUOTING"),
+                "snapshot", AttributeValue.fromS(SNAPSHOT), "phase", AttributeValue.fromS(phase),
                 "revision", AttributeValue.fromN("4"), "updatedAt", AttributeValue.fromS(now)));
+        if (outcome != null) {
+            version.put("outcome", AttributeValue.fromS(outcome));
+        }
         Map<String, AttributeValue> alpha = Map.of(
                 "sk", AttributeValue.fromS("V#0001#RESULT#alpha"), "insurerId", AttributeValue.fromS("alpha"),
                 "insurerName", AttributeValue.fromS("Alpha Seguros"), "status", AttributeValue.fromS("QUOTED"),
                 "revision", AttributeValue.fromN("2"), "updatedAt", AttributeValue.fromS(now));
-        Map<String, AttributeValue> beta = Map.of(
+        Map<String, AttributeValue> beta = new HashMap<>(Map.of(
                 "sk", AttributeValue.fromS("V#0001#RESULT#beta"), "insurerId", AttributeValue.fromS("beta"),
-                "insurerName", AttributeValue.fromS("Beta Seguros"), "status", AttributeValue.fromS("PROCESSING"),
-                "revision", AttributeValue.fromN("2"), "updatedAt", AttributeValue.fromS(now));
+                "insurerName", AttributeValue.fromS("Beta Seguros"), "status", AttributeValue.fromS(betaStatus),
+                "revision", AttributeValue.fromN("2"), "updatedAt", AttributeValue.fromS(now)));
+        if (betaReason != null) {
+            beta.put("reasonCode", AttributeValue.fromS(betaReason));
+        }
         Map<String, AttributeValue> offer = new HashMap<>(Map.of(
                 "sk", AttributeValue.fromS("V#0001#OFFER#of_1"), "offerId", AttributeValue.fromS("of_1"),
                 "insurerId", AttributeValue.fromS("alpha"), "insurerName", AttributeValue.fromS("Alpha Seguros"),
