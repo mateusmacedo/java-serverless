@@ -1,0 +1,702 @@
+asyncapi: 3.1.0
+info:
+  title: provider-solution eventos
+  version: 0.1.0
+  description: |
+    Eventos que a `provider-solution`, em Spring, publica no barramento da plataforma
+    `platform-{stage}-events` ([ADR 0013](../decisions/0013-barramento-da-plataforma.md)), com
+    `source` `mmda.provider`. O desenho está em `docs/quotation-platform.md` (§3, §5 e §8).
+
+    Todo evento nasce de um item `OUTBOX#<eventId>` gravado na mesma transação do resultado
+    ([ADR 0015](../decisions/0015-modelo-dynamodb-e-outbox-da-cotacao.md)) e é publicado pela Lambda
+    `outboxRelay` (stream da tabela `provider-solution-{stage}-queries`) ou pelo `reconciler`, que republica
+    o outbox pendente a cada minuto. A entrega é pelo menos uma vez: o consumidor descarta a repetição pelo
+    `eventId`, gravando o registro de consumo na mesma transação do efeito.
+
+    Todo `detail` tem `eventId` (UUID), `occurredAt` (ISO 8601 em UTC, com milissegundos) e
+    `schemaVersion` (`"1"`). Valores monetários são strings decimais com a moeda em `currency`. Campos
+    opcionais ficam ausentes, nunca nulos. Nenhum evento leva credencial, CPF ou resposta bruta: a resposta
+    do fornecedor fica no bucket `provider-solution-{stage}-payloads` e o evento leva só a chave
+    (`rawResponseRef`).
+
+    O `eventId` é determinístico: UUID versão 5 no namespace URL da RFC 9562
+    (`6ba7b811-9dad-11d1-80b4-00c04fd430c8`), o mesmo da quote-solution, com o nome indicado em cada
+    mensagem. O `queryId` é `q_` + os 32 primeiros hexadecimais do SHA-256 do `workRef` do pedido; o
+    `attemptRef` é `<queryId>#<nnnn>`, a tentativa lógica que produziu o resultado.
+
+    A provider consome `EnrichmentRequested` e `InsurerQuoteRequested`, descritos no AsyncAPI da
+    `quote-solution`, pelas regras `source` `mmda.quote` com alvo nas filas
+    `provider-solution-{stage}-enrichment-requests` e `provider-solution-{stage}-insurer-requests`. Os
+    pedidos são deduplicados pelo `workRef` (pela consulta derivada dele), não pelo `eventId`.
+
+    Os exemplos foram capturados no Floci, stage `local`, com pedidos publicados à mão no barramento.
+channels:
+  platformEvents:
+    address: platform-{stage}-events
+    title: Barramento EventBridge da plataforma
+    description: |
+      Criado pela stack `platform/events`. A quote-solution assina `EnrichmentResolved` e
+      `InsurerResultRecorded` com a regra `source` `mmda.provider` e alvo na fila
+      `quote-solution-{stage}-results`; a partir do M5, também os eventos de operação.
+    parameters:
+      stage:
+        $ref: '#/components/parameters/stage'
+    messages:
+      enrichmentResolved:
+        $ref: '#/components/messages/EnrichmentResolved'
+      insurerResultRecorded:
+        $ref: '#/components/messages/InsurerResultRecorded'
+      queryReconciled:
+        $ref: '#/components/messages/QueryReconciled'
+      operationIssueRaised:
+        $ref: '#/components/messages/OperationIssueRaised'
+      operationIssueUpdated:
+        $ref: '#/components/messages/OperationIssueUpdated'
+      enrichmentRequested:
+        $ref: './quote-solution.asyncapi.yaml#/components/messages/EnrichmentRequested'
+      insurerQuoteRequested:
+        $ref: './quote-solution.asyncapi.yaml#/components/messages/InsurerQuoteRequested'
+operations:
+  receiveEnrichmentRequested:
+    action: receive
+    title: O enrichmentWorker resolve o enriquecimento pedido pela quote
+    description: |
+      A regra entrega o envelope na fila `enrichment-requests` (lote 1, falha parcial, DLQ depois de 3
+      recebimentos). O worker deriva a consulta do `workRef`, confere o `deadlineAt`, reserva a quota do
+      provedor, chama `POST /sim/enrichment/profiles` com `clientReference = queryId`, repete erros
+      transitórios até `workerRetries` e grava evidência e `EnrichmentResolved` numa só transação. No M1 toda
+      resolução é `MISS`.
+    channel:
+      $ref: '#/channels/platformEvents'
+    messages:
+      - $ref: '#/channels/platformEvents/messages/enrichmentRequested'
+  receiveInsurerQuoteRequested:
+    action: receive
+    title: O insurerWorker cota numa seguradora
+    description: |
+      A regra entrega o envelope na fila `insurer-requests`. Antes do HTTP o worker grava a consulta, a
+      tentativa e o débito da quota; depois, a evidência e o `InsurerResultRecorded`. Uma reentrega relê a
+      consulta e nunca repete uma chamada que pode ter chegado à seguradora: sem resposta, a consulta fica
+      `UNKNOWN` para a reconciliação (M4) e nenhum evento é publicado.
+    channel:
+      $ref: '#/channels/platformEvents'
+    messages:
+      - $ref: '#/channels/platformEvents/messages/insurerQuoteRequested'
+  emitEnrichmentResolved:
+    action: send
+    title: Resultado do enriquecimento, um por pedido
+    channel:
+      $ref: '#/channels/platformEvents'
+    messages:
+      - $ref: '#/channels/platformEvents/messages/enrichmentResolved'
+  emitInsurerResultRecorded:
+    action: send
+    title: Resultado terminal de uma seguradora
+    channel:
+      $ref: '#/channels/platformEvents'
+    messages:
+      - $ref: '#/channels/platformEvents/messages/insurerResultRecorded'
+  emitQueryReconciled:
+    action: send
+    title: Resultado de uma reconciliação manual (M4)
+    channel:
+      $ref: '#/channels/platformEvents'
+    messages:
+      - $ref: '#/channels/platformEvents/messages/queryReconciled'
+  emitOperationIssue:
+    action: send
+    title: Ocorrência operacional aberta ou atualizada (M4)
+    channel:
+      $ref: '#/channels/platformEvents'
+    messages:
+      - $ref: '#/channels/platformEvents/messages/operationIssueRaised'
+      - $ref: '#/channels/platformEvents/messages/operationIssueUpdated'
+components:
+  parameters:
+    stage:
+      description: Stage do Serverless Framework.
+      default: local
+      examples:
+        - local
+  messages:
+    EnrichmentResolved:
+      name: EnrichmentResolved
+      title: Evento EnrichmentResolved
+      summary: Resultado do enriquecimento para um pedido. `eventId` = UUIDv5 de `queryId|workRef`.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/EnrichmentResolvedEvent'
+      examples:
+        - name: found
+          payload:
+            source: mmda.provider
+            detail-type: EnrichmentResolved
+            detail:
+              eventId: 10e8cdee-fc77-5a26-b5b1-de8100101838
+              occurredAt: '2026-11-11T19:31:15.035Z'
+              schemaVersion: '1'
+              workRef: wr_8829bb26c0c0a15c44c4cd6c5ef1e50f
+              quoteId: m1chk-df5690-vehicle-hatch-2021
+              version: 1
+              queryId: q_d4392dcd44fa57aee4d5feed7aa86526
+              evidenceId: ev_0f89e7a88012a89f201c0483e4e05cde
+              reuseDecision: MISS
+              resultType: FOUND
+              result:
+                vehicle:
+                  ref: vehicle-hatch-2021
+                  make: Volkswagen
+                  model: Polo
+                  year: 2021
+                  marketValue: '75000.00'
+                principalDriver:
+                  ref: driver-acme-ana
+                  licenseYears: 14
+                  claimsLast5Years: 1
+              reusableUntil: '2026-11-11T19:46:14.992Z'
+        - name: not-found
+          payload:
+            source: mmda.provider
+            detail-type: EnrichmentResolved
+            detail:
+              eventId: fd7a3501-0173-551c-8b4f-817ad995d999
+              occurredAt: '2026-11-11T19:31:15.695Z'
+              schemaVersion: '1'
+              workRef: wr_ddcab35a31643c3f453b7e56f29e3eb4
+              quoteId: m1chk-df5690-vehicle-not-found
+              version: 1
+              queryId: q_7a7fb8618e1de015c9e386977365484d
+              evidenceId: ev_73a6d3ad872b4087acb8d529c786a3a6
+              reuseDecision: MISS
+              resultType: NOT_FOUND
+              notFoundRefs:
+                - vehicleRef
+              reusableUntil: '2026-11-11T19:46:15.695Z'
+        - name: failed
+          payload:
+            source: mmda.provider
+            detail-type: EnrichmentResolved
+            detail:
+              eventId: 86efc52c-253d-5ae9-a1bb-adcc745f2ec3
+              occurredAt: '2026-11-11T19:31:18.415Z'
+              schemaVersion: '1'
+              workRef: wr_997ead7aee7106c3fe4d9b07a9e45759
+              quoteId: m1chk-df5690-vehicle-enrichment-down
+              version: 1
+              queryId: q_1b4e5f847befbdd10a44722bd1bc66a9
+              evidenceId: ev_10e5440b12704654ed92622b6901ef9e
+              reuseDecision: MISS
+              resultType: FAILED
+              errorClass: PROVIDER_UNAVAILABLE
+    InsurerResultRecorded:
+      name: InsurerResultRecorded
+      title: Evento InsurerResultRecorded
+      summary: Resultado terminal de uma seguradora para um pedido. `eventId` = UUIDv5 do `queryId`.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/InsurerResultRecordedEvent'
+      examples:
+        - name: quoted
+          payload:
+            source: mmda.provider
+            detail-type: InsurerResultRecorded
+            detail:
+              eventId: ce547b97-7fd4-526c-9aea-2477dcdc3a61
+              occurredAt: '2026-11-11T19:31:14.984Z'
+              schemaVersion: '1'
+              workRef: wr_35ffeb9cce1cb2276f17a25720ea90ba
+              quoteId: m1chk-df5690-vehicle-hatch-2021
+              version: 1
+              insurerId: alpha
+              queryId: q_f984c8f42ef1391e6b52c3799f2ec025
+              attemptRef: q_f984c8f42ef1391e6b52c3799f2ec025#0001
+              status: QUOTED
+              offer:
+                externalOfferId: ALPHA-A1B2452A
+                insurerName: Alpha Seguros
+                premiumTotal: '2341.00'
+                currency: BRL
+                installments:
+                  - count: 1
+                    amount: '2341.00'
+                  - count: 10
+                    amount: '234.10'
+                coverages:
+                  - code: COLLISION
+                    label: Colisão, incêndio e roubo
+                    insuredAmount: '75000.00'
+                  - code: THIRD_PARTY_PROPERTY
+                    label: Danos materiais a terceiros
+                    insuredAmount: '100000.00'
+                  - code: THIRD_PARTY_BODILY
+                    label: Danos corporais a terceiros
+                    insuredAmount: '200000.00'
+                deductibles:
+                  - coverageCode: COLLISION
+                    amount: '3750.00'
+                validUntil: '2026-11-11T20:01:14.932Z'
+                rawResponseRef: raw/q_f984c8f42ef1391e6b52c3799f2ec025/0001.json
+        - name: declined
+          payload:
+            source: mmda.provider
+            detail-type: InsurerResultRecorded
+            detail:
+              eventId: 0adfa6aa-4277-5518-b792-603fb6e2bd1a
+              occurredAt: '2026-11-11T19:31:17.717Z'
+              schemaVersion: '1'
+              workRef: wr_08ade0226fe2e9d6847b6183cecbdfb4
+              quoteId: m1chk-df5690-vehicle-alpha-declines
+              version: 1
+              insurerId: alpha
+              queryId: q_e78a017eb6ded3ddbfe8ab5d4add877b
+              attemptRef: q_e78a017eb6ded3ddbfe8ab5d4add877b#0001
+              status: DECLINED
+              reasonCode: RISK_NOT_ACCEPTED
+        - name: needs-information
+          summary: Formato do resultado da seguradora assíncrona beta (M3); sem captura no M1.
+          payload:
+            source: mmda.provider
+            detail-type: InsurerResultRecorded
+            detail:
+              eventId: f4d7c4ae-160a-522a-8b05-f50415b14e0f
+              occurredAt: '2026-11-11T19:31:20.000Z'
+              schemaVersion: '1'
+              workRef: wr_d6a7cf1cea007eb1232d01f4c9226801
+              quoteId: quote-1
+              version: 1
+              insurerId: beta
+              queryId: q_f41698b41124419452df5cd6e35b87d1
+              attemptRef: q_f41698b41124419452df5cd6e35b87d1#0001
+              status: NEEDS_INFORMATION
+              reasonCode: INSURER_NEEDS_INFORMATION
+              missingFields:
+                - path: risk.principalDriver.licenseDate
+                  reasonCode: MISSING_LICENSE_DATE
+    QueryReconciled:
+      name: QueryReconciled
+      title: Evento QueryReconciled (M4)
+      summary: Resultado de uma reconciliação manual. `eventId` = UUIDv5 de `operationId|revision`.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/QueryReconciledEvent'
+    OperationIssueRaised:
+      name: OperationIssueRaised
+      title: Evento OperationIssueRaised (M4)
+      summary: Ocorrência operacional aberta. `eventId` = UUIDv5 de `issueId|revision`.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/OperationIssueEvent'
+    OperationIssueUpdated:
+      name: OperationIssueUpdated
+      title: Evento OperationIssueUpdated (M4)
+      summary: Ocorrência operacional atualizada. `eventId` = UUIDv5 de `issueId|revision`.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/OperationIssueEvent'
+  schemas:
+    Envelope:
+      type: object
+      description: |
+        Envelope do EventBridge. O consumidor lê o `detail`; `source` é sempre `mmda.provider`.
+      required:
+        - source
+        - detail-type
+        - detail
+      properties:
+        version:
+          type: string
+        id:
+          type: string
+        source:
+          const: mmda.provider
+        account:
+          type: string
+        time:
+          type: string
+          format: date-time
+        region:
+          type: string
+        resources:
+          type: array
+          items:
+            type: string
+    EnrichmentResolvedEvent:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            detail-type:
+              const: EnrichmentResolved
+            detail:
+              $ref: '#/components/schemas/EnrichmentResolvedDetail'
+    InsurerResultRecordedEvent:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            detail-type:
+              const: InsurerResultRecorded
+            detail:
+              $ref: '#/components/schemas/InsurerResultRecordedDetail'
+    QueryReconciledEvent:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            detail-type:
+              const: QueryReconciled
+            detail:
+              $ref: '#/components/schemas/QueryReconciledDetail'
+    OperationIssueEvent:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            detail-type:
+              enum:
+                - OperationIssueRaised
+                - OperationIssueUpdated
+            detail:
+              $ref: '#/components/schemas/OperationIssueDetail'
+    DetailHeader:
+      type: object
+      required:
+        - eventId
+        - occurredAt
+        - schemaVersion
+      properties:
+        eventId:
+          type: string
+          format: uuid
+        occurredAt:
+          type: string
+          format: date-time
+        schemaVersion:
+          const: '1'
+    EnrichmentResolvedDetail:
+      allOf:
+        - $ref: '#/components/schemas/DetailHeader'
+        - type: object
+          description: |
+            Um evento por pedido (`workRef`), inclusive para cada seguidor de uma consulta compartilhada
+            (`JOIN`, M2). `result` só existe em `FOUND`, `notFoundRefs` só em `NOT_FOUND` (declarado pelo
+            provedor, RN07) e `errorClass` só em `FAILED`. `reusableUntil` existe nos resultados
+            reutilizáveis (`FOUND` e `NOT_FOUND`).
+          required:
+            - workRef
+            - quoteId
+            - version
+            - queryId
+            - evidenceId
+            - reuseDecision
+            - resultType
+          properties:
+            workRef:
+              type: string
+              pattern: '^wr_[0-9a-f]{32}$'
+            quoteId:
+              type: string
+            version:
+              type: integer
+              minimum: 1
+            queryId:
+              type: string
+              pattern: '^q_[0-9a-f]{32}$'
+              description: Consulta que produziu a evidência; num `JOIN` ou `HIT`, a do líder.
+            evidenceId:
+              type: string
+              pattern: '^ev_[0-9a-f]{32}$'
+            reuseDecision:
+              enum:
+                - HIT
+                - JOIN
+                - MISS
+            resultType:
+              enum:
+                - FOUND
+                - NOT_FOUND
+                - FAILED
+            result:
+              $ref: '#/components/schemas/EnrichmentProfile'
+            notFoundRefs:
+              type: array
+              minItems: 1
+              items:
+                enum:
+                  - vehicleRef
+                  - principalDriverRef
+            reusableUntil:
+              type: string
+              format: date-time
+            errorClass:
+              description: Código seguro da falha técnica, sem mensagem do fornecedor.
+              enum:
+                - PROVIDER_UNAVAILABLE
+                - PROVIDER_NO_RESPONSE
+                - PROVIDER_AUTHENTICATION_FAILED
+                - PROVIDER_REJECTED_REQUEST
+                - INVALID_PAYLOAD
+                - INVALID_PROVIDER_RESPONSE
+                - UNDECLARED_NOT_FOUND
+                - DEADLINE_EXCEEDED_BEFORE_CALL
+                - QUOTA_EXHAUSTED
+                - INTERRUPTED_ATTEMPT
+                - INTERRUPTED_BEFORE_CALL
+    EnrichmentProfile:
+      type: object
+      description: Perfil normalizado. A regra de seleção `sel-1` da quote usa `vehicle.year`.
+      required:
+        - vehicle
+        - principalDriver
+      properties:
+        vehicle:
+          type: object
+          required:
+            - ref
+            - year
+            - marketValue
+          properties:
+            ref:
+              type: string
+            make:
+              type: string
+            model:
+              type: string
+            year:
+              type: integer
+            marketValue:
+              type: string
+              pattern: '^\d+(\.\d+)?$'
+              description: Valor de mercado em BRL.
+        principalDriver:
+          type: object
+          required:
+            - ref
+            - licenseYears
+            - claimsLast5Years
+          properties:
+            ref:
+              type: string
+            licenseYears:
+              type: integer
+            claimsLast5Years:
+              type: integer
+    InsurerResultRecordedDetail:
+      allOf:
+        - $ref: '#/components/schemas/DetailHeader'
+        - type: object
+          description: |
+            `offer` só existe em `QUOTED`; `missingFields` só em `NEEDS_INFORMATION`; `reasonCode` em todo
+            status diferente de `QUOTED`. `attemptRef` falta quando a provider concluiu sem chamar a
+            seguradora (prazo vencido, quota esgotada ou seguradora sem rota). `TIMED_OUT` não é publicado:
+            é decidido pela máquina da quote.
+          required:
+            - workRef
+            - quoteId
+            - version
+            - insurerId
+            - queryId
+            - status
+          properties:
+            workRef:
+              type: string
+              pattern: '^wr_[0-9a-f]{32}$'
+            quoteId:
+              type: string
+            version:
+              type: integer
+              minimum: 1
+            insurerId:
+              type: string
+            queryId:
+              type: string
+              pattern: '^q_[0-9a-f]{32}$'
+            attemptRef:
+              type: string
+              pattern: '^q_[0-9a-f]{32}#[0-9]{4}$'
+            status:
+              enum:
+                - QUOTED
+                - DECLINED
+                - NEEDS_INFORMATION
+                - UNAVAILABLE
+            reasonCode:
+              type: string
+              description: |
+                Em `DECLINED`, o motivo da seguradora (como `RISK_NOT_ACCEPTED`); em `NEEDS_INFORMATION`,
+                `INSURER_NEEDS_INFORMATION`; em `UNAVAILABLE`, um código técnico seguro:
+                `PROVIDER_UNAVAILABLE`, `DEADLINE_EXCEEDED_BEFORE_CALL`, `QUOTA_EXHAUSTED`,
+                `PROVIDER_REJECTED_REQUEST`, `PROVIDER_AUTHENTICATION_FAILED`, `INVALID_PROVIDER_RESPONSE` ou
+                `UNSUPPORTED_INSURER`.
+            missingFields:
+              type: array
+              minItems: 1
+              items:
+                $ref: '#/components/schemas/MissingField'
+            offer:
+              $ref: '#/components/schemas/Offer'
+    MissingField:
+      type: object
+      required:
+        - path
+        - reasonCode
+      properties:
+        path:
+          type: string
+          description: Caminho relativo ao snapshot, como `risk.principalDriver.licenseDate`.
+        reasonCode:
+          type: string
+    Offer:
+      type: object
+      description: |
+        Oferta normalizada, nos mesmos campos do schema `Offer` de `contracts/openapi.yaml` (a quote acrescenta
+        `id`, `insurerId`, `selectable` e `unavailabilityReason`). `rawResponseRef` é a chave da resposta bruta
+        no bucket de payloads da provider.
+      required:
+        - externalOfferId
+        - insurerName
+        - premiumTotal
+        - currency
+        - installments
+        - coverages
+        - deductibles
+        - validUntil
+      properties:
+        externalOfferId:
+          type: string
+        insurerName:
+          type: string
+        premiumTotal:
+          type: string
+          pattern: '^\d+(\.\d+)?$'
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+        installments:
+          type: array
+          items:
+            type: object
+            required:
+              - count
+              - amount
+            properties:
+              count:
+                type: integer
+                minimum: 1
+              amount:
+                type: string
+                pattern: '^\d+(\.\d+)?$'
+        coverages:
+          type: array
+          items:
+            type: object
+            required:
+              - code
+              - label
+            properties:
+              code:
+                type: string
+              label:
+                type: string
+                description: |
+                  Obrigatório, como no `OfferCoverage` de `contracts/openapi.yaml`; cobertura sem descrição da
+                  seguradora torna a resposta `INVALID_PROVIDER_RESPONSE`.
+              insuredAmount:
+                type: string
+                pattern: '^\d+(\.\d+)?$'
+                description: Ausente quando a seguradora não informa; ausência não é zero.
+        deductibles:
+          type: array
+          items:
+            type: object
+            required:
+              - coverageCode
+              - amount
+            properties:
+              coverageCode:
+                type: string
+              amount:
+                type: string
+                pattern: '^\d+(\.\d+)?$'
+        validUntil:
+          type: string
+          format: date-time
+          description: Validade informada pela seguradora, normalizada para UTC com milissegundos.
+        rawResponseRef:
+          type: string
+    QueryReconciledDetail:
+      allOf:
+        - $ref: '#/components/schemas/DetailHeader'
+        - type: object
+          description: Publicado pelo `reconcileWorker` (M4). `revision` é monotônico por `operationId`.
+          required:
+            - operationId
+            - organizationId
+            - queryId
+            - status
+            - safeSummary
+            - revision
+          properties:
+            operationId:
+              type: string
+            organizationId:
+              type: string
+            queryId:
+              type: string
+            status:
+              enum:
+                - SUCCEEDED
+                - FAILED
+            safeSummary:
+              type: string
+            revision:
+              type: integer
+              minimum: 1
+    OperationIssueDetail:
+      allOf:
+        - $ref: '#/components/schemas/DetailHeader'
+        - type: object
+          description: |
+            Publicado pelo `reconciler` (M4). `organizationId` falta em callback sem correlação. `revision` é
+            monotônico por `issueId`; a quote descarta versões antigas.
+          required:
+            - issueId
+            - type
+            - status
+            - firstSeenAt
+            - lastSeenAt
+            - safeSummary
+            - reconcilable
+            - revision
+          properties:
+            issueId:
+              type: string
+            organizationId:
+              type: string
+            type:
+              enum:
+                - UNKNOWN_QUERY
+                - UNMATCHED_CALLBACK
+                - DEAD_LETTER
+                - STALE_OUTBOX
+            status:
+              enum:
+                - OPEN
+                - RESOLVED
+            queryId:
+              type: string
+            quoteId:
+              type: string
+            firstSeenAt:
+              type: string
+              format: date-time
+            lastSeenAt:
+              type: string
+              format: date-time
+            safeSummary:
+              type: string
+            reconcilable:
+              type: boolean
+            revision:
+              type: integer
+              minimum: 1

@@ -1,0 +1,748 @@
+service: quote-solution
+
+frameworkVersion: "4"
+
+plugins:
+  - serverless-step-functions
+  - serverless-localstack
+
+# Valores do §12 do desenho. O FunctionTimingConfigurationTest confere as invariantes de orçamento e de
+# visibilidade × timeout sobre este arquivo; o stage dev entra no M6
+params:
+  local:
+    awsEndpointUrl: http://floci:4566
+    jwtIssuerBase: http://floci:4566
+    quoteDeadlineSeconds: 300
+    workflowMarginSeconds: 60
+    # quoteDeadlineSeconds + workflowMarginSeconds: o Serverless não soma variáveis
+    workflowTimeoutSeconds: 360
+    enrichmentTimeoutSeconds: 20
+    insurerTimeoutSeconds: 20
+    mapConcurrency: 2
+    maxInsurers: 2
+    stepsMarginSeconds: 30
+    retryAfterSeconds: 3
+    outboxRepublishAfterSeconds: 30
+    reconcilerSchedule: rate(1 minute)
+    stepsTimeoutSeconds: 15
+    dispatchTimeoutSeconds: 15
+    resumeTimeoutSeconds: 15
+    relayTimeoutSeconds: 30
+    reconcilerTimeoutSeconds: 60
+    resultsVisibilityTimeoutSeconds: 90
+    resultsMaxReceiveCount: 5
+
+custom:
+  names:
+    table: ${self:service}-${sls:stage}-quotes
+    resultsQueue: ${self:service}-${sls:stage}-results
+    resultsDeadLetterQueue: ${self:service}-${sls:stage}-results-dlq
+    streamFailuresQueue: ${self:service}-${sls:stage}-stream-failures
+    stateMachine: ${self:service}-${sls:stage}-quote-flow
+    tokenKeySecret: ${self:service}/${sls:stage}/token-key
+    userPool: ${self:service}-${sls:stage}-users
+    userPoolClient: ${self:service}-${sls:stage}-web
+    # Barramento da plataforma pela convenção de nomes, sem referência entre stacks (ADR 0013)
+    platformEventBus: platform-${sls:stage}-events
+  stateMachineArn: arn:aws:states:${aws:region}:${aws:accountId}:stateMachine:${self:custom.names.stateMachine}
+  platformEventBusArn: arn:aws:events:${aws:region}:${aws:accountId}:event-bus/${self:custom.names.platformEventBus}
+  # Versão do workflow gravada em cada versão da cotação; mude junto com a definição da máquina
+  workflowVersion: quote-flow-1
+  functionsPackage: functions/target/quote-functions-lambda.zip
+  # Handler das duas extensões usadas (quarkus-amazon-lambda e quarkus-amazon-lambda-rest)
+  quarkusHandler: io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest
+  lambdaBasicExecution: arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+  localstack:
+    stages:
+      - local
+    host: http://localhost
+    edgePort: 4566
+    autostart: false
+
+provider:
+  name: aws
+  runtime: java21
+  region: us-east-1
+  stage: ${opt:stage, 'local'}
+  memorySize: 512
+  environment:
+    AWS_ENDPOINT_URL: ${param:awsEndpointUrl}
+    TABLE_NAME: ${self:custom.names.table}
+    EVENT_BUS_NAME: ${self:custom.names.platformEventBus}
+    STATE_MACHINE_ARN: ${self:custom.stateMachineArn}
+    TOKEN_KEY_SECRET_ID: ${self:custom.names.tokenKeySecret}
+    MAX_INSURERS: "${param:maxInsurers}"
+    OUTBOX_REPUBLISH_AFTER_SECONDS: "${param:outboxRepublishAfterSeconds}"
+    QUOTE_DEADLINE_SECONDS: "${param:quoteDeadlineSeconds}"
+    RETRY_AFTER_SECONDS: "${param:retryAfterSeconds}"
+    WORKFLOW_VERSION: ${self:custom.workflowVersion}
+
+package:
+  individually: true
+
+functions:
+  api:
+    handler: ${self:custom.quarkusHandler}
+    timeout: 29
+    role: ApiRole
+    package:
+      artifact: api/target/quote-api-lambda.zip
+    environment:
+      COGNITO_CLIENT_ID: !Ref QuoteUserPoolClient
+      # O issuer do Floci usa o host do FLOCI_HOSTNAME; na AWS, https://cognito-idp.<region>.amazonaws.com
+      JWT_ISSUER: !Join ["", ["${param:jwtIssuerBase}/", !Ref QuoteUserPool]]
+    events:
+      - http:
+          path: v1/{proxy+}
+          method: any
+
+  workflowSteps:
+    handler: ${self:custom.quarkusHandler}
+    timeout: ${param:stepsTimeoutSeconds}
+    role: WorkflowStepsRole
+    package:
+      artifact: ${self:custom.functionsPackage}
+    environment:
+      QUARKUS_LAMBDA_HANDLER: workflow-steps
+
+  dispatch:
+    handler: ${self:custom.quarkusHandler}
+    timeout: ${param:dispatchTimeoutSeconds}
+    role: DispatchRole
+    package:
+      artifact: ${self:custom.functionsPackage}
+    environment:
+      QUARKUS_LAMBDA_HANDLER: dispatch
+
+  resume:
+    handler: ${self:custom.quarkusHandler}
+    timeout: ${param:resumeTimeoutSeconds}
+    role: ResumeRole
+    package:
+      artifact: ${self:custom.functionsPackage}
+    environment:
+      QUARKUS_LAMBDA_HANDLER: resume
+    events:
+      - sqs:
+          arn: !GetAtt ResultsQueue.Arn
+          batchSize: 1
+          functionResponseType: ReportBatchItemFailures
+
+  outboxRelay:
+    handler: ${self:custom.quarkusHandler}
+    timeout: ${param:relayTimeoutSeconds}
+    role: OutboxRelayRole
+    package:
+      artifact: ${self:custom.functionsPackage}
+    environment:
+      QUARKUS_LAMBDA_HANDLER: outbox-relay
+    events:
+      # Só os INSERT de outbox chegam; a relay publica registro a registro (§7 do desenho)
+      - stream:
+          type: dynamodb
+          arn: !GetAtt QuotesTable.StreamArn
+          batchSize: 100
+          startingPosition: TRIM_HORIZON
+          maximumRetryAttempts: 3
+          bisectBatchOnFunctionError: true
+          functionResponseType: ReportBatchItemFailures
+          destinations:
+            onFailure:
+              arn: !GetAtt StreamFailuresQueue.Arn
+              type: sqs
+          filterPatterns:
+            - eventName:
+                - INSERT
+              dynamodb:
+                NewImage:
+                  type:
+                    S:
+                      - OUTBOX
+
+  reconciler:
+    handler: ${self:custom.quarkusHandler}
+    timeout: ${param:reconcilerTimeoutSeconds}
+    role: ReconcilerRole
+    package:
+      artifact: ${self:custom.functionsPackage}
+    environment:
+      QUARKUS_LAMBDA_HANDLER: reconciler
+    events:
+      - schedule:
+          method: scheduler
+          rate: ${param:reconcilerSchedule}
+          input:
+            source: schedule
+
+stepFunctions:
+  stateMachines:
+    quoteFlow:
+      id: QuoteFlowStateMachine
+      name: ${self:custom.names.stateMachine}
+      definition:
+        Comment: Quotes one version of a quote; business data stays in DynamoDB, the state carries only references
+        # Rede de segurança: o prazo real vem da invariante de orçamento (§9 do desenho)
+        TimeoutSeconds: ${param:workflowTimeoutSeconds}
+        StartAt: LoadQuoteSnapshot
+        States:
+          LoadQuoteSnapshot:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke
+            Parameters:
+              FunctionName:
+                Fn::GetAtt: [workflowSteps, Arn]
+              Payload:
+                step: load-snapshot
+                quoteId.$: $.quoteId
+                version.$: $.version
+            ResultSelector:
+              organizationId.$: $.Payload.organizationId
+              deadlineAt.$: $.Payload.deadlineAt
+            ResultPath: $.context
+            TimeoutSeconds: ${param:stepsTimeoutSeconds}
+            # Só falhas de invocação; States.Timeout nunca é repetido (§6 do desenho)
+            Retry: &lambdaInvocationRetry
+              - ErrorEquals:
+                  - Lambda.ServiceException
+                  - Lambda.AWSLambdaException
+                  - Lambda.SdkClientException
+                  - Lambda.TooManyRequestsException
+                IntervalSeconds: 1
+                MaxAttempts: 3
+                BackoffRate: 2
+            Next: EvaluateEligibility
+          EvaluateEligibility:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke
+            Parameters:
+              FunctionName:
+                Fn::GetAtt: [workflowSteps, Arn]
+              Payload:
+                step: evaluate-eligibility
+                quoteId.$: $.quoteId
+                version.$: $.version
+            ResultSelector:
+              decision.$: $.Payload.decision
+              reasonCode.$: $.Payload.reasonCode
+              missingFields.$: $.Payload.missingFields
+            ResultPath: $.eligibility
+            TimeoutSeconds: ${param:stepsTimeoutSeconds}
+            Retry: *lambdaInvocationRetry
+            Next: IsEligible
+          IsEligible:
+            Type: Choice
+            Choices:
+              - Variable: $.eligibility.decision
+                StringEquals: ELIGIBLE
+                Next: ResolveEnrichment
+            Default: ConsolidateQuote
+          ResolveEnrichment:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke.waitForTaskToken
+            Parameters:
+              FunctionName:
+                Fn::GetAtt: [dispatch, Arn]
+              Payload:
+                kind: ENRICHMENT
+                quoteId.$: $.quoteId
+                version.$: $.version
+                executionArn.$: $$.Execution.Id
+                taskToken.$: $$.Task.Token
+                timeoutSeconds: ${param:enrichmentTimeoutSeconds}
+            TimeoutSeconds: ${param:enrichmentTimeoutSeconds}
+            ResultPath: $.enrichment
+            Retry: *lambdaInvocationRetry
+            Catch:
+              - ErrorEquals:
+                  - States.Timeout
+                ResultPath: $.enrichmentError
+                Next: RecordEnrichmentOutcome
+              - ErrorEquals:
+                  - States.ALL
+                ResultPath: $.enrichmentError
+                Next: RecordEnrichmentOutcome
+            Next: IsEnrichmentFound
+          RecordEnrichmentOutcome:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke
+            Parameters:
+              FunctionName:
+                Fn::GetAtt: [workflowSteps, Arn]
+              Payload:
+                step: record-enrichment-outcome
+                quoteId.$: $.quoteId
+                version.$: $.version
+                error.$: $.enrichmentError
+            ResultSelector:
+              resultType.$: $.Payload.resultType
+            ResultPath: $.enrichment
+            TimeoutSeconds: ${param:stepsTimeoutSeconds}
+            Retry: *lambdaInvocationRetry
+            Next: IsEnrichmentFound
+          IsEnrichmentFound:
+            Type: Choice
+            Choices:
+              - Variable: $.enrichment.resultType
+                StringEquals: FOUND
+                Next: SelectInsurers
+            Default: ConsolidateQuote
+          SelectInsurers:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke
+            Parameters:
+              FunctionName:
+                Fn::GetAtt: [workflowSteps, Arn]
+              Payload:
+                step: select-insurers
+                quoteId.$: $.quoteId
+                version.$: $.version
+            ResultSelector:
+              insurers.$: $.Payload.insurers
+              count.$: $.Payload.count
+            ResultPath: $.selection
+            TimeoutSeconds: ${param:stepsTimeoutSeconds}
+            Retry: *lambdaInvocationRetry
+            Next: HasInsurers
+          HasInsurers:
+            Type: Choice
+            Choices:
+              - Variable: $.selection.count
+                NumericGreaterThan: 0
+                Next: QuoteInsurers
+            Default: ConsolidateQuote
+          QuoteInsurers:
+            Type: Map
+            ItemsPath: $.selection.insurers
+            MaxConcurrency: ${param:mapConcurrency}
+            ItemSelector:
+              quoteId.$: $.quoteId
+              version.$: $.version
+              insurerId.$: $$.Map.Item.Value
+              executionArn.$: $$.Execution.Id
+            ItemProcessor:
+              ProcessorConfig:
+                Mode: INLINE
+              StartAt: RequestInsurerQuote
+              States:
+                RequestInsurerQuote:
+                  Type: Task
+                  Resource: arn:aws:states:::lambda:invoke.waitForTaskToken
+                  Parameters:
+                    FunctionName:
+                      Fn::GetAtt: [dispatch, Arn]
+                    Payload:
+                      kind: INSURER
+                      quoteId.$: $.quoteId
+                      version.$: $.version
+                      insurerId.$: $.insurerId
+                      executionArn.$: $.executionArn
+                      taskToken.$: $$.Task.Token
+                      timeoutSeconds: ${param:insurerTimeoutSeconds}
+                  TimeoutSeconds: ${param:insurerTimeoutSeconds}
+                  Retry: *lambdaInvocationRetry
+                  Catch:
+                    - ErrorEquals:
+                        - States.Timeout
+                      ResultPath: $.error
+                      Next: RecordInsurerTimeout
+                    - ErrorEquals:
+                        - States.ALL
+                      ResultPath: $.error
+                      Next: RecordInsurerFailure
+                  End: true
+                RecordInsurerTimeout:
+                  Type: Task
+                  Resource: arn:aws:states:::lambda:invoke
+                  Parameters:
+                    FunctionName:
+                      Fn::GetAtt: [workflowSteps, Arn]
+                    Payload:
+                      step: record-insurer-outcome
+                      outcome: TIMED_OUT
+                      quoteId.$: $.quoteId
+                      version.$: $.version
+                      insurerId.$: $.insurerId
+                      error.$: $.error
+                  TimeoutSeconds: ${param:stepsTimeoutSeconds}
+                  Retry: *lambdaInvocationRetry
+                  End: true
+                RecordInsurerFailure:
+                  Type: Task
+                  Resource: arn:aws:states:::lambda:invoke
+                  Parameters:
+                    FunctionName:
+                      Fn::GetAtt: [workflowSteps, Arn]
+                    Payload:
+                      step: record-insurer-outcome
+                      outcome: UNAVAILABLE
+                      quoteId.$: $.quoteId
+                      version.$: $.version
+                      insurerId.$: $.insurerId
+                      error.$: $.error
+                  TimeoutSeconds: ${param:stepsTimeoutSeconds}
+                  Retry: *lambdaInvocationRetry
+                  End: true
+            # Os resultados ficam no DynamoDB; a saída dos itens é descartada (ADR 0014)
+            ResultPath: null
+            Next: ConsolidateQuote
+          ConsolidateQuote:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke
+            Parameters:
+              FunctionName:
+                Fn::GetAtt: [workflowSteps, Arn]
+              Payload:
+                step: consolidate
+                quoteId.$: $.quoteId
+                version.$: $.version
+            ResultSelector:
+              outcome.$: $.Payload.outcome
+              outcomeReason.$: $.Payload.outcomeReason
+            ResultPath: $.consolidation
+            TimeoutSeconds: ${param:stepsTimeoutSeconds}
+            Retry: *lambdaInvocationRetry
+            End: true
+
+resources:
+  Resources:
+    QuotesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.names.table}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: pk
+            AttributeType: S
+          - AttributeName: sk
+            AttributeType: S
+          - AttributeName: gsi1pk
+            AttributeType: S
+          - AttributeName: gsi1sk
+            AttributeType: S
+          - AttributeName: gsi2pk
+            AttributeType: S
+          - AttributeName: gsi2sk
+            AttributeType: S
+        KeySchema:
+          - AttributeName: pk
+            KeyType: HASH
+          - AttributeName: sk
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          # Listagem por organização: ORG#<organizationId> e ISSUES#<organizationId> (ADR 0015)
+          - IndexName: gsi1
+            KeySchema:
+              - AttributeName: gsi1pk
+                KeyType: HASH
+              - AttributeName: gsi1sk
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+          # Índice esparso do trabalho pendente que a reconciliação varre, como OUTBOX_PENDING
+          - IndexName: gsi2
+            KeySchema:
+              - AttributeName: gsi2pk
+                KeyType: HASH
+              - AttributeName: gsi2sk
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE
+
+    ResultsDeadLetterQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.names.resultsDeadLetterQueue}
+        MessageRetentionPeriod: 1209600
+
+    ResultsQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.names.resultsQueue}
+        VisibilityTimeout: ${param:resultsVisibilityTimeoutSeconds}
+        RedrivePolicy:
+          deadLetterTargetArn: !GetAtt ResultsDeadLetterQueue.Arn
+          maxReceiveCount: ${param:resultsMaxReceiveCount}
+
+    ResultsQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref ResultsQueue
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: events.amazonaws.com
+              Action: sqs:SendMessage
+              Resource: !GetAtt ResultsQueue.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !GetAtt ProviderResultsRule.Arn
+
+    # Destino onFailure do stream: só aponta shard e faixa de sequência, para o alarme (M4); sem consumidor
+    StreamFailuresQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.names.streamFailuresQueue}
+        MessageRetentionPeriod: 1209600
+
+    # source e detail-type precisam bater com os eventos da provider-solution (docs/events)
+    ProviderResultsRule:
+      Type: AWS::Events::Rule
+      Properties:
+        EventBusName: ${self:custom.names.platformEventBus}
+        EventPattern:
+          source:
+            - mmda.provider
+          detail-type:
+            - EnrichmentResolved
+            - InsurerResultRecorded
+        Targets:
+          - Id: quote-results-queue
+            Arn: !GetAtt ResultsQueue.Arn
+
+    TokenKeySecret:
+      Type: AWS::SecretsManager::Secret
+      Properties:
+        Name: ${self:custom.names.tokenKeySecret}
+        Description: Chave da cifra dos task tokens guardados nos waiters da quote-solution
+        GenerateSecretString:
+          PasswordLength: 64
+          ExcludePunctuation: true
+
+    QuoteUserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        UserPoolName: ${self:custom.names.userPool}
+        AdminCreateUserConfig:
+          AllowAdminCreateUserOnly: true
+        Policies:
+          PasswordPolicy:
+            MinimumLength: 12
+            RequireLowercase: true
+            RequireUppercase: true
+            RequireNumbers: true
+            RequireSymbols: true
+
+    QuoteUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: ${self:custom.names.userPoolClient}
+        UserPoolId: !Ref QuoteUserPool
+        GenerateSecret: false
+        ExplicitAuthFlows:
+          - ALLOW_USER_SRP_AUTH
+          - ALLOW_USER_PASSWORD_AUTH
+          - ALLOW_REFRESH_TOKEN_AUTH
+        PreventUserExistenceErrors: ENABLED
+
+    # A organização vem do grupo org_<organizationId>; as permissões, dos grupos perm_* (§11 do desenho)
+    OrgAcmeGroup:
+      Type: AWS::Cognito::UserPoolGroup
+      Properties:
+        GroupName: org_org-acme
+        UserPoolId: !Ref QuoteUserPool
+    OrgGlobexGroup:
+      Type: AWS::Cognito::UserPoolGroup
+      Properties:
+        GroupName: org_org-globex
+        UserPoolId: !Ref QuoteUserPool
+    PermQuotesReadGroup:
+      Type: AWS::Cognito::UserPoolGroup
+      Properties:
+        GroupName: perm_quotes_read
+        UserPoolId: !Ref QuoteUserPool
+    PermQuotesWriteGroup:
+      Type: AWS::Cognito::UserPoolGroup
+      Properties:
+        GroupName: perm_quotes_write
+        UserPoolId: !Ref QuoteUserPool
+    PermOffersSelectGroup:
+      Type: AWS::Cognito::UserPoolGroup
+      Properties:
+        GroupName: perm_offers_select
+        UserPoolId: !Ref QuoteUserPool
+    PermOperationsReadGroup:
+      Type: AWS::Cognito::UserPoolGroup
+      Properties:
+        GroupName: perm_operations_read
+        UserPoolId: !Ref QuoteUserPool
+    PermOperationsReconcileGroup:
+      Type: AWS::Cognito::UserPoolGroup
+      Properties:
+        GroupName: perm_operations_reconcile
+        UserPoolId: !Ref QuoteUserPool
+
+    # Um papel por função, com o mínimo de cada uma (§7 do desenho). ARN da máquina montado por nome:
+    # um Ref à máquina criaria ciclo com as Lambdas que ela invoca
+    ApiRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument: &lambdaTrust
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: lambda.amazonaws.com
+              Action: sts:AssumeRole
+        ManagedPolicyArns:
+          - ${self:custom.lambdaBasicExecution}
+        Policies:
+          - PolicyName: quote-api
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - dynamodb:GetItem
+                    - dynamodb:PutItem
+                    - dynamodb:Query
+                  Resource: !GetAtt QuotesTable.Arn
+
+    WorkflowStepsRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument: *lambdaTrust
+        ManagedPolicyArns:
+          - ${self:custom.lambdaBasicExecution}
+        Policies:
+          - PolicyName: quote-workflow-steps
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - dynamodb:GetItem
+                    - dynamodb:PutItem
+                    - dynamodb:UpdateItem
+                    - dynamodb:Query
+                  Resource: !GetAtt QuotesTable.Arn
+
+    DispatchRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument: *lambdaTrust
+        ManagedPolicyArns:
+          - ${self:custom.lambdaBasicExecution}
+        Policies:
+          - PolicyName: quote-dispatch
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - dynamodb:GetItem
+                    - dynamodb:PutItem
+                    - dynamodb:UpdateItem
+                    - dynamodb:Query
+                  Resource: !GetAtt QuotesTable.Arn
+                - Effect: Allow
+                  Action: secretsmanager:GetSecretValue
+                  Resource: !Ref TokenKeySecret
+                - Effect: Allow
+                  Action: states:SendTaskSuccess
+                  Resource: ${self:custom.stateMachineArn}
+
+    ResumeRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument: *lambdaTrust
+        ManagedPolicyArns:
+          - ${self:custom.lambdaBasicExecution}
+        Policies:
+          - PolicyName: quote-resume
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - dynamodb:GetItem
+                    - dynamodb:PutItem
+                    - dynamodb:UpdateItem
+                    - dynamodb:Query
+                  Resource: !GetAtt QuotesTable.Arn
+                - Effect: Allow
+                  Action:
+                    - sqs:ReceiveMessage
+                    - sqs:DeleteMessage
+                    - sqs:GetQueueAttributes
+                  Resource: !GetAtt ResultsQueue.Arn
+                - Effect: Allow
+                  Action: secretsmanager:GetSecretValue
+                  Resource: !Ref TokenKeySecret
+                - Effect: Allow
+                  Action: states:SendTaskSuccess
+                  Resource: ${self:custom.stateMachineArn}
+
+    OutboxRelayRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument: *lambdaTrust
+        ManagedPolicyArns:
+          - ${self:custom.lambdaBasicExecution}
+        Policies:
+          - PolicyName: quote-outbox-relay
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - dynamodb:DescribeStream
+                    - dynamodb:GetRecords
+                    - dynamodb:GetShardIterator
+                  Resource: !GetAtt QuotesTable.StreamArn
+                # ListStreams não aceita recurso específico
+                - Effect: Allow
+                  Action: dynamodb:ListStreams
+                  Resource: "*"
+                - Effect: Allow
+                  Action: dynamodb:UpdateItem
+                  Resource: !GetAtt QuotesTable.Arn
+                - Effect: Allow
+                  Action: events:PutEvents
+                  Resource: ${self:custom.platformEventBusArn}
+                - Effect: Allow
+                  Action: states:StartExecution
+                  Resource: ${self:custom.stateMachineArn}
+                - Effect: Allow
+                  Action: sqs:SendMessage
+                  Resource: !GetAtt StreamFailuresQueue.Arn
+
+    ReconcilerRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument: *lambdaTrust
+        ManagedPolicyArns:
+          - ${self:custom.lambdaBasicExecution}
+        Policies:
+          - PolicyName: quote-reconciler
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - dynamodb:GetItem
+                    - dynamodb:UpdateItem
+                  Resource: !GetAtt QuotesTable.Arn
+                - Effect: Allow
+                  Action: dynamodb:Query
+                  Resource: !Join ["", [!GetAtt QuotesTable.Arn, "/index/gsi2"]]
+                - Effect: Allow
+                  Action: events:PutEvents
+                  Resource: ${self:custom.platformEventBusArn}
+                - Effect: Allow
+                  Action: states:StartExecution
+                  Resource: ${self:custom.stateMachineArn}
+
+  Outputs:
+    QuotesTableName:
+      Value: !Ref QuotesTable
+    QuoteUserPoolId:
+      Value: !Ref QuoteUserPool
+    QuoteUserPoolClientId:
+      Value: !Ref QuoteUserPoolClient
+    ResultsQueueUrl:
+      Value: !Ref ResultsQueue

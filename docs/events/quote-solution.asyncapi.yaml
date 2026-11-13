@@ -1,0 +1,697 @@
+asyncapi: 3.1.0
+info:
+  title: quote-solution eventos
+  version: 0.1.0
+  description: |
+    Eventos que a `quote-solution`, em Quarkus, publica no barramento da plataforma
+    `platform-{stage}-events` ([ADR 0013](../decisions/0013-barramento-da-plataforma.md)), com
+    `source` `mmda.quote`. O desenho está em `docs/quotation-platform.md` (§3).
+
+    Todo evento nasce de um item de outbox gravado na mesma transação do fato
+    ([ADR 0015](../decisions/0015-modelo-dynamodb-e-outbox-da-cotacao.md)) e é publicado pela
+    `outbox-relay` (stream da tabela) ou pelo `reconciler` (republicador). A entrega é pelo menos uma vez:
+    consumidores descartam repetições pelo `eventId` ou pela identidade do pedido (`workRef`). O
+    `StartQuoteRequested` também é um item de outbox, mas é interno: a relay inicia a execução da máquina
+    `quote-solution-{stage}-quote-flow` com ele e não o publica no barramento.
+
+    Todo `detail` tem `eventId` (UUID), `occurredAt` (ISO 8601 em UTC) e `schemaVersion` (`"1"`). Valores
+    monetários são strings decimais. Nenhum evento leva task token, credencial, CPF ou resposta bruta.
+    O `eventId` é determinístico quando o mesmo fato pode ser gravado mais de uma vez: UUID versão 5 no
+    namespace URL da RFC 9562 (`6ba7b811-9dad-11d1-80b4-00c04fd430c8`), com o nome indicado em cada
+    mensagem. O `workRef` é `wr_` + os 32 primeiros hexadecimais do SHA-256 de
+    `quoteId|version|kind|insurerId` (`kind` `ENRICHMENT` ou `INSURER`; `insurerId` vazio no
+    enriquecimento).
+
+    Eventos que a quote consome (descritos no AsyncAPI da `provider-solution`): `EnrichmentResolved` e
+    `InsurerResultRecorded`, pela regra `source` `mmda.provider` com alvo na fila
+    `quote-solution-{stage}-results`. Do `EnrichmentResolved`, a quote lê `eventId`, `workRef`,
+    `resultType`, `evidenceId`, `queryId`, `reuseDecision`, `notFoundRefs`, `reusableUntil`, `errorClass`
+    e `result`; a regra de seleção `sel-1` usa `result.vehicle.year` quando existe. Do
+    `InsurerResultRecorded`, lê `eventId`, `workRef`, `queryId`, `attemptRef`, `status`, `reasonCode`,
+    `missingFields` (`path` relativo ao snapshot e `reasonCode`) e, com `QUOTED`, `offer`
+    (`externalOfferId`, `insurerName`, `premiumTotal`, `currency`, `installments`, `coverages`,
+    `deductibles`, `validUntil`, `rawResponseRef`), no formato do schema `Offer` de `contracts/openapi.yaml`.
+    Campos desconhecidos são ignorados.
+
+    Os exemplos usam identificadores calculados pelas regras acima para a cotação do exemplo.
+channels:
+  platformEvents:
+    address: platform-{stage}-events
+    title: Barramento EventBridge da plataforma
+    description: |
+      Criado pela stack `platform/events`. A `provider-solution` assina `EnrichmentRequested` e
+      `InsurerQuoteRequested` (e `QueryReconcileRequested` a partir do M4) com regras e filas próprias.
+      `QuoteAccepted`, `QuoteCompleted` e `OfferSelected` são fatos de negócio para quem quiser assinar.
+    parameters:
+      stage:
+        $ref: '#/components/parameters/stage'
+    messages:
+      quoteAccepted:
+        $ref: '#/components/messages/QuoteAccepted'
+      enrichmentRequested:
+        $ref: '#/components/messages/EnrichmentRequested'
+      insurerQuoteRequested:
+        $ref: '#/components/messages/InsurerQuoteRequested'
+      quoteCompleted:
+        $ref: '#/components/messages/QuoteCompleted'
+      offerSelected:
+        $ref: '#/components/messages/OfferSelected'
+      queryReconcileRequested:
+        $ref: '#/components/messages/QueryReconcileRequested'
+operations:
+  emitQuoteAccepted:
+    action: send
+    title: A API aceita uma cotação ou uma nova versão
+    channel:
+      $ref: '#/channels/platformEvents'
+    messages:
+      - $ref: '#/channels/platformEvents/messages/quoteAccepted'
+  requestEnrichment:
+    action: send
+    title: A dispatch pede o enriquecimento obrigatório
+    description: |
+      Gravado com o waiter que guarda o task token cifrado; o token nunca sai da quote. A reentrega do
+      mesmo pedido tem o mesmo `eventId` e o mesmo `workRef`.
+    channel:
+      $ref: '#/channels/platformEvents'
+    messages:
+      - $ref: '#/channels/platformEvents/messages/enrichmentRequested'
+  requestInsurerQuote:
+    action: send
+    title: A dispatch pede a cotação a uma seguradora
+    channel:
+      $ref: '#/channels/platformEvents'
+    messages:
+      - $ref: '#/channels/platformEvents/messages/insurerQuoteRequested'
+  emitQuoteCompleted:
+    action: send
+    title: A consolidação encerra a versão
+    channel:
+      $ref: '#/channels/platformEvents'
+    messages:
+      - $ref: '#/channels/platformEvents/messages/quoteCompleted'
+  emitOfferSelected:
+    action: send
+    title: A API registra a seleção de uma oferta (M5)
+    channel:
+      $ref: '#/channels/platformEvents'
+    messages:
+      - $ref: '#/channels/platformEvents/messages/offerSelected'
+  requestQueryReconcile:
+    action: send
+    title: A API registra uma reconciliação manual (M5)
+    channel:
+      $ref: '#/channels/platformEvents'
+    messages:
+      - $ref: '#/channels/platformEvents/messages/queryReconcileRequested'
+components:
+  parameters:
+    stage:
+      description: Stage do Serverless Framework.
+      default: local
+      examples:
+        - local
+  messages:
+    QuoteAccepted:
+      name: QuoteAccepted
+      title: Evento QuoteAccepted
+      summary: Cotação (ou versão) aceita duravelmente. `eventId` aleatório, gravado uma vez na transação.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/QuoteAcceptedEvent'
+      examples:
+        - name: versao-1
+          payload:
+            version: '0'
+            id: 2f0c3a52-7a43-4e3c-9b3f-0c6b8a9e2d11
+            source: mmda.quote
+            detail-type: QuoteAccepted
+            account: '000000000000'
+            time: '2026-11-11T18:00:00Z'
+            region: us-east-1
+            resources: []
+            detail:
+              eventId: 8a1f2c4e-3b5d-4e6f-9a7b-1c2d3e4f5a6b
+              occurredAt: '2026-11-11T18:00:00.123Z'
+              schemaVersion: '1'
+              quoteId: 5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11
+              version: 1
+              organizationId: org-acme
+    EnrichmentRequested:
+      name: EnrichmentRequested
+      title: Evento EnrichmentRequested
+      summary: Pedido de perfil do veículo e do condutor. `eventId` = UUIDv5 do `workRef`.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/EnrichmentRequestedEvent'
+      examples:
+        - name: pedido
+          payload:
+            source: mmda.quote
+            detail-type: EnrichmentRequested
+            detail:
+              eventId: 3321dda3-d8fb-50ae-9412-ce1512112077
+              occurredAt: '2026-11-11T18:00:02.500Z'
+              schemaVersion: '1'
+              workRef: wr_109dd1cbf526511e21bb4e07bdffa510
+              organizationId: org-acme
+              quoteId: 5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11
+              version: 1
+              provider: enrichment-sim
+              operation: VEHICLE_DRIVER_PROFILE
+              contractVersion: '1'
+              params:
+                vehicleRef: vehicle-hatch-2021
+                principalDriverRef: driver-acme-ana
+              deadlineAt: '2026-11-11T18:00:22.500Z'
+    InsurerQuoteRequested:
+      name: InsurerQuoteRequested
+      title: Evento InsurerQuoteRequested
+      summary: Pedido de cotação a uma seguradora. `eventId` = UUIDv5 do `workRef`.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/InsurerQuoteRequestedEvent'
+      examples:
+        - name: pedido-alpha
+          payload:
+            source: mmda.quote
+            detail-type: InsurerQuoteRequested
+            detail:
+              eventId: c615e3a5-6d76-55e5-a537-789cdc65b2c6
+              occurredAt: '2026-11-11T18:00:08.000Z'
+              schemaVersion: '1'
+              workRef: wr_32d527e247a13053720a133c40c8665b
+              organizationId: org-acme
+              quoteId: 5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11
+              version: 1
+              insurerId: alpha
+              risk:
+                product: AUTO
+                usage: PERSONAL
+                vehicle:
+                  id: vehicle-hatch-2021
+                  label: Hatch 1.0 2021
+                  make: Fiat
+                  model: Argo
+                  year: 2021
+                  salvage: false
+                principalDriver:
+                  id: driver-acme-ana
+                  label: Ana Lima
+                  licenseDate: '2012-03-15'
+                coverageProfile:
+                  code: COMPREHENSIVE
+                  label: Completa
+                  summary: Colisão, incêndio, roubo e furto e danos a terceiros
+                  coverages:
+                    - code: COLLISION
+                      label: Colisão
+                      insuredAmount: '90000.00'
+                desiredStartDate: '2026-12-01'
+              enrichment:
+                evidenceId: ev_a8e049d6bebff920a7afb8424c8410df
+                queryId: q_6d1f1a54bd4666ed04f96f9a63b420ea
+                reuseDecision: MISS
+                resultType: FOUND
+                result:
+                  vehicle:
+                    ref: vehicle-hatch-2021
+                    make: Volkswagen
+                    model: Polo
+                    year: 2021
+                    marketValue: '75000.00'
+                  principalDriver:
+                    ref: driver-acme-ana
+                    licenseYears: 14
+                    claimsLast5Years: 1
+              deadlineAt: '2026-11-11T18:00:28.000Z'
+    QuoteCompleted:
+      name: QuoteCompleted
+      title: Evento QuoteCompleted
+      summary: Versão terminal. `eventId` = UUIDv5 de `quoteId|version|COMPLETED`.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/QuoteCompletedEvent'
+      examples:
+        - name: completa
+          payload:
+            source: mmda.quote
+            detail-type: QuoteCompleted
+            detail:
+              eventId: aa924027-e7d0-5c6a-8886-c229bdce927d
+              occurredAt: '2026-11-11T18:00:15.000Z'
+              schemaVersion: '1'
+              quoteId: 5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11
+              version: 1
+              outcome: COMPLETED
+              outcomeReason: null
+              offerCount: 1
+    OfferSelected:
+      name: OfferSelected
+      title: Evento OfferSelected (M5)
+      summary: Intenção de proposta registrada. `eventId` = UUIDv5 do `selectionId`.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/OfferSelectedEvent'
+    QueryReconcileRequested:
+      name: QueryReconcileRequested
+      title: Evento QueryReconcileRequested (M5)
+      summary: Reconciliação manual pedida por um operador; consumida pela provider a partir do M4.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/QueryReconcileRequestedEvent'
+  schemas:
+    Envelope:
+      type: object
+      description: |
+        Envelope do EventBridge. `source` é sempre `mmda.quote`; `detail-type` identifica a mensagem.
+      required:
+        - source
+        - detail-type
+        - detail
+      properties:
+        version:
+          type: string
+        id:
+          type: string
+        source:
+          const: mmda.quote
+        detail-type:
+          type: string
+        account:
+          type: string
+        time:
+          type: string
+          format: date-time
+        region:
+          type: string
+        resources:
+          type: array
+          items:
+            type: string
+    QuoteAcceptedEvent:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            detail-type:
+              const: QuoteAccepted
+            detail:
+              $ref: '#/components/schemas/QuoteAcceptedDetail'
+    EnrichmentRequestedEvent:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            detail-type:
+              const: EnrichmentRequested
+            detail:
+              $ref: '#/components/schemas/EnrichmentRequestedDetail'
+    InsurerQuoteRequestedEvent:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            detail-type:
+              const: InsurerQuoteRequested
+            detail:
+              $ref: '#/components/schemas/InsurerQuoteRequestedDetail'
+    QuoteCompletedEvent:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            detail-type:
+              const: QuoteCompleted
+            detail:
+              $ref: '#/components/schemas/QuoteCompletedDetail'
+    OfferSelectedEvent:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            detail-type:
+              const: OfferSelected
+            detail:
+              $ref: '#/components/schemas/OfferSelectedDetail'
+    QueryReconcileRequestedEvent:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            detail-type:
+              const: QueryReconcileRequested
+            detail:
+              $ref: '#/components/schemas/QueryReconcileRequestedDetail'
+    QuoteAcceptedDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - eventId
+        - occurredAt
+        - schemaVersion
+        - quoteId
+        - version
+        - organizationId
+      properties:
+        eventId:
+          type: string
+          format: uuid
+        occurredAt:
+          type: string
+          format: date-time
+        schemaVersion:
+          const: '1'
+        quoteId:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+        organizationId:
+          type: string
+    EnrichmentRequestedDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - eventId
+        - occurredAt
+        - schemaVersion
+        - workRef
+        - organizationId
+        - quoteId
+        - version
+        - provider
+        - operation
+        - contractVersion
+        - params
+        - deadlineAt
+      properties:
+        eventId:
+          type: string
+          format: uuid
+          description: UUIDv5 do `workRef`.
+        occurredAt:
+          type: string
+          format: date-time
+        schemaVersion:
+          const: '1'
+        workRef:
+          $ref: '#/components/schemas/WorkRef'
+        organizationId:
+          type: string
+        quoteId:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+        provider:
+          const: enrichment-sim
+        operation:
+          const: VEHICLE_DRIVER_PROFILE
+        contractVersion:
+          const: '1'
+        params:
+          type: object
+          additionalProperties: false
+          required:
+            - vehicleRef
+            - principalDriverRef
+          properties:
+            vehicleRef:
+              type: string
+            principalDriverRef:
+              type: string
+        deadlineAt:
+          type: string
+          format: date-time
+          description: Instante da dispatch mais o `TimeoutSeconds` da etapa, limitado ao prazo da versão.
+    InsurerQuoteRequestedDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - eventId
+        - occurredAt
+        - schemaVersion
+        - workRef
+        - organizationId
+        - quoteId
+        - version
+        - insurerId
+        - risk
+        - enrichment
+        - deadlineAt
+      properties:
+        eventId:
+          type: string
+          format: uuid
+          description: UUIDv5 do `workRef`.
+        occurredAt:
+          type: string
+          format: date-time
+        schemaVersion:
+          const: '1'
+        workRef:
+          $ref: '#/components/schemas/WorkRef'
+        organizationId:
+          type: string
+        quoteId:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+        insurerId:
+          type: string
+          enum:
+            - alpha
+            - beta
+        risk:
+          type: object
+          description: Cópia autorizada do snapshot da versão; os caminhos são os mesmos dos `missingFields`.
+          additionalProperties: false
+          required:
+            - product
+            - usage
+            - vehicle
+            - principalDriver
+            - coverageProfile
+            - desiredStartDate
+          properties:
+            product:
+              const: AUTO
+            usage:
+              type: string
+              enum:
+                - PERSONAL
+                - COMMERCIAL
+            vehicle:
+              type: object
+              required:
+                - id
+                - year
+                - salvage
+              properties:
+                id:
+                  type: string
+                label:
+                  type: string
+                make:
+                  type: string
+                model:
+                  type: string
+                year:
+                  type: integer
+                salvage:
+                  type: boolean
+            principalDriver:
+              type: object
+              required:
+                - id
+                - licenseDate
+              properties:
+                id:
+                  type: string
+                label:
+                  type: string
+                licenseDate:
+                  type:
+                    - string
+                    - 'null'
+                  format: date
+            coverageProfile:
+              type: object
+              required:
+                - code
+                - coverages
+              properties:
+                code:
+                  type: string
+                label:
+                  type: string
+                summary:
+                  type: string
+                coverages:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - code
+                      - insuredAmount
+                    properties:
+                      code:
+                        type: string
+                      label:
+                        type: string
+                      insuredAmount:
+                        type: string
+            desiredStartDate:
+              type: string
+              format: date
+              description: Data civil no fuso America/Sao_Paulo (RN14).
+        enrichment:
+          type: object
+          description: |
+            Resumo da evidência de enriquecimento usada pela versão; vazio se não houver. `evidenceId` e
+            `queryId` são os da provider (`EnrichmentResolved`): `q_` + 32 hexadecimais do SHA-256 do `workRef`
+            do enriquecimento e `ev_` + 32 hexadecimais do SHA-256 de `queryId|sequência da tentativa`.
+          properties:
+            evidenceId:
+              type: string
+              pattern: '^ev_[0-9a-f]{32}$'
+            queryId:
+              type: string
+              pattern: '^q_[0-9a-f]{32}$'
+            reuseDecision:
+              type: string
+              enum:
+                - HIT
+                - JOIN
+                - MISS
+            resultType:
+              type: string
+              enum:
+                - FOUND
+            result:
+              type: object
+              description: Perfil normalizado, como a provider o publicou no `EnrichmentResolved`.
+        deadlineAt:
+          type: string
+          format: date-time
+    QuoteCompletedDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - eventId
+        - occurredAt
+        - schemaVersion
+        - quoteId
+        - version
+        - outcome
+        - outcomeReason
+        - offerCount
+      properties:
+        eventId:
+          type: string
+          format: uuid
+          description: UUIDv5 de `quoteId|version|COMPLETED`.
+        occurredAt:
+          type: string
+          format: date-time
+        schemaVersion:
+          const: '1'
+        quoteId:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+        outcome:
+          type: string
+          enum:
+            - COMPLETED
+            - PARTIAL
+            - NEEDS_INFORMATION
+            - INELIGIBLE
+            - NO_OFFER
+            - TECHNICAL_FAILURE
+        outcomeReason:
+          type:
+            - string
+            - 'null'
+          enum:
+            - SALVAGE_VEHICLE
+            - MISSING_LICENSE_DATE
+            - ENRICHMENT_NOT_FOUND
+            - ENRICHMENT_FAILED
+            - NO_APPLICABLE_INSURER
+            - ALL_INSURERS_DECLINED
+            - INSURER_NEEDS_INFORMATION
+            - INSURER_TECHNICAL_FAILURE
+            - WORKFLOW_FAILED
+            - null
+        offerCount:
+          type: integer
+          minimum: 0
+    OfferSelectedDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - eventId
+        - occurredAt
+        - schemaVersion
+        - quoteId
+        - version
+        - offerId
+        - selectionId
+      properties:
+        eventId:
+          type: string
+          format: uuid
+          description: UUIDv5 do `selectionId`.
+        occurredAt:
+          type: string
+          format: date-time
+        schemaVersion:
+          const: '1'
+        quoteId:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+        offerId:
+          type: string
+        selectionId:
+          type: string
+    QueryReconcileRequestedDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - eventId
+        - occurredAt
+        - schemaVersion
+        - operationId
+        - organizationId
+        - queryId
+        - reason
+        - requestedBy
+      properties:
+        eventId:
+          type: string
+          format: uuid
+        occurredAt:
+          type: string
+          format: date-time
+        schemaVersion:
+          const: '1'
+        operationId:
+          type: string
+        organizationId:
+          type: string
+        queryId:
+          type: string
+        reason:
+          type: string
+        requestedBy:
+          type: string
+    WorkRef:
+      type: string
+      pattern: '^wr_[0-9a-f]{32}$'
+      description: Referência opaca e determinística do pedido; a resposta da provider devolve o mesmo valor.

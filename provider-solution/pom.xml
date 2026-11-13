@@ -15,7 +15,43 @@
     <packaging>pom</packaging>
 
     <modules>
+        <module>domain</module>
+        <module>functions</module>
+        <module>simulators</module>
     </modules>
+
+    <!-- WHY: as mesmas versões que o spring-cloud-function-adapter-aws declara como provided; o adapter
+         só converte SQSEvent e DynamodbEvent se essas bibliotecas estiverem no pacote da Lambda -->
+    <properties>
+        <aws-lambda-java-core.version>1.2.3</aws-lambda-java-core.version>
+        <aws-lambda-java-events.version>3.16.1</aws-lambda-java-events.version>
+        <aws-lambda-java-serialization.version>1.4.1</aws-lambda-java-serialization.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>com.mmda.serverless</groupId>
+                <artifactId>provider-domain</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.amazonaws</groupId>
+                <artifactId>aws-lambda-java-core</artifactId>
+                <version>${aws-lambda-java-core.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.amazonaws</groupId>
+                <artifactId>aws-lambda-java-events</artifactId>
+                <version>${aws-lambda-java-events.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.amazonaws</groupId>
+                <artifactId>aws-lambda-java-serialization</artifactId>
+                <version>${aws-lambda-java-serialization.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <!-- WHY: o e2e exige as stacks da plataforma e da provider-solution implantadas no Floci -->
     <profiles>

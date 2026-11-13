@@ -1,0 +1,49 @@
+package com.mmda.serverless.provider.functions;
+
+import com.mmda.serverless.provider.domain.QueryState;
+import com.mmda.serverless.provider.domain.Timestamps;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.stream.Stream;
+
+/** Consulta lida com {@code ConsistentRead}, com as tentativas, para decidir a reentrega (§8). */
+record QueryRecord(String queryId, QueryState state, String providerRequestId, List<Attempt> attempts) {
+
+    /** Folga para diferença de relógio entre as instâncias que gravaram e leram as tentativas. */
+    static final Duration CLOCK_SKEW = Duration.ofSeconds(5);
+
+    QueryRecord {
+        attempts = List.copyOf(attempts);
+    }
+
+    /** Tentativa gravada antes do HTTP e nunca concluída: o pedido pode ter chegado ao fornecedor. */
+    boolean hasOpenAttempt() {
+        return attempts.stream().anyMatch(attempt -> attempt.finishedAt() == null);
+    }
+
+    /**
+     * Até quando a entrega que gravou a última tentativa pode estar viva. INVARIANT: a invocação começou antes
+     * do {@code startedAt} (ou do {@code finishedAt}) que gravou e termina, no máximo, no timeout da função; antes
+     * desse instante, a tentativa aberta ou o backoff em curso podem ser de uma entrega duplicada viva, não de
+     * uma interrompida.
+     */
+    Optional<Instant> busyUntil(Duration workerTimeout) {
+        return attempts.stream()
+                .flatMap(attempt -> Stream.of(attempt.startedAt(), attempt.finishedAt()))
+                .filter(Objects::nonNull)
+                .map(Timestamps::parse)
+                .max(Comparator.naturalOrder())
+                .map(last -> last.plus(workerTimeout).plus(CLOCK_SKEW));
+    }
+
+    int attemptCount() {
+        return attempts.size();
+    }
+
+    record Attempt(int sequence, String startedAt, String finishedAt, String outcome) {
+    }
+}

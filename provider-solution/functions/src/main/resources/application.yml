@@ -1,0 +1,39 @@
+spring:
+  main:
+    # Cada Lambda executa uma só função; lazy evita criar os beans e clients das outras
+    lazy-initialization: true
+  jackson:
+    # Campos opcionais dos eventos ficam ausentes, não nulos, como descreve o AsyncAPI
+    default-property-inclusion: non_null
+
+logging:
+  level:
+    # O adapter registra cada evento recebido em INFO; o corpo pode ter dados do risco (PRD, §12)
+    org.springframework.cloud.function.adapter.aws: WARN
+
+provider:
+  table-name: ${TABLE_NAME}
+  payloads-bucket: ${PAYLOADS_BUCKET}
+  event-bus-name: ${EVENT_BUS_NAME}
+  event-source: mmda.provider
+  providers-base-url: ${PROVIDERS_BASE_URL:}
+  query-key-secret-id: ${QUERY_KEY_SECRET_ID:}
+  enrichment-requests-queue-url: ${ENRICHMENT_REQUESTS_QUEUE_URL:}
+  insurer-requests-queue-url: ${INSURER_REQUESTS_QUEUE_URL:}
+  http-timeout-seconds: ${PROVIDER_HTTP_TIMEOUT_SECONDS:5}
+  worker-retries: ${WORKER_RETRIES:2}
+  retry-backoff-max-seconds: ${RETRY_BACKOFF_MAX_SECONDS:3}
+  worker-timeout-seconds: ${WORKER_TIMEOUT_SECONDS:25}
+  enrichment-validity-seconds: ${ENRICHMENT_VALIDITY_SECONDS:900}
+  outbox-republish-after-seconds: ${OUTBOX_REPUBLISH_AFTER_SECONDS:30}
+  credential-ref: ${PROVIDER_CREDENTIAL_REF:default}
+  supported-insurers: alpha
+  quota-per-minute:
+    enrichment-sim: ${ENRICHMENT_SIM_QUOTA_PER_MINUTE:30}
+    alpha: ${ALPHA_QUOTA_PER_MINUTE:30}
+    beta: ${BETA_QUOTA_PER_MINUTE:30}
+
+mmda:
+  aws:
+    s3:
+      path-style-access: ${S3_PATH_STYLE_ACCESS:false}
