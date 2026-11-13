@@ -44,7 +44,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/IssueReceiptRequest'
+              $ref: "#/components/schemas/IssueReceiptRequest"
             examples:
               emissao:
                 summary: Pedido de emissão
@@ -53,25 +53,25 @@ paths:
                   signature: ab877cff32c371f6472dbd3ccee3a1aee327d49a71135bea1073a5fe050fd9f7
                   payloadBytes: 31
       responses:
-        '202':
+        "202":
           description: Execução iniciada.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/IssueAccepted'
+                $ref: "#/components/schemas/IssueAccepted"
               examples:
                 aceita:
                   value:
                     requestId: 8b2f674a-770f-4982-a3d1-c0141eeed347
                     executionArn: arn:aws:states:us-east-1:000000000000:execution:receipt-solution-local-receipt-flow:4f0d6a2e-1c7b-4b8e-9a51-0e7c3d2b9f11
-        '400':
+        "400":
           description: Corpo ausente ou campo inválido. O corpo lista as violações.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ViolationReport'
-        '415':
-          description: '`Content-Type` diferente de `application/json`. A resposta não tem corpo.'
+                $ref: "#/components/schemas/ViolationReport"
+        "415":
+          description: "`Content-Type` diferente de `application/json`. A resposta não tem corpo."
   /receipts/{requestId}:
     get:
       tags:
@@ -87,20 +87,20 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: Comprovante emitido.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Receipt'
+                $ref: "#/components/schemas/Receipt"
               examples:
                 comprovante:
                   value:
                     requestId: 38ebf89b-523a-4a68-92b3-2d87dbff5a4a
                     signature: ab877cff32c371f6472dbd3ccee3a1aee327d49a71135bea1073a5fe050fd9f7
                     payloadBytes: 31
-                    issuedAt: '2026-11-11T01:17:46.339567103Z'
-        '404':
+                    issuedAt: "2026-11-11T01:17:46.339567103Z"
+        "404":
           description: Não há comprovante para o pedido. A resposta não tem corpo.
 components:
   schemas:

@@ -63,7 +63,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/InsurerCallback'
+              $ref: "#/components/schemas/InsurerCallback"
             examples:
               offer:
                 summary: Oferta, com o clientReference (capturada no Floci)
@@ -71,56 +71,56 @@ paths:
                   externalEventId: bev-fe7bb0a0-b97a-45c2-a09e-8a833a573277
                   providerRequestId: beta-365b9edf-6395-495e-989b-f0a5ea27009e
                   clientReference: q_4a8fc925121ecc4ed1f65738ea1e9423
-                  sentAt: '2026-11-12T01:39:54.631Z'
+                  sentAt: "2026-11-12T01:39:54.631Z"
                   result:
                     outcome: OFFER
                     offerNumber: BETA-095D0858
                     insurerName: Beta Seguros
                     premium:
                       currency: BRL
-                      total: '2481.46'
+                      total: "2481.46"
                     paymentOptions:
                       - installments: 1
-                        installmentAmount: '2481.46'
+                        installmentAmount: "2481.46"
                       - installments: 12
-                        installmentAmount: '206.79'
+                        installmentAmount: "206.79"
                     coverages:
                       - description: Colisão, incêndio e roubo
-                        limit: '75000.00'
+                        limit: "75000.00"
                         code: COLLISION
                       - description: Danos materiais a terceiros
-                        limit: '150000.00'
+                        limit: "150000.00"
                         code: THIRD_PARTY_PROPERTY
                       - description: Danos corporais a terceiros
-                        limit: '300000.00'
+                        limit: "300000.00"
                         code: THIRD_PARTY_BODILY
                     deductibles:
-                      - amount: '3000.00'
+                      - amount: "3000.00"
                         coverage: COLLISION
-                    expiresAt: '2026-11-12T02:09:50.786Z'
+                    expiresAt: "2026-11-12T02:09:50.786Z"
               early:
                 summary: Recusa entregue só com o providerRequestId
                 value:
                   externalEventId: bev-2a3b4c5d-6e7f-4a8b-9c0d-1e2f3a4b5c6d
                   providerRequestId: beta-7d1c2b3a-4e5f-4a6b-8c7d-9e0f1a2b3c4d
-                  sentAt: '2026-11-11T19:31:17.400Z'
+                  sentAt: "2026-11-11T19:31:17.400Z"
                   result:
                     outcome: DECLINED
                     declineCode: RISK_NOT_ACCEPTED
       responses:
-        '200':
+        "200":
           description: Resultado gravado, agora ou numa entrega anterior do mesmo callback.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CallbackReceipt'
-        '202':
+                $ref: "#/components/schemas/CallbackReceipt"
+        "202":
           description: Callback guardado na inbox, à espera da metade do worker no `CORR#`.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CallbackReceipt'
-        '400':
+                $ref: "#/components/schemas/CallbackReceipt"
+        "400":
           description: >-
             Envelope assinado, mas fora do formato do callback: corpo que não é um objeto JSON,
             `externalEventId`, `providerRequestId` ou `clientReference` fora do padrão, sem nenhum dos dois
@@ -128,35 +128,35 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '401':
+                $ref: "#/components/schemas/Error"
+        "401":
           description: Assinatura ausente ou que não confere com o corpo. Nada é gravado.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '404':
+                $ref: "#/components/schemas/Error"
+        "404":
           description: Provedor que não entrega por callback.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '413':
+                $ref: "#/components/schemas/Error"
+        "413":
           description: >-
             Corpo assinado com mais de 262144 bytes (256 KiB), que não cabe no item da inbox. Nada é gravado, e
             reenviar o mesmo corpo não muda a resposta.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '415':
+                $ref: "#/components/schemas/Error"
+        "415":
           description: Corpo que não é `application/json`.
-        '503':
+        "503":
           description: Falha transitória da AWS; o mesmo callback deve ser reenviado.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
 components:
   securitySchemes:
     callbackSignature:
@@ -176,21 +176,21 @@ components:
       properties:
         externalEventId:
           type: string
-          pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
           description: Identidade do callback no fornecedor; a reentrega repete o mesmo valor.
         providerRequestId:
           type: string
-          pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
           description: Identificador devolvido pela seguradora na resposta `202`.
         clientReference:
           type: string
-          pattern: '^q_[0-9a-f]{32}$'
+          pattern: "^q_[0-9a-f]{32}$"
           description: O `queryId` que a provider enviou no pedido, quando o fornecedor o devolve.
         sentAt:
           type: string
           format: date-time
         result:
-          $ref: '#/components/schemas/InsurerResult'
+          $ref: "#/components/schemas/InsurerResult"
     InsurerResult:
       type: object
       required:

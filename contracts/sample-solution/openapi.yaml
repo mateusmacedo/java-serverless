@@ -53,22 +53,22 @@ paths:
                   customer: acme
                   amount: 42
       responses:
-        '202':
+        "202":
           description: Requisição gravada e execução iniciada.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RequestAccepted'
+                $ref: "#/components/schemas/RequestAccepted"
               examples:
                 aceita:
                   value:
                     requestId: 8b2f674a-770f-4982-a3d1-c0141eeed347
                     executionArn: arn:aws:states:us-east-1:000000000000:execution:sample-solution-local-request-flow:8b2f674a-770f-4982-a3d1-c0141eeed347
-        '400':
+        "400":
           description: Corpo ausente. A resposta não tem corpo.
-        '415':
-          description: '`Content-Type` diferente de `application/json`. A resposta não tem corpo.'
-        '500':
+        "415":
+          description: "`Content-Type` diferente de `application/json`. A resposta não tem corpo."
+        "500":
           description: >-
             Falha ao gravar no S3 ou ao iniciar a execução. Não reproduzido nos testes; o formato do
             corpo não foi verificado.

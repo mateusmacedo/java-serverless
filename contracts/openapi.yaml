@@ -66,18 +66,18 @@ paths:
       summary: Usuário, organização e permissões
       x-permissions: []
       responses:
-        '200':
+        "200":
           description: Identidade derivada do access token.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Me'
-        '401':
-          $ref: '#/components/responses/Unauthenticated'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                $ref: "#/components/schemas/Me"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/catalog/customers:
     get:
       tags:
@@ -90,20 +90,20 @@ paths:
       x-permissions:
         - quotes:write
       parameters:
-        - $ref: '#/components/parameters/Search'
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
+        - $ref: "#/components/parameters/Search"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
       responses:
-        '200':
-          $ref: '#/components/responses/CatalogPage'
-        '400':
-          $ref: '#/components/responses/ValidationError'
-        '401':
-          $ref: '#/components/responses/Unauthenticated'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+        "200":
+          $ref: "#/components/responses/CatalogPage"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/catalog/vehicles:
     get:
       tags:
@@ -116,20 +116,20 @@ paths:
       x-permissions:
         - quotes:write
       parameters:
-        - $ref: '#/components/parameters/Search'
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
+        - $ref: "#/components/parameters/Search"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
       responses:
-        '200':
-          $ref: '#/components/responses/CatalogPage'
-        '400':
-          $ref: '#/components/responses/ValidationError'
-        '401':
-          $ref: '#/components/responses/Unauthenticated'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+        "200":
+          $ref: "#/components/responses/CatalogPage"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/catalog/drivers:
     get:
       tags:
@@ -142,20 +142,20 @@ paths:
       x-permissions:
         - quotes:write
       parameters:
-        - $ref: '#/components/parameters/Search'
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
+        - $ref: "#/components/parameters/Search"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
       responses:
-        '200':
-          $ref: '#/components/responses/CatalogPage'
-        '400':
-          $ref: '#/components/responses/ValidationError'
-        '401':
-          $ref: '#/components/responses/Unauthenticated'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+        "200":
+          $ref: "#/components/responses/CatalogPage"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/catalog/coverage-profiles:
     get:
       tags:
@@ -168,24 +168,24 @@ paths:
       x-permissions:
         - quotes:write
       parameters:
-        - $ref: '#/components/parameters/Search'
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
+        - $ref: "#/components/parameters/Search"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
       responses:
-        '200':
+        "200":
           description: Página de perfis de cobertura.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CoverageProfilesPage'
-        '400':
-          $ref: '#/components/responses/ValidationError'
-        '401':
-          $ref: '#/components/responses/Unauthenticated'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                $ref: "#/components/schemas/CoverageProfilesPage"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/quotes:
     get:
       tags:
@@ -198,18 +198,18 @@ paths:
       x-permissions:
         - quotes:read
       parameters:
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
         - name: phase
           in: query
           required: false
           schema:
-            $ref: '#/components/schemas/Phase'
+            $ref: "#/components/schemas/Phase"
         - name: outcome
           in: query
           required: false
           schema:
-            $ref: '#/components/schemas/Outcome'
+            $ref: "#/components/schemas/Outcome"
         - name: createdFrom
           in: query
           required: false
@@ -225,20 +225,20 @@ paths:
             type: string
             format: date-time
       responses:
-        '200':
+        "200":
           description: Página de cotações.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/QuotesPage'
-        '400':
-          $ref: '#/components/responses/ValidationError'
-        '401':
-          $ref: '#/components/responses/Unauthenticated'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                $ref: "#/components/schemas/QuotesPage"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     post:
       tags:
         - cotacoes
@@ -255,13 +255,13 @@ paths:
       x-permissions:
         - quotes:write
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateQuoteRequest'
+              $ref: "#/components/schemas/CreateQuoteRequest"
             examples:
               normal:
                 summary: Hatch com uso particular
@@ -273,9 +273,9 @@ paths:
                     usage: PERSONAL
                     principalDriverRef: driver-acme-ana
                   coverageProfile: COMPREHENSIVE
-                  desiredStartDate: '2026-12-01'
+                  desiredStartDate: "2026-12-01"
       responses:
-        '202':
+        "202":
           description: Cotação aceita duravelmente, ou a mesma identidade de um reenvio idêntico.
           headers:
             Location:
@@ -285,21 +285,21 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/QuoteAccepted'
-        '400':
-          $ref: '#/components/responses/ValidationError'
-        '401':
-          $ref: '#/components/responses/Unauthenticated'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '409':
-          $ref: '#/components/responses/Conflict'
-        '415':
-          $ref: '#/components/responses/UnsupportedMediaType'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '503':
-          $ref: '#/components/responses/Unavailable'
+                $ref: "#/components/schemas/QuoteAccepted"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/quotes/{quoteId}/versions:
     post:
       tags:
@@ -323,14 +323,14 @@ paths:
       x-permissions:
         - quotes:write
       parameters:
-        - $ref: '#/components/parameters/QuoteId'
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: "#/components/parameters/QuoteId"
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateVersionRequest'
+              $ref: "#/components/schemas/CreateVersionRequest"
             examples:
               newVehicle:
                 summary: Troca do veículo depois da versão 1
@@ -343,9 +343,9 @@ paths:
                     usage: PERSONAL
                     principalDriverRef: driver-acme-ana
                   coverageProfile: COMPREHENSIVE
-                  desiredStartDate: '2026-12-01'
+                  desiredStartDate: "2026-12-01"
       responses:
-        '202':
+        "202":
           description: Nova versão aceita duravelmente, ou a mesma versão de um reenvio idêntico.
           headers:
             Location:
@@ -355,7 +355,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/QuoteAccepted'
+                $ref: "#/components/schemas/QuoteAccepted"
               examples:
                 accepted:
                   summary: Versão 2 aceita
@@ -364,20 +364,20 @@ paths:
                     version: 2
                     phase: RECEIVED
                     statusUrl: /v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/2
-        '400':
-          $ref: '#/components/responses/ValidationError'
-        '401':
-          $ref: '#/components/responses/Unauthenticated'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
           description: Chave já usada com outro body, versão desatualizada ou cotação com seleção.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ConflictError'
+                $ref: "#/components/schemas/ConflictError"
               examples:
                 versionConflict:
                   summary: expectedVersion não é mais a versão atual
@@ -391,12 +391,12 @@ paths:
                     code: QUOTE_ALREADY_SELECTED
                     message: A cotação já tem uma oferta selecionada e não aceita nova versão.
                     correlationId: 7d1c2a9e-1f6b-4c3a-9e8d-0a1b2c3d4e60
-        '415':
-          $ref: '#/components/responses/UnsupportedMediaType'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '503':
-          $ref: '#/components/responses/Unavailable'
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/quotes/{quoteId}/versions/{version}:
     get:
       tags:
@@ -413,23 +413,23 @@ paths:
       x-permissions:
         - quotes:read
       parameters:
-        - $ref: '#/components/parameters/QuoteId'
-        - $ref: '#/components/parameters/Version'
+        - $ref: "#/components/parameters/QuoteId"
+        - $ref: "#/components/parameters/Version"
       responses:
-        '200':
+        "200":
           description: Versão da cotação.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/QuoteVersion'
-        '401':
-          $ref: '#/components/responses/Unauthenticated'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                $ref: "#/components/schemas/QuoteVersion"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/quotes/{quoteId}/versions/{version}/offers:
     get:
       tags:
@@ -443,27 +443,27 @@ paths:
       x-permissions:
         - quotes:read
       parameters:
-        - $ref: '#/components/parameters/QuoteId'
-        - $ref: '#/components/parameters/Version'
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
+        - $ref: "#/components/parameters/QuoteId"
+        - $ref: "#/components/parameters/Version"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
       responses:
-        '200':
+        "200":
           description: Página de ofertas.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OffersPage'
-        '400':
-          $ref: '#/components/responses/ValidationError'
-        '401':
-          $ref: '#/components/responses/Unauthenticated'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                $ref: "#/components/schemas/OffersPage"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/quotes/{quoteId}/versions/{version}/selection:
     post:
       tags:
@@ -490,41 +490,41 @@ paths:
       x-permissions:
         - offers:select
       parameters:
-        - $ref: '#/components/parameters/QuoteId'
-        - $ref: '#/components/parameters/Version'
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: "#/components/parameters/QuoteId"
+        - $ref: "#/components/parameters/Version"
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SelectionRequest'
+              $ref: "#/components/schemas/SelectionRequest"
             examples:
               alpha:
                 summary: Oferta da alpha
                 value:
                   offerId: of_0f1e2d3c4b5a69788796a5b4c3d2e1f0
       responses:
-        '201':
+        "201":
           description: Intenção registrada agora, ou a seleção existente da mesma oferta.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Selection'
-        '400':
-          $ref: '#/components/responses/ValidationError'
-        '401':
-          $ref: '#/components/responses/Unauthenticated'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
+                $ref: "#/components/schemas/Selection"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
           description: Chave já usada com outro body, outra oferta já selecionada, versão substituída ou oferta expirada.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ConflictError'
+                $ref: "#/components/schemas/ConflictError"
               examples:
                 selectionAlreadyExists:
                   summary: A cotação já tem outra oferta selecionada
@@ -538,12 +538,12 @@ paths:
                     code: OFFER_EXPIRED
                     message: A oferta expirou; atualize as ofertas da versão.
                     correlationId: 3f6c1b2a-9d8e-4f7a-8b6c-5d4e3f2a1b0d
-        '415':
-          $ref: '#/components/responses/UnsupportedMediaType'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '503':
-          $ref: '#/components/responses/Unavailable'
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/operations/issues:
     get:
       tags:
@@ -559,33 +559,33 @@ paths:
       x-permissions:
         - operations:read
       parameters:
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
         - name: type
           in: query
           required: false
           schema:
-            $ref: '#/components/schemas/IssueType'
+            $ref: "#/components/schemas/IssueType"
         - name: status
           in: query
           required: false
           schema:
-            $ref: '#/components/schemas/IssueStatus'
+            $ref: "#/components/schemas/IssueStatus"
       responses:
-        '200':
+        "200":
           description: Página de ocorrências.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/IssuesPage'
-        '400':
-          $ref: '#/components/responses/ValidationError'
-        '401':
-          $ref: '#/components/responses/Unauthenticated'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                $ref: "#/components/schemas/IssuesPage"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/operations/queries/{queryId}/reconcile:
     post:
       tags:
@@ -606,20 +606,20 @@ paths:
           required: true
           schema:
             type: string
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ReconcileRequest'
+              $ref: "#/components/schemas/ReconcileRequest"
             examples:
               unknownQuery:
                 summary: Consulta sem resposta do fornecedor
                 value:
                   reason: Consulta UNKNOWN há mais de 10 minutos; conferir com o fornecedor.
       responses:
-        '202':
+        "202":
           description: Reconciliação registrada, ou a mesma operação de um reenvio idêntico.
           headers:
             Location:
@@ -629,23 +629,23 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ReconcileAccepted'
-        '400':
-          $ref: '#/components/responses/ValidationError'
-        '401':
-          $ref: '#/components/responses/Unauthenticated'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          $ref: '#/components/responses/Conflict'
-        '415':
-          $ref: '#/components/responses/UnsupportedMediaType'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '503':
-          $ref: '#/components/responses/Unavailable'
+                $ref: "#/components/schemas/ReconcileAccepted"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/operations/{operationId}:
     get:
       tags:
@@ -665,20 +665,20 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: Situação da operação.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Operation'
-        '401':
-          $ref: '#/components/responses/Unauthenticated'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                $ref: "#/components/schemas/Operation"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 components:
   securitySchemes:
     bearerAuth:
@@ -741,37 +741,37 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            $ref: "#/components/schemas/Error"
     Unauthenticated:
       description: Token ausente, inválido, expirado, com assinatura inválida, ID token ou de outro app client.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            $ref: "#/components/schemas/Error"
     Forbidden:
       description: Usuário sem organização ou sem a permissão do endpoint (`x-permissions`).
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            $ref: "#/components/schemas/Error"
     NotFound:
       description: Recurso inexistente ou de outra organização.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            $ref: "#/components/schemas/Error"
     Conflict:
       description: Conflito de chave, versão ou oferta.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ConflictError'
+            $ref: "#/components/schemas/ConflictError"
     UnsupportedMediaType:
       description: O body precisa ser `application/json`.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            $ref: "#/components/schemas/Error"
     TooManyRequests:
       description: |
         Quota do produto excedida; aguarde o `Retry-After` antes de tentar de novo. No MVP não há quota de
@@ -785,19 +785,19 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            $ref: "#/components/schemas/Error"
     Unavailable:
       description: Não foi possível aceitar duravelmente; reenvie com a mesma `Idempotency-Key`.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            $ref: "#/components/schemas/Error"
     CatalogPage:
       description: Página do catálogo.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/CatalogPage'
+            $ref: "#/components/schemas/CatalogPage"
   schemas:
     Permission:
       type: string
@@ -825,7 +825,7 @@ components:
         permissions:
           type: array
           items:
-            $ref: '#/components/schemas/Permission'
+            $ref: "#/components/schemas/Permission"
     CatalogItem:
       type: object
       additionalProperties: false
@@ -848,11 +848,11 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/CatalogItem'
+            $ref: "#/components/schemas/CatalogItem"
         nextCursor:
           type:
             - string
-            - 'null'
+            - "null"
     CoverageProfilesPage:
       type: object
       additionalProperties: false
@@ -863,11 +863,11 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/CoverageProfile'
+            $ref: "#/components/schemas/CoverageProfile"
         nextCursor:
           type:
             - string
-            - 'null'
+            - "null"
     Usage:
       type: string
       enum:
@@ -891,7 +891,7 @@ components:
           minLength: 1
           maxLength: 128
         risk:
-          $ref: '#/components/schemas/RiskInput'
+          $ref: "#/components/schemas/RiskInput"
         coverageProfile:
           type: string
           minLength: 1
@@ -913,7 +913,7 @@ components:
           minLength: 1
           maxLength: 128
         usage:
-          $ref: '#/components/schemas/Usage'
+          $ref: "#/components/schemas/Usage"
         principalDriverRef:
           type: string
           minLength: 1
@@ -944,7 +944,7 @@ components:
           minLength: 1
           maxLength: 128
         risk:
-          $ref: '#/components/schemas/RiskInput'
+          $ref: "#/components/schemas/RiskInput"
         coverageProfile:
           type: string
           minLength: 1
@@ -1018,7 +1018,7 @@ components:
           type: integer
           minimum: 1
         phase:
-          $ref: '#/components/schemas/Phase'
+          $ref: "#/components/schemas/Phase"
         statusUrl:
           type: string
           examples:
@@ -1041,11 +1041,11 @@ components:
           type: integer
           minimum: 1
         phase:
-          $ref: '#/components/schemas/Phase'
+          $ref: "#/components/schemas/Phase"
         outcome:
           oneOf:
-            - $ref: '#/components/schemas/Outcome'
-            - type: 'null'
+            - $ref: "#/components/schemas/Outcome"
+            - type: "null"
         createdAt:
           type: string
           format: date-time
@@ -1062,11 +1062,11 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/QuoteSummary'
+            $ref: "#/components/schemas/QuoteSummary"
         nextCursor:
           type:
             - string
-            - 'null'
+            - "null"
     MissingField:
       type: object
       additionalProperties: false
@@ -1128,7 +1128,7 @@ components:
         licenseDate:
           type:
             - string
-            - 'null'
+            - "null"
           format: date
     CoverageProfile:
       type: object
@@ -1146,7 +1146,7 @@ components:
         coverages:
           type: array
           items:
-            $ref: '#/components/schemas/Coverage'
+            $ref: "#/components/schemas/Coverage"
     Coverage:
       type: object
       required:
@@ -1179,7 +1179,7 @@ components:
         applicantRef:
           type: string
         applicant:
-          $ref: '#/components/schemas/Party'
+          $ref: "#/components/schemas/Party"
         risk:
           type: object
           required:
@@ -1192,17 +1192,17 @@ components:
             vehicleRef:
               type: string
             usage:
-              $ref: '#/components/schemas/Usage'
+              $ref: "#/components/schemas/Usage"
             principalDriverRef:
               type: string
             vehicle:
-              $ref: '#/components/schemas/Vehicle'
+              $ref: "#/components/schemas/Vehicle"
             principalDriver:
-              $ref: '#/components/schemas/Driver'
+              $ref: "#/components/schemas/Driver"
         coverageProfile:
           type: string
         coverage:
-          $ref: '#/components/schemas/CoverageProfile'
+          $ref: "#/components/schemas/CoverageProfile"
         desiredStartDate:
           type: string
           format: date
@@ -1222,16 +1222,16 @@ components:
         insurerName:
           type: string
         status:
-          $ref: '#/components/schemas/InsurerStatus'
+          $ref: "#/components/schemas/InsurerStatus"
         reasonCode:
           type:
             - string
-            - 'null'
+            - "null"
         missingFields:
           type: array
           description: Dados que esta seguradora pediu, quando `status = NEEDS_INFORMATION`; vazio nos demais.
           items:
-            $ref: '#/components/schemas/MissingField'
+            $ref: "#/components/schemas/MissingField"
         updatedAt:
           type: string
           format: date-time
@@ -1295,21 +1295,21 @@ components:
           type: integer
           minimum: 1
         snapshot:
-          $ref: '#/components/schemas/Snapshot'
+          $ref: "#/components/schemas/Snapshot"
         phase:
-          $ref: '#/components/schemas/Phase'
+          $ref: "#/components/schemas/Phase"
         outcome:
           oneOf:
-            - $ref: '#/components/schemas/Outcome'
-            - type: 'null'
+            - $ref: "#/components/schemas/Outcome"
+            - type: "null"
         outcomeReason:
           oneOf:
-            - $ref: '#/components/schemas/OutcomeReason'
-            - type: 'null'
+            - $ref: "#/components/schemas/OutcomeReason"
+            - type: "null"
         supersededAt:
           type:
             - string
-            - 'null'
+            - "null"
           format: date-time
         revision:
           type: integer
@@ -1323,7 +1323,7 @@ components:
         retryAfterSeconds:
           type:
             - integer
-            - 'null'
+            - "null"
           minimum: 1
         missingFields:
           type: array
@@ -1335,19 +1335,19 @@ components:
             `NEEDS_INFORMATION` sem oferta (`outcomeReason = INSURER_NEEDS_INFORMATION`). Para montar a tela de
             complementação, leia os dois lugares.
           items:
-            $ref: '#/components/schemas/MissingField'
+            $ref: "#/components/schemas/MissingField"
         insurerResults:
           type: array
           items:
-            $ref: '#/components/schemas/InsurerResult'
+            $ref: "#/components/schemas/InsurerResult"
         selection:
           oneOf:
-            - $ref: '#/components/schemas/Selection'
-            - type: 'null'
+            - $ref: "#/components/schemas/Selection"
+            - type: "null"
         allowedActions:
           type: array
           items:
-            $ref: '#/components/schemas/AllowedAction'
+            $ref: "#/components/schemas/AllowedAction"
     Installment:
       type: object
       required:
@@ -1411,19 +1411,19 @@ components:
           pattern: '^\d+(\.\d+)?$'
         currency:
           type: string
-          pattern: '^[A-Z]{3}$'
+          pattern: "^[A-Z]{3}$"
         installments:
           type: array
           items:
-            $ref: '#/components/schemas/Installment'
+            $ref: "#/components/schemas/Installment"
         coverages:
           type: array
           items:
-            $ref: '#/components/schemas/OfferCoverage'
+            $ref: "#/components/schemas/OfferCoverage"
         deductibles:
           type: array
           items:
-            $ref: '#/components/schemas/Deductible'
+            $ref: "#/components/schemas/Deductible"
         validUntil:
           type: string
           format: date-time
@@ -1431,8 +1431,8 @@ components:
           type: boolean
         unavailabilityReason:
           oneOf:
-            - $ref: '#/components/schemas/UnavailabilityReason'
-            - type: 'null'
+            - $ref: "#/components/schemas/UnavailabilityReason"
+            - type: "null"
     OffersPage:
       type: object
       additionalProperties: false
@@ -1451,11 +1451,11 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/Offer'
+            $ref: "#/components/schemas/Offer"
         nextCursor:
           type:
             - string
-            - 'null'
+            - "null"
     IssueType:
       type: string
       description: |
@@ -1502,16 +1502,16 @@ components:
         queryId:
           type:
             - string
-            - 'null'
+            - "null"
           description: Consulta da provider; nula quando a ocorrência não tem consulta.
         quoteId:
           type:
             - string
-            - 'null'
+            - "null"
         type:
-          $ref: '#/components/schemas/IssueType'
+          $ref: "#/components/schemas/IssueType"
         status:
-          $ref: '#/components/schemas/IssueStatus'
+          $ref: "#/components/schemas/IssueStatus"
         firstSeenAt:
           type: string
           format: date-time
@@ -1524,7 +1524,7 @@ components:
         allowedActions:
           type: array
           items:
-            $ref: '#/components/schemas/IssueAction'
+            $ref: "#/components/schemas/IssueAction"
     IssuesPage:
       type: object
       additionalProperties: false
@@ -1535,11 +1535,11 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/Issue'
+            $ref: "#/components/schemas/Issue"
         nextCursor:
           type:
             - string
-            - 'null'
+            - "null"
     ReconcileRequest:
       type: object
       additionalProperties: false
@@ -1593,7 +1593,7 @@ components:
         queryId:
           type: string
         status:
-          $ref: '#/components/schemas/OperationStatus'
+          $ref: "#/components/schemas/OperationStatus"
         safeSummary:
           type: string
         updatedAt:
@@ -1630,7 +1630,7 @@ components:
         fieldErrors:
           type: array
           items:
-            $ref: '#/components/schemas/FieldError'
+            $ref: "#/components/schemas/FieldError"
     ConflictError:
       type: object
       additionalProperties: false

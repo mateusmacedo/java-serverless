@@ -56,20 +56,20 @@ channels:
       `QuoteAccepted`, `QuoteCompleted` e `OfferSelected` são fatos de negócio para quem quiser assinar.
     parameters:
       stage:
-        $ref: '#/components/parameters/stage'
+        $ref: "#/components/parameters/stage"
     messages:
       quoteAccepted:
-        $ref: '#/components/messages/QuoteAccepted'
+        $ref: "#/components/messages/QuoteAccepted"
       enrichmentRequested:
-        $ref: '#/components/messages/EnrichmentRequested'
+        $ref: "#/components/messages/EnrichmentRequested"
       insurerQuoteRequested:
-        $ref: '#/components/messages/InsurerQuoteRequested'
+        $ref: "#/components/messages/InsurerQuoteRequested"
       quoteCompleted:
-        $ref: '#/components/messages/QuoteCompleted'
+        $ref: "#/components/messages/QuoteCompleted"
       offerSelected:
-        $ref: '#/components/messages/OfferSelected'
+        $ref: "#/components/messages/OfferSelected"
       queryReconcileRequested:
-        $ref: '#/components/messages/QueryReconcileRequested'
+        $ref: "#/components/messages/QueryReconcileRequested"
   resultsQueue:
     address: quote-solution-{stage}-results
     title: Fila results da quote
@@ -79,12 +79,12 @@ channels:
       de `resultsMaxReceiveCount` recebimentos, a mensagem vai para a `results-dlq`, que o `reconciler` reprocessa.
     parameters:
       stage:
-        $ref: '#/components/parameters/stage'
+        $ref: "#/components/parameters/stage"
     messages:
       enrichmentResolved:
-        $ref: '../provider-solution/asyncapi.yaml#/components/messages/EnrichmentResolved'
+        $ref: "../provider-solution/asyncapi.yaml#/components/messages/EnrichmentResolved"
       insurerResultRecorded:
-        $ref: '../provider-solution/asyncapi.yaml#/components/messages/InsurerResultRecorded'
+        $ref: "../provider-solution/asyncapi.yaml#/components/messages/InsurerResultRecorded"
   issuesQueue:
     address: quote-solution-{stage}-issues
     title: Fila issues da quote (M5)
@@ -95,14 +95,14 @@ channels:
       `reconciler` reprocessa como as outras DLQs (ADR 0007).
     parameters:
       stage:
-        $ref: '#/components/parameters/stage'
+        $ref: "#/components/parameters/stage"
     messages:
       queryReconciled:
-        $ref: '../provider-solution/asyncapi.yaml#/components/messages/QueryReconciled'
+        $ref: "../provider-solution/asyncapi.yaml#/components/messages/QueryReconciled"
       operationIssueRaised:
-        $ref: '../provider-solution/asyncapi.yaml#/components/messages/OperationIssueRaised'
+        $ref: "../provider-solution/asyncapi.yaml#/components/messages/OperationIssueRaised"
       operationIssueUpdated:
-        $ref: '../provider-solution/asyncapi.yaml#/components/messages/OperationIssueUpdated'
+        $ref: "../provider-solution/asyncapi.yaml#/components/messages/OperationIssueUpdated"
 operations:
   receiveProviderResults:
     action: receive
@@ -111,10 +111,10 @@ operations:
       Os campos lidos e as regras de descarte estão na descrição do documento. O resultado retoma a tarefa da
       execução pelo waiter do `workRef`; o que chega depois do prazo vira evidência `LATE`.
     channel:
-      $ref: '#/channels/resultsQueue'
+      $ref: "#/channels/resultsQueue"
     messages:
-      - $ref: '#/channels/resultsQueue/messages/enrichmentResolved'
-      - $ref: '#/channels/resultsQueue/messages/insurerResultRecorded'
+      - $ref: "#/channels/resultsQueue/messages/enrichmentResolved"
+      - $ref: "#/channels/resultsQueue/messages/insurerResultRecorded"
   receiveQueryReconciled:
     action: receive
     title: O issue-projector registra o resultado de uma reconciliação manual (M5)
@@ -133,9 +133,9 @@ operations:
       ocorrência `DEAD_LETTER` da própria quote, com a organização e a consulta do evento e sem `RECONCILE`. Campos
       desconhecidos são ignorados.
     channel:
-      $ref: '#/channels/issuesQueue'
+      $ref: "#/channels/issuesQueue"
     messages:
-      - $ref: '#/channels/issuesQueue/messages/queryReconciled'
+      - $ref: "#/channels/issuesQueue/messages/queryReconciled"
   receiveOperationIssue:
     action: receive
     title: O issue-projector projeta as ocorrências operacionais da provider (M5)
@@ -151,17 +151,17 @@ operations:
       `RECONCILE` da ocorrência `reconcilable` e `OPEN`; a organização gravada primeiro não muda. As regras de
       descarte comuns à fila estão em `receiveQueryReconciled`.
     channel:
-      $ref: '#/channels/issuesQueue'
+      $ref: "#/channels/issuesQueue"
     messages:
-      - $ref: '#/channels/issuesQueue/messages/operationIssueRaised'
-      - $ref: '#/channels/issuesQueue/messages/operationIssueUpdated'
+      - $ref: "#/channels/issuesQueue/messages/operationIssueRaised"
+      - $ref: "#/channels/issuesQueue/messages/operationIssueUpdated"
   emitQuoteAccepted:
     action: send
     title: A API aceita uma cotação ou uma nova versão
     channel:
-      $ref: '#/channels/platformEvents'
+      $ref: "#/channels/platformEvents"
     messages:
-      - $ref: '#/channels/platformEvents/messages/quoteAccepted'
+      - $ref: "#/channels/platformEvents/messages/quoteAccepted"
   requestEnrichment:
     action: send
     title: A dispatch pede o enriquecimento obrigatório
@@ -169,37 +169,37 @@ operations:
       Gravado com o waiter que guarda o task token cifrado; o token nunca sai da quote. A reentrega do
       mesmo pedido tem o mesmo `eventId` e o mesmo `workRef`.
     channel:
-      $ref: '#/channels/platformEvents'
+      $ref: "#/channels/platformEvents"
     messages:
-      - $ref: '#/channels/platformEvents/messages/enrichmentRequested'
+      - $ref: "#/channels/platformEvents/messages/enrichmentRequested"
   requestInsurerQuote:
     action: send
     title: A dispatch pede a cotação a uma seguradora
     channel:
-      $ref: '#/channels/platformEvents'
+      $ref: "#/channels/platformEvents"
     messages:
-      - $ref: '#/channels/platformEvents/messages/insurerQuoteRequested'
+      - $ref: "#/channels/platformEvents/messages/insurerQuoteRequested"
   emitQuoteCompleted:
     action: send
     title: A consolidação encerra a versão
     channel:
-      $ref: '#/channels/platformEvents'
+      $ref: "#/channels/platformEvents"
     messages:
-      - $ref: '#/channels/platformEvents/messages/quoteCompleted'
+      - $ref: "#/channels/platformEvents/messages/quoteCompleted"
   emitOfferSelected:
     action: send
     title: A API registra a seleção de uma oferta (M5)
     channel:
-      $ref: '#/channels/platformEvents'
+      $ref: "#/channels/platformEvents"
     messages:
-      - $ref: '#/channels/platformEvents/messages/offerSelected'
+      - $ref: "#/channels/platformEvents/messages/offerSelected"
   requestQueryReconcile:
     action: send
     title: A API registra uma reconciliação manual (M5)
     channel:
-      $ref: '#/channels/platformEvents'
+      $ref: "#/channels/platformEvents"
     messages:
-      - $ref: '#/channels/platformEvents/messages/queryReconcileRequested'
+      - $ref: "#/channels/platformEvents/messages/queryReconcileRequested"
 components:
   parameters:
     stage:
@@ -214,22 +214,22 @@ components:
       summary: Cotação (ou versão) aceita duravelmente. `eventId` aleatório, gravado uma vez na transação.
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/QuoteAcceptedEvent'
+        $ref: "#/components/schemas/QuoteAcceptedEvent"
       examples:
         - name: versao-1
           payload:
-            version: '0'
+            version: "0"
             id: 2f0c3a52-7a43-4e3c-9b3f-0c6b8a9e2d11
             source: mmda.quote
             detail-type: QuoteAccepted
-            account: '000000000000'
-            time: '2026-11-11T18:00:00Z'
+            account: "000000000000"
+            time: "2026-11-11T18:00:00Z"
             region: us-east-1
             resources: []
             detail:
               eventId: 8a1f2c4e-3b5d-4e6f-9a7b-1c2d3e4f5a6b
-              occurredAt: '2026-11-11T18:00:00.123Z'
-              schemaVersion: '1'
+              occurredAt: "2026-11-11T18:00:00.123Z"
+              schemaVersion: "1"
               quoteId: 5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11
               version: 1
               organizationId: org-acme
@@ -239,7 +239,7 @@ components:
       summary: Pedido de perfil do veículo e do condutor. `eventId` = UUIDv5 do `workRef`.
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/EnrichmentRequestedEvent'
+        $ref: "#/components/schemas/EnrichmentRequestedEvent"
       examples:
         - name: pedido
           payload:
@@ -247,26 +247,26 @@ components:
             detail-type: EnrichmentRequested
             detail:
               eventId: 3321dda3-d8fb-50ae-9412-ce1512112077
-              occurredAt: '2026-11-11T18:00:02.500Z'
-              schemaVersion: '1'
+              occurredAt: "2026-11-11T18:00:02.500Z"
+              schemaVersion: "1"
               workRef: wr_109dd1cbf526511e21bb4e07bdffa510
               organizationId: org-acme
               quoteId: 5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11
               version: 1
               provider: enrichment-sim
               operation: VEHICLE_DRIVER_PROFILE
-              contractVersion: '1'
+              contractVersion: "1"
               params:
                 vehicleRef: vehicle-hatch-2021
                 principalDriverRef: driver-acme-ana
-              deadlineAt: '2026-11-11T18:00:22.500Z'
+              deadlineAt: "2026-11-11T18:00:22.500Z"
     InsurerQuoteRequested:
       name: InsurerQuoteRequested
       title: Evento InsurerQuoteRequested
       summary: Pedido de cotação a uma seguradora. `eventId` = UUIDv5 do `workRef`.
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/InsurerQuoteRequestedEvent'
+        $ref: "#/components/schemas/InsurerQuoteRequestedEvent"
       examples:
         - name: pedido-alpha
           payload:
@@ -274,8 +274,8 @@ components:
             detail-type: InsurerQuoteRequested
             detail:
               eventId: c615e3a5-6d76-55e5-a537-789cdc65b2c6
-              occurredAt: '2026-11-11T18:00:08.000Z'
-              schemaVersion: '1'
+              occurredAt: "2026-11-11T18:00:08.000Z"
+              schemaVersion: "1"
               workRef: wr_32d527e247a13053720a133c40c8665b
               organizationId: org-acme
               quoteId: 5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11
@@ -294,7 +294,7 @@ components:
                 principalDriver:
                   id: driver-acme-ana
                   label: Ana Lima
-                  licenseDate: '2012-03-15'
+                  licenseDate: "2012-03-15"
                 coverageProfile:
                   code: COMPREHENSIVE
                   label: Completa
@@ -302,8 +302,8 @@ components:
                   coverages:
                     - code: COLLISION
                       label: Colisão
-                      insuredAmount: '90000.00'
-                desiredStartDate: '2026-12-01'
+                      insuredAmount: "90000.00"
+                desiredStartDate: "2026-12-01"
               enrichment:
                 evidenceId: ev_a8e049d6bebff920a7afb8424c8410df
                 queryId: q_6d1f1a54bd4666ed04f96f9a63b420ea
@@ -315,19 +315,19 @@ components:
                     make: Volkswagen
                     model: Polo
                     year: 2021
-                    marketValue: '75000.00'
+                    marketValue: "75000.00"
                   principalDriver:
                     ref: driver-acme-ana
                     licenseYears: 14
                     claimsLast5Years: 1
-              deadlineAt: '2026-11-11T18:00:28.000Z'
+              deadlineAt: "2026-11-11T18:00:28.000Z"
     QuoteCompleted:
       name: QuoteCompleted
       title: Evento QuoteCompleted
       summary: Versão terminal. `eventId` = UUIDv5 de `quoteId|version|COMPLETED`.
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/QuoteCompletedEvent'
+        $ref: "#/components/schemas/QuoteCompletedEvent"
       examples:
         - name: completa
           payload:
@@ -335,8 +335,8 @@ components:
             detail-type: QuoteCompleted
             detail:
               eventId: aa924027-e7d0-5c6a-8886-c229bdce927d
-              occurredAt: '2026-11-11T18:00:15.000Z'
-              schemaVersion: '1'
+              occurredAt: "2026-11-11T18:00:15.000Z"
+              schemaVersion: "1"
               quoteId: 5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11
               version: 1
               outcome: COMPLETED
@@ -348,14 +348,14 @@ components:
       summary: Intenção de proposta registrada. `eventId` = UUIDv5 do `selectionId`.
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/OfferSelectedEvent'
+        $ref: "#/components/schemas/OfferSelectedEvent"
     QueryReconcileRequested:
       name: QueryReconcileRequested
       title: Evento QueryReconcileRequested (M5)
       summary: Reconciliação manual pedida por um operador; consumida pela provider a partir do M4.
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/QueryReconcileRequestedEvent'
+        $ref: "#/components/schemas/QueryReconcileRequestedEvent"
       examples:
         - name: unknown-query
           summary: |
@@ -366,8 +366,8 @@ components:
             detail-type: QueryReconcileRequested
             detail:
               eventId: 0b9f6a52-3c1e-4d7a-9f2b-6e8d4c1a7b35
-              occurredAt: '2026-11-12T04:13:17.902Z'
-              schemaVersion: '1'
+              occurredAt: "2026-11-12T04:13:17.902Z"
+              schemaVersion: "1"
               operationId: op_m4_example_unknown
               organizationId: org-acme
               queryId: q_099d4987d3e2f2e6656e9285ac76a83e
@@ -404,58 +404,58 @@ components:
             type: string
     QuoteAcceptedEvent:
       allOf:
-        - $ref: '#/components/schemas/Envelope'
+        - $ref: "#/components/schemas/Envelope"
         - type: object
           properties:
             detail-type:
               const: QuoteAccepted
             detail:
-              $ref: '#/components/schemas/QuoteAcceptedDetail'
+              $ref: "#/components/schemas/QuoteAcceptedDetail"
     EnrichmentRequestedEvent:
       allOf:
-        - $ref: '#/components/schemas/Envelope'
+        - $ref: "#/components/schemas/Envelope"
         - type: object
           properties:
             detail-type:
               const: EnrichmentRequested
             detail:
-              $ref: '#/components/schemas/EnrichmentRequestedDetail'
+              $ref: "#/components/schemas/EnrichmentRequestedDetail"
     InsurerQuoteRequestedEvent:
       allOf:
-        - $ref: '#/components/schemas/Envelope'
+        - $ref: "#/components/schemas/Envelope"
         - type: object
           properties:
             detail-type:
               const: InsurerQuoteRequested
             detail:
-              $ref: '#/components/schemas/InsurerQuoteRequestedDetail'
+              $ref: "#/components/schemas/InsurerQuoteRequestedDetail"
     QuoteCompletedEvent:
       allOf:
-        - $ref: '#/components/schemas/Envelope'
+        - $ref: "#/components/schemas/Envelope"
         - type: object
           properties:
             detail-type:
               const: QuoteCompleted
             detail:
-              $ref: '#/components/schemas/QuoteCompletedDetail'
+              $ref: "#/components/schemas/QuoteCompletedDetail"
     OfferSelectedEvent:
       allOf:
-        - $ref: '#/components/schemas/Envelope'
+        - $ref: "#/components/schemas/Envelope"
         - type: object
           properties:
             detail-type:
               const: OfferSelected
             detail:
-              $ref: '#/components/schemas/OfferSelectedDetail'
+              $ref: "#/components/schemas/OfferSelectedDetail"
     QueryReconcileRequestedEvent:
       allOf:
-        - $ref: '#/components/schemas/Envelope'
+        - $ref: "#/components/schemas/Envelope"
         - type: object
           properties:
             detail-type:
               const: QueryReconcileRequested
             detail:
-              $ref: '#/components/schemas/QueryReconcileRequestedDetail'
+              $ref: "#/components/schemas/QueryReconcileRequestedDetail"
     QuoteAcceptedDetail:
       type: object
       additionalProperties: false
@@ -474,7 +474,7 @@ components:
           type: string
           format: date-time
         schemaVersion:
-          const: '1'
+          const: "1"
         quoteId:
           type: string
         version:
@@ -507,9 +507,9 @@ components:
           type: string
           format: date-time
         schemaVersion:
-          const: '1'
+          const: "1"
         workRef:
-          $ref: '#/components/schemas/WorkRef'
+          $ref: "#/components/schemas/WorkRef"
         organizationId:
           type: string
         quoteId:
@@ -522,7 +522,7 @@ components:
         operation:
           const: VEHICLE_DRIVER_PROFILE
         contractVersion:
-          const: '1'
+          const: "1"
         params:
           type: object
           additionalProperties: false
@@ -562,9 +562,9 @@ components:
           type: string
           format: date-time
         schemaVersion:
-          const: '1'
+          const: "1"
         workRef:
-          $ref: '#/components/schemas/WorkRef'
+          $ref: "#/components/schemas/WorkRef"
         organizationId:
           type: string
         quoteId:
@@ -628,7 +628,7 @@ components:
                 licenseDate:
                   type:
                     - string
-                    - 'null'
+                    - "null"
                   format: date
             coverageProfile:
               type: object
@@ -671,10 +671,10 @@ components:
           properties:
             evidenceId:
               type: string
-              pattern: '^ev_[0-9a-f]{32}$'
+              pattern: "^ev_[0-9a-f]{32}$"
             queryId:
               type: string
-              pattern: '^q_[0-9a-f]{32}$'
+              pattern: "^q_[0-9a-f]{32}$"
             reuseDecision:
               type: string
               enum:
@@ -712,7 +712,7 @@ components:
           type: string
           format: date-time
         schemaVersion:
-          const: '1'
+          const: "1"
         quoteId:
           type: string
         version:
@@ -730,7 +730,7 @@ components:
         outcomeReason:
           type:
             - string
-            - 'null'
+            - "null"
           enum:
             - SALVAGE_VEHICLE
             - MISSING_LICENSE_DATE
@@ -765,7 +765,7 @@ components:
           type: string
           format: date-time
         schemaVersion:
-          const: '1'
+          const: "1"
         quoteId:
           type: string
         version:
@@ -795,7 +795,7 @@ components:
           type: string
           format: date-time
         schemaVersion:
-          const: '1'
+          const: "1"
         operationId:
           type: string
         organizationId:
@@ -813,5 +813,5 @@ components:
           description: Id do usuário no user pool (o `sub` do token) que pediu a reconciliação.
     WorkRef:
       type: string
-      pattern: '^wr_[0-9a-f]{32}$'
+      pattern: "^wr_[0-9a-f]{32}$"
       description: Referência opaca e determinística do pedido; a resposta da provider devolve o mesmo valor.

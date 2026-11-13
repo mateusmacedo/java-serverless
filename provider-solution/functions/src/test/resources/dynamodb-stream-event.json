@@ -9,20 +9,44 @@
       "dynamodb": {
         "ApproximateCreationDateTime": 1794430800,
         "Keys": {
-          "pk": {"S": "OUTBOX#${eventId}"},
-          "sk": {"S": "META"}
+          "pk": {
+            "S": "OUTBOX#${eventId}"
+          },
+          "sk": {
+            "S": "META"
+          }
         },
         "NewImage": {
-          "pk": {"S": "OUTBOX#${eventId}"},
-          "sk": {"S": "META"},
-          "type": {"S": "OUTBOX"},
-          "eventId": {"S": "${eventId}"},
-          "detailType": {"S": "EnrichmentResolved"},
-          "detail": {"S": "{\"eventId\":\"${eventId}\",\"schemaVersion\":\"1\"}"},
-          "createdAt": {"S": "2026-11-11T19:00:00.000Z"},
-          "attempts": {"N": "0"},
-          "gsi2pk": {"S": "OUTBOX_PENDING"},
-          "gsi2sk": {"S": "2026-11-11T19:00:00.000Z"}
+          "pk": {
+            "S": "OUTBOX#${eventId}"
+          },
+          "sk": {
+            "S": "META"
+          },
+          "type": {
+            "S": "OUTBOX"
+          },
+          "eventId": {
+            "S": "${eventId}"
+          },
+          "detailType": {
+            "S": "EnrichmentResolved"
+          },
+          "detail": {
+            "S": "{\"eventId\":\"${eventId}\",\"schemaVersion\":\"1\"}"
+          },
+          "createdAt": {
+            "S": "2026-11-11T19:00:00.000Z"
+          },
+          "attempts": {
+            "N": "0"
+          },
+          "gsi2pk": {
+            "S": "OUTBOX_PENDING"
+          },
+          "gsi2sk": {
+            "S": "2026-11-11T19:00:00.000Z"
+          }
         },
         "SequenceNumber": "4421584500000000017450439091",
         "SizeBytes": 412,
