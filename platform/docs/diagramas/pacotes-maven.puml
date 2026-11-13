@@ -16,29 +16,24 @@ package "platform/" {
 }
 
 package "Soluções Spring" {
-    component "sample-solution\napi, functions (e2e com -Pe2e)" as sample <<entrada>>
     component "provider-solution\ndomain, api, functions, simulators" as provider <<entrada>>
 }
 
 package "Soluções Quarkus" {
-    component "receipt-solution\napi, functions (e2e com -Pe2e)" as receipt <<entrada>>
     component "quote-solution\ndomain, api, functions (e2e com -Pe2e)" as quote <<entrada>>
 }
 
 springparent -up-|> raiz : parent
 quarkusparent -up-|> raiz : parent
 springaws -up-|> springparent : parent
-sample -up-|> springparent : parent
 provider -up-|> springparent : parent
-receipt -up-|> quarkusparent : parent
 quote -up-|> quarkusparent : parent
-sample ..> springaws : api e functions
 provider ..> springaws : api, functions e simulators
 
 note right of raiz
   A raiz agrega os módulos na ordem:
   spring-parent, quarkus-parent, spring-aws,
-  sample, receipt, provider e quote.
+  provider e quote.
   Versões que só um framework usa
   ficam no parent dele.
 end note

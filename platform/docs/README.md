@@ -6,9 +6,9 @@ O que as soluções compartilham, na pasta `platform/`: o barramento de eventos 
 [ADR 0013](../../docs/decisoes/0013-barramento-da-plataforma.md) (barramento), o
 [ADR 0010](../../docs/decisoes/0010-raiz-neutra-e-parents-por-framework.md) (parents) e o
 [ADR 0005](../../docs/decisoes/0005-clients-sincronos-com-crt.md) (clients síncronos com CRT). As soluções
-estão documentadas na própria pasta: [`sample-solution`](../../sample-solution/docs/README.md),
-[`receipt-solution`](../../receipt-solution/docs/README.md) e, para a cotação, o
-[desenho técnico](../../docs/plataforma-de-cotacao.md).
+estão documentadas na própria pasta: [`provider-solution`](../../provider-solution/docs/README.md) e
+[`quote-solution`](../../quote-solution/docs/README.md); o desenho técnico das duas está em
+[plataforma-de-cotacao](../../docs/plataforma-de-cotacao.md).
 
 ## Sumário
 
@@ -31,9 +31,9 @@ estão documentadas na própria pasta: [`sample-solution`](../../sample-solution
 | Peça | Tipo | Responsabilidade | Quem usa |
 |---|---|---|---|
 | [`platform/events`](../events/serverless.yml) | Stack Serverless (serviço `platform`), sem funções | Barramento `platform-<stage>-events`, onde a `quote-solution` e a `provider-solution` publicam e declaram as regras | `quote-solution`, `provider-solution` |
-| [`platform/spring-parent`](../spring-parent/pom.xml) | `pom` | BOMs do Spring Boot (importado primeiro), Spring Cloud e AWS SDK; exclusão de `apache-client`, `apache5-client` e `netty-nio-client`; zip da Lambda | `sample-solution`, `provider-solution`, `spring-aws` |
-| [`platform/quarkus-parent`](../quarkus-parent/pom.xml) | `pom` | BOMs do Quarkus (linha LTS) e do Quarkus Amazon Services; `quarkus-maven-plugin`; `<artifactId>-lambda.zip` | `receipt-solution`, `quote-solution` |
-| [`platform/spring-aws`](../spring-aws/pom.xml) | `jar` | Autoconfiguração dos clients síncronos do SDK v2 com `AwsCrtHttpClient` | Módulos Spring da `sample-solution` e da `provider-solution` |
+| [`platform/spring-parent`](../spring-parent/pom.xml) | `pom` | BOMs do Spring Boot (importado primeiro), Spring Cloud e AWS SDK; exclusão de `apache-client`, `apache5-client` e `netty-nio-client`; zip da Lambda | `provider-solution`, `spring-aws` |
+| [`platform/quarkus-parent`](../quarkus-parent/pom.xml) | `pom` | BOMs do Quarkus (linha LTS) e do Quarkus Amazon Services; `quarkus-maven-plugin`; `<artifactId>-lambda.zip` | `quote-solution` |
+| [`platform/spring-aws`](../spring-aws/pom.xml) | `jar` | Autoconfiguração dos clients síncronos do SDK v2 com `AwsCrtHttpClient` | Módulos `api`, `functions` e `simulators` da `provider-solution` |
 
 O `pom.xml` da raiz (`serverless-parent`) é neutro: Java 21, plugins Maven e `testcontainers-floci-aws`. As
 versões de cada peça estão em [README § Tecnologias](../../README.md#tecnologias).
@@ -64,16 +64,15 @@ repositório. Os campos de cada evento estão no [desenho técnico § 3](../../d
 e nos AsyncAPI da [quote](../../contracts/quote-solution/asyncapi.yaml) e da
 [provider](../../contracts/provider-solution/asyncapi.yaml).
 
-A `sample-solution` e a `receipt-solution` seguem o padrão anterior, com barramento por solução e a regra da
-consumidora no barramento da produtora ([ADR 0011](../../docs/decisoes/0011-integracao-entre-solucoes-por-eventbridge.md));
-migrá-las é evolução separada.
+A v2.0.0 removeu as soluções iniciais, que usavam um barramento por solução; o motivo está no
+[ADR 0017](../../docs/decisoes/0017-remocao-das-solucoes-iniciais.md).
 
 ## Parents Maven
 
 | Parent | Herdam dele | O que define |
 |---|---|---|
-| `spring-parent` | `spring-aws`, `sample-solution`, `provider-solution` | BOM do Spring Boot antes dos demais, para manter a precedência que tinha como parent; Spring Cloud e AWS SDK; exclusão de `apache-client`, `apache5-client` e `netty-nio-client` de cada service do SDK; versões de `aws-serverless-java-container`, `openapi-request-validator` e `aws-crt`; execuções `copy-lambda-dependencies`, `copy-lambda-crt-natives` e `lambda-zip` (descritor inline do `maven-assembly-plugin`), ativadas no módulo que declara o `maven-dependency-plugin` e o `maven-assembly-plugin` |
-| `quarkus-parent` | `receipt-solution`, `quote-solution` | BOMs do Quarkus e do Quarkus Amazon Services; `quarkus-maven-plugin` (`build`, `generate-code`, `generate-code-tests`); versões fora do BOM (`aws-crt`, AssertJ, `openapi-request-validator-restassured`); cópia de `target/function.zip` para `<artifactId>-lambda.zip` (`maven-antrun-plugin`), com o `aws-crt` só nos jars Linux |
+| `spring-parent` | `spring-aws`, `provider-solution` | BOM do Spring Boot antes dos demais, para manter a precedência que tinha como parent; Spring Cloud e AWS SDK; exclusão de `apache-client`, `apache5-client` e `netty-nio-client` de cada service do SDK; versões de `aws-serverless-java-container`, `openapi-request-validator` e `aws-crt`; execuções `copy-lambda-dependencies`, `copy-lambda-crt-natives` e `lambda-zip` (descritor inline do `maven-assembly-plugin`), ativadas no módulo que declara o `maven-dependency-plugin` e o `maven-assembly-plugin` |
+| `quarkus-parent` | `quote-solution` | BOMs do Quarkus e do Quarkus Amazon Services; `quarkus-maven-plugin` (`build`, `generate-code`, `generate-code-tests`); versões fora do BOM (`aws-crt`, AssertJ, `openapi-request-validator-restassured`); cópia de `target/function.zip` para `<artifactId>-lambda.zip` (`maven-antrun-plugin`), com o `aws-crt` só nos jars Linux |
 
 O formato dos zips e a troca do `aws-crt` completo pelos jars `linux-x86_64` e `linux-aarch_64` estão em
 [Arquitetura § Empacotamento](../../docs/arquitetura.md#empacotamento) e no
@@ -91,7 +90,7 @@ solução declara só os que usa, e só esses clients sobem.
 | Client | Configuração extra | Módulos que declaram o SDK |
 |---|---|---|
 | `DynamoDbClient`, `SqsClient`, `SnsClient`, `EventBridgeClient`, `SecretsManagerClient`, `SsmClient`, `SfnClient` | Nenhuma | Conforme o uso de cada módulo |
-| `S3Client` | `forcePathStyle` de `mmda.aws.s3.path-style-access` (padrão `false`) | `sample-solution/api`, `sample-solution/functions`, `provider-solution/api` e `provider-solution/functions` |
+| `S3Client` | `forcePathStyle` de `mmda.aws.s3.path-style-access` (padrão `false`) | `provider-solution/api` e `provider-solution/functions` |
 | `SchedulerClient` | Nenhuma | Nenhum módulo de solução hoje |
 
 Região, credenciais e endpoint vêm das cadeias padrão do SDK (inclusive `AWS_ENDPOINT_URL`), então o mesmo
@@ -125,13 +124,11 @@ A stack não tem `params` nem variáveis. O stage vem de `--stage` (padrão `loc
 | Stack | Depende de | Motivo |
 |---|---|---|
 | `platform` (`platform/events`) | — | Cria o barramento usado pelas regras da quote e da provider |
-| `sample-solution` | — | Cria o barramento onde fica a regra da receipt |
-| `receipt-solution` | `sample-solution` | Regra no barramento da sample (ADR 0011) |
 | `provider-solution` | `platform` | Regras e `PutEvents` no barramento da plataforma (ADR 0013) |
 | `quote-solution` | `platform` | Idem |
 
 Na remoção, a ordem se inverte: quem tem regra num barramento sai antes da stack dona dele. O `deploy:local`
-roda as cinco em sequência (plataforma, sample, receipt, provider e quote); o diagrama
+roda as três em sequência (plataforma, provider e quote); o diagrama
 [`atividade-ordem-de-implantacao.puml`](diagramas/atividade-ordem-de-implantacao.puml) mostra a implantação e a
 remoção.
 
@@ -147,7 +144,7 @@ está em [README § Implantação no Floci](../../README.md#implantação-no-flo
 ## Implantar na AWS
 
 O barramento é a primeira stack do [guia do stage `dev`](../../docs/implantacao-aws-dev.md#3-implantação), antes
-da provider e da quote. A `sample-solution` e a `receipt-solution` não estão preparadas para a AWS.
+da provider e da quote.
 
 ## Testes
 
@@ -169,14 +166,14 @@ docker run --rm -u "$(id -u):$(id -g)" -v "$PWD":/w -w /w plantuml/plantuml:late
 | Diagrama | O que mostra e como ler |
 |---|---|
 | [`c4-conteiner.puml`](diagramas/c4-conteiner.puml) | Barramento, parents e `spring-aws` com as soluções ao redor. Tracejado roxo é evento no barramento; pontilhado verde é herança ou dependência Maven |
-| [`implantacao-floci.puml`](diagramas/implantacao-floci.puml) | As cinco stacks no Floci na ordem do `deploy:local` (setas azuis) e as regras que ligam as stacks pelo nome do barramento |
-| [`implantacao-aws.puml`](diagramas/implantacao-aws.puml) | Stage `dev`: plataforma, provider e quote, nessa ordem; sample e receipt em vermelho, fora do guia |
-| [`atividade-ordem-de-implantacao.puml`](diagramas/atividade-ordem-de-implantacao.puml) | Ordem de implantação por grupo de barramento e a remoção na ordem inversa |
+| [`implantacao-floci.puml`](diagramas/implantacao-floci.puml) | As três stacks no Floci na ordem do `deploy:local` (setas azuis) e as regras que ligam as stacks pelo nome do barramento |
+| [`implantacao-aws.puml`](diagramas/implantacao-aws.puml) | Stage `dev`: plataforma, provider e quote, nessa ordem |
+| [`atividade-ordem-de-implantacao.puml`](diagramas/atividade-ordem-de-implantacao.puml) | Ordem de implantação da plataforma, da provider e da quote e a remoção na ordem inversa |
 | [`pacotes-maven.puml`](diagramas/pacotes-maven.puml) | Raiz neutra, parents, `spring-aws` e soluções; seta cheia é herança, tracejada é dependência |
 | [`classes-spring-aws.puml`](diagramas/classes-spring-aws.puml) | Autoconfiguração, as nove configurações internas e as propriedades `mmda.aws` |
 
 ## Divergências conhecidas
 
 1. **`SchedulerClient` sem uso.** O `spring-aws` oferece o client do EventBridge Scheduler, mas nenhum módulo de
-   solução declara o SDK `scheduler`; o agendamento do `reprocess` da sample é criado pelo Serverless, sem
-   chamada de SDK.
+   solução declara o SDK `scheduler`; os agendamentos das soluções (`reconciler`) são criados pelo Serverless,
+   sem chamada de SDK.

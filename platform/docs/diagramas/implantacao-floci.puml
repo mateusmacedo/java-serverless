@@ -20,21 +20,16 @@ Deployment_Node(host, "Máquina do desenvolvedor", "Docker, JDK 21, Maven 3.9, N
     Container(sls, "Serverless Framework v4", "serverless-localstack, ativo só no stage local", "Um sls deploy --stage local por pasta, para localhost:4566", $tags="ferramenta")
     Deployment_Node(floci, "floci", "floci/floci:2.4.0, porta 4566, rede floci, volume floci-data") {
         Container(platform, "1. platform-local", "platform/events", "Barramento platform-local-events", $sprite="exchange_alt", $tags="plataforma")
-        Container(sample, "2. sample-solution-local", "sample-solution", "Barramento sample-solution-local-events", $sprite="leaf")
-        Container(receipt, "3. receipt-solution-local", "receipt-solution", "Regra no barramento da sample", $sprite="cubes")
-        Container(provider, "4. provider-solution-local", "provider-solution", "3 regras no barramento da plataforma", $sprite="leaf")
-        Container(quote, "5. quote-solution-local", "quote-solution", "2 regras no barramento da plataforma", $sprite="cubes")
+        Container(provider, "2. provider-solution-local", "provider-solution", "3 regras no barramento da plataforma", $sprite="leaf")
+        Container(quote, "3. quote-solution-local", "quote-solution", "2 regras no barramento da plataforma", $sprite="cubes")
     }
 }
 
 Rel(dev, mvn, "pnpm deploy:local")
 Rel(mvn, sls, "depois do package")
 Rel(sls, platform, "deploy:platform", $tags="ordem")
-Rel(platform, sample, "deploy:sample", $tags="ordem")
-Rel(sample, receipt, "deploy:receipt", $tags="ordem")
-Rel(receipt, provider, "deploy:provider", $tags="ordem")
+Rel(platform, provider, "deploy:provider", $tags="ordem")
 Rel(provider, quote, "deploy:quote", $tags="ordem")
-Rel_U(receipt, sample, "receipt-flow ouve RequestCompleted", $tags="evento")
 Rel_U(provider, platform, "Regras source mmda.quote", $tags="evento")
 Rel_U(quote, platform, "Regras source mmda.provider", $tags="evento")
 

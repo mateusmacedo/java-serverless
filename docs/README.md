@@ -1,10 +1,9 @@
 # Documentação
 
-Índice da documentação do ambiente e das soluções: a `sample-solution`, em Spring, e a `receipt-solution`,
-em Quarkus, acionada pelos eventos da primeira; e a plataforma de cotação de seguros, formada pela
+Índice da documentação do ambiente e da plataforma de cotação de seguros, formada pela
 `quote-solution`, em Quarkus, e pela `provider-solution`, em Spring, com o barramento de
-`platform/events`. Para subir o ambiente e executar os comandos do dia a dia, comece pelo
-[README da raiz](../README.md).
+`platform/events` e o `backoffice`, em Angular. Para subir o ambiente e executar os comandos do dia a
+dia, comece pelo [README da raiz](../README.md).
 
 ## Sumário
 
@@ -29,17 +28,13 @@ persistência, IAM, configuração, execução no Floci, divergências conhecida
 | [quote-solution](../quote-solution/docs/README.md)       | API de produto, workflow da versão, consolidação, seleção, reconciliação e operações da cotação                                   |
 | [provider-solution](../provider-solution/docs/README.md) | Enriquecimento, chamadas às seguradoras, callbacks, outbox, reconciliação, DLQs e simuladores                                     |
 | [backoffice](../backoffice/README.md)                    | Painel Angular da cotação: execução no Floci e no `dev`, telas, comportamentos do contrato, testes e cobertura do PRD de frontend |
-| [sample-solution](../sample-solution/docs/README.md)     | Solução de referência em Spring: requisição, `request-flow`, DLQ e reprocessamento                                                |
-| [receipt-solution](../receipt-solution/docs/README.md)   | Emissão idempotente de comprovantes em Quarkus, acionada pelo `RequestCompleted`                                                  |
 | [Plataforma](../platform/docs/README.md)                 | Barramento `platform/events`, parents Maven, `spring-aws` e ordem de implantação                                                  |
 
 ## Documentos
 
 | Documento                                                                 | Para que serve                                                                                                                                                                                                     |
 | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [Guia do código](guia-do-codigo.md)                                       | Como cada Lambda da `sample-solution` e da `receipt-solution` sobe, como os componentes são registrados e por onde a requisição passa                                                                              |
-| [Arquitetura](arquitetura.md)                                             | Contexto, contêineres, módulos, Lambdas, recursos AWS, configuração e ambiente local da `sample-solution` e da `receipt-solution`                                                                                  |
-| [Fluxos](fluxos.md)                                                       | Máquina de estado e sequência dos caminhos de sucesso, falha e reprocessamento da `sample-solution` e da `receipt-solution`                                                                                        |
+| [Arquitetura](arquitetura.md)                                             | O que vale para todas as soluções: módulos compartilhados, configuração, empacotamento dos zips, ambiente local e permissões                                                                                        |
 | [Plataforma de cotação: desenho técnico](plataforma-de-cotacao.md)        | Módulos, recursos, eventos, tabelas, máquina de estado, funções, fluxos, falhas, simuladores, autenticação, parâmetros por stage, limites do Floci e testes por marco da `quote-solution` e da `provider-solution` |
 | [Implantação e verificação no stage `dev` da AWS](implantacao-aws-dev.md) | Implantação da plataforma de cotação numa conta AWS e roteiro de verificação do que o Floci não reproduz                                                                                                           |
 | [Testes](testes.md)                                                       | Níveis de teste, o que cada classe cobre, como rodar e os números das rodadas de fechamento                                                                                                                        |
@@ -54,8 +49,6 @@ quem produz, quem consome e como os testes o conferem. A API de produto da cota�
 
 | Contratos                                                       | Arquivos                                                                                                                                                                                                                                                        |
 | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`sample-solution`](../contracts/sample-solution/README.md)     | [OpenAPI 3.1](../contracts/sample-solution/openapi.yaml) do `POST /requests` e [AsyncAPI 3.1](../contracts/sample-solution/asyncapi.yaml) do estado entre os passos, do SNS, do `RequestCompleted`, das filas `audit` e `dlq` e da invocação do reprocessamento |
-| [`receipt-solution`](../contracts/receipt-solution/README.md)   | [OpenAPI 3.1](../contracts/receipt-solution/openapi.yaml) do `GET /receipts/{requestId}` e do `POST /receipts` e [AsyncAPI 3.1](../contracts/receipt-solution/asyncapi.yaml) do `RequestCompleted` consumido e do `ReceiptIssued` publicado                     |
 | [`provider-solution`](../contracts/provider-solution/README.md) | [OpenAPI 3.1](../contracts/provider-solution/openapi.yaml) do `POST /v1/providers/{provider}/callbacks` e [AsyncAPI 3.1](../contracts/provider-solution/asyncapi.yaml) dos eventos publicados no barramento da plataforma                                       |
 | [`quote-solution`](../contracts/quote-solution/README.md)       | [AsyncAPI 3.1](../contracts/quote-solution/asyncapi.yaml) dos eventos publicados e consumidos no barramento da plataforma                                                                                                                                       |
 | API de produto                                                  | [`contracts/openapi.yaml`](../contracts/openapi.yaml) (OpenAPI 3.1, compartilhado com o [backoffice](../backoffice/README.md), que gera o cliente a partir dele) e [`contracts/fixtures/`](../contracts/fixtures), usadas também nos testes do backoffice       |
@@ -80,6 +73,7 @@ quem produz, quem consome e como os testes o conferem. A API de produto da cota�
 | [0014](decisoes/0014-cotacao-em-duas-solucoes-e-task-token.md)     | Cotação em duas soluções, com o task token restrito à `quote-solution`                                       |
 | [0015](decisoes/0015-modelo-dynamodb-e-outbox-da-cotacao.md)       | Uma tabela por solução, outbox publicada por DynamoDB Streams                                                |
 | [0016](decisoes/0016-backoffice-angular-e-login-cognito.md)        | Backoffice em Angular com o template do marketplace e login no user pool da stack                            |
+| [0017](decisoes/0017-remocao-das-solucoes-iniciais.md)             | Remoção das soluções iniciais `sample-solution` e `receipt-solution` na versão 2.0.0                         |
 
 Um novo ADR recebe o próximo número, com as seções Status, Data, Contexto, Decisão, Consequências e
 Alternativas consideradas. Uma decisão substituída continua no histórico, com o status apontando
@@ -92,8 +86,8 @@ para o ADR que a substitui.
 - Cada assunto tem uma fonte única; os outros documentos apontam para ela por link, em vez de copiar.
 - Todos os diagramas são PlantUML, com o tema único da [seção Diagramas](#diagramas): os de cada
   solução ficam em `<solução>/docs/diagramas/`, e os de `docs/*.md`, como os da
-  [Arquitetura](arquitetura.md), dos [Fluxos](fluxos.md) e da [Cotação](cotacao.md), em blocos
-  `plantuml` dentro do próprio Markdown.
+  [Arquitetura](arquitetura.md) e da [Cotação](cotacao.md), em blocos `plantuml` dentro do próprio
+  Markdown.
 - Fatos sobre o sistema vêm do código e do `serverless.yml` de cada solução. Exemplos de mensagens
   foram capturados no Floci; quando não foi possível observar, o documento diz isso.
 - Cada solução documenta, em `contracts/<solução>/`, os eventos que publica. Quem consome referencia o
@@ -117,11 +111,11 @@ de mesmo nome em pastas diferentes. Num `.md`, o PlantUML renderiza cada bloco `
 dado nele. Para renderizar tudo, na raiz do projeto:
 
 ```bash
-for dir in platform sample-solution receipt-solution quote-solution provider-solution; do
+for dir in platform quote-solution provider-solution; do
   docker run --rm -u "$(id -u):$(id -g)" -v "$PWD":/w -w /w plantuml/plantuml:latest \
     -tsvg -o "/w/build/diagramas/$dir" "$dir/docs/diagramas/*.puml"
 done
-for doc in arquitetura fluxos cotacao; do
+for doc in arquitetura cotacao; do
   docker run --rm -u "$(id -u):$(id -g)" -v "$PWD":/w -w /w plantuml/plantuml:latest \
     -tsvg -o "/w/build/diagramas/$doc" "docs/$doc.md"
 done
@@ -147,16 +141,14 @@ done
 Os diagramas são validados pelo comando da [seção Diagramas](#diagramas): quando um diagrama tem erro
 de sintaxe, o `docker run` correspondente sai com o código 200 e indica o arquivo e a linha do erro.
 
-Resultado registrado na última validação com as CLIs, feita nos contratos da `sample-solution` e da
-`receipt-solution`; os demais contratos são conferidos pelos testes de contrato, descritos no `README.md`
-de cada pasta de `contracts/`:
+Resultado registrado na última validação:
 
-- **Redocly:** os dois documentos válidos, com avisos conhecidos (3 no da sample e 2 no da receipt):
-  não há licença declarada no projeto (`info-license`) e os servidores apontam para `localhost`
-  (`no-server-example.com`), que é o ambiente local de propósito.
-- **AsyncAPI:** os dois documentos válidos, sem apontamentos de governança; o da `receipt-solution`
-  resolve a referência ao `RequestCompleted` no da `sample-solution`. A CLI envia métricas anônimas de uso
-  enquanto `~/.asyncapi-analytics` estiver com `analyticsEnabled` ligado.
-- **PlantUML:** 103 SVGs, um por diagrama, sem erro: 93 dos `.puml` de `docs/diagramas/` da `platform` e
-  das quatro soluções e 10 dos blocos de `docs/*.md` (3 em `arquitetura.md`, 6 em `fluxos.md` e 1 em
-  `cotacao.md`).
+- **Redocly e AsyncAPI:** a última rodada com as CLIs foi na versão 1.0.0, nos contratos das soluções
+  removidas na 2.0.0 ([ADR 0017](decisoes/0017-remocao-das-solucoes-iniciais.md)). Os contratos atuais são
+  conferidos pelos testes de contrato, descritos no `README.md` de cada pasta de `contracts/`. Naquela
+  rodada, os avisos do Redocly foram a falta de licença declarada (`info-license`) e os servidores em
+  `localhost` (`no-server-example.com`), que é o ambiente local de propósito. A CLI do AsyncAPI envia
+  métricas anônimas de uso enquanto `~/.asyncapi-analytics` estiver com `analyticsEnabled` ligado.
+- **PlantUML:** 67 SVGs, um por diagrama, sem erro: 65 dos `.puml` de `docs/diagramas/` da `platform` (6),
+  da `quote-solution` (30) e da `provider-solution` (29) e 2 dos blocos de `docs/*.md` (1 em
+  `arquitetura.md` e 1 em `cotacao.md`).

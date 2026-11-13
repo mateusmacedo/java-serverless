@@ -8,25 +8,18 @@ start
 partition #F3E5F5 "Barramento da plataforma (ADR 0013)" {
     :$I_EVENTBRIDGE deploy:platform\nplatform-<stage>-events;
 }
-partition #F7F9FA "Barramento por solução (ADR 0011)" {
-    :$I_SPRING deploy:sample\nsample-solution-<stage>-events;
-    :$I_QUARKUS deploy:receipt\nregra no barramento da sample;
-}
 partition #F5FAFF "Plataforma de cotação" {
     :$I_SPRING deploy:provider\nregras source mmda.quote;
     :$I_QUARKUS deploy:quote\nregras source mmda.provider;
 }
 note right
   O deploy:local roda nesta ordem.
-  Os ADRs exigem só platform antes de
-  provider e quote (0013) e sample antes
-  de receipt (0011); entre os grupos, e
-  entre provider e quote, a ordem é livre.
+  O ADR 0013 exige só platform antes
+  de provider e quote; entre provider
+  e quote, a ordem é livre.
 end note
 
 |Remoção|
-:#FFEBEE:receipt-solution sai antes da sample-solution\n(a regra fica no barramento da sample);
-:#FFEBEE:esvaziar o bucket sample-solution-<stage>-payloads\ne remover a sample-solution;
 :#FFEBEE:quote-solution e provider-solution saem\nantes de platform/events;
 :#FFEBEE:remover platform/events por último;
 stop
@@ -34,7 +27,6 @@ stop
 legend right
     <b>Leitura</b>
     <back:#F3E5F5>    </back> Stack do barramento da plataforma
-    <back:#F7F9FA>    </back> Soluções com barramento próprio
     <back:#F5FAFF>    </back> Soluções da plataforma de cotação
     <back:#FFEBEE>    </back> Passos de remoção (ordem inversa)
 endlegend
