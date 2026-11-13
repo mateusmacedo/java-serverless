@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1",
-  "description": "Cadastro sintético do laboratório. Os veículos de cenário decidem o comportamento dos simuladores pelo id (docs/quotation-platform.md, §10). Nenhum dado é real.",
+  "description": "Cadastro sintético do laboratório. Os veículos de cenário decidem o comportamento dos simuladores pelo id (docs/plataforma-de-cotacao.md, §10). Nenhum dado é real.",
   "coverageProfiles": [
     {
       "code": "COMPREHENSIVE",

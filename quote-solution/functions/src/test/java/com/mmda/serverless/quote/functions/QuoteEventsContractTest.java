@@ -28,7 +28,7 @@ import org.junit.jupiter.api.Test;
 import org.yaml.snakeyaml.Yaml;
 
 /**
- * Cada evento que a quote produz e os exemplos conferem com {@code docs/events/quote-solution.asyncapi.yaml}, que
+ * Cada evento que a quote produz e os exemplos conferem com {@code contracts/quote-solution/asyncapi.yaml}, que
  * declara o que ela consome. Uma regra com filtro errado entregaria evento a quem não deveria (ADR 0013); o
  * contrato é o que os consumidores leem.
  */
@@ -42,7 +42,7 @@ class QuoteEventsContractTest {
 
     @BeforeAll
     static void load() throws IOException {
-        Object document = new Yaml().load(Files.readString(Path.of("../../docs/events/quote-solution.asyncapi.yaml")));
+        Object document = new Yaml().load(Files.readString(Path.of("../../contracts/quote-solution/asyncapi.yaml")));
         asyncApi = MAPPER.valueToTree(document);
     }
 
@@ -123,7 +123,7 @@ class QuoteEventsContractTest {
     @Test
     void consumedProviderEventsAreReceiveOperationsWithTheProviderMessages() throws IOException {
         JsonNode provider = MAPPER.valueToTree(new Yaml().load(
-                Files.readString(Path.of("../../docs/events/provider-solution.asyncapi.yaml"))));
+                Files.readString(Path.of("../../contracts/provider-solution/asyncapi.yaml"))));
         Map<String, String> queueByEvent = new TreeMap<>();
         for (JsonNode operation : asyncApi.path("operations")) {
             if (!"receive".equals(operation.path("action").asText())) {
@@ -132,7 +132,7 @@ class QuoteEventsContractTest {
             JsonNode channel = asyncApi.at(operation.at("/channel/$ref").asText().substring(1));
             for (JsonNode message : operation.path("messages")) {
                 String reference = asyncApi.at(message.path("$ref").asText().substring(1)).path("$ref").asText();
-                assertThat(reference).startsWith("./provider-solution.asyncapi.yaml#/components/messages/");
+                assertThat(reference).startsWith("../provider-solution/asyncapi.yaml#/components/messages/");
                 JsonNode providerMessage = provider.at(reference.substring(reference.indexOf('#') + 1));
                 assertThat(providerMessage.path("name").isTextual()).as(reference).isTrue();
                 queueByEvent.put(providerMessage.path("name").asText(), channel.path("address").asText());

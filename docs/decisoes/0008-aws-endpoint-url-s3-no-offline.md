@@ -35,3 +35,13 @@ O `serverless.yml` declara `AWS_ENDPOINT_URL_S3: ${param:awsEndpointUrl}`, com o
   do host, onde o nome `floci` não resolve.
 - Desativar o `serverless-localstack` durante o offline: o Serverless deixaria de resolver as variáveis
   de conta e região contra o Floci.
+
+## Nota de evolução (M6)
+
+A decisão continua valendo; mudou só a forma da declaração na `provider-solution`, a outra solução com
+cliente do S3. Desde o M6, o `serverless.yml` dela declara
+`AWS_ENDPOINT_URL_S3: !If [HasAwsEndpointUrl, "${param:awsEndpointUrl}", !Ref AWS::NoValue]`, como o
+`AWS_ENDPOINT_URL`: o param `awsEndpointUrl` passou a ter no `default` o valor vazio da AWS, e o SDK trataria
+um endpoint vazio como endereço, então fora do stage `local` as duas variáveis não existem. Na
+`sample-solution`, a declaração segue como acima, porque os `params` dela existem só para o stage `local`
+([parâmetros por stage](../plataforma-de-cotacao.md#12-parâmetros-por-stage)).

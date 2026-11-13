@@ -47,7 +47,7 @@ import tools.jackson.databind.node.ObjectNode;
 
 /**
  * Os eventos que a provider produz em cada desfecho, serializados como no outbox, conferem com os schemas do
- * {@code docs/events/provider-solution.asyncapi.yaml}: obrigatórios, enums de {@code errorClass} e
+ * {@code contracts/provider-solution/asyncapi.yaml}: obrigatórios, enums de {@code errorClass} e
  * {@code status}, padrões de identificadores e de valores. O teste de exemplos só cobre os desfechos
  * documentados; este cobre também os caminhos sem exemplo.
  */
@@ -66,8 +66,8 @@ class ProducedEventSchemaTest {
 
     @BeforeEach
     void load() throws IOException {
-        try (Reader reader = Files.newBufferedReader(Path.of("..", "..", "docs", "events",
-                "provider-solution.asyncapi.yaml"))) {
+        try (Reader reader = Files.newBufferedReader(Path.of("..", "..", "contracts", "provider-solution",
+                "asyncapi.yaml"))) {
             asyncApi = objectMapper.valueToTree(new Yaml().load(reader));
         }
     }

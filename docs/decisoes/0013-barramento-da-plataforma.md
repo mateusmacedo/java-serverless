@@ -9,7 +9,7 @@ O [ADR 0011](0011-integracao-entre-solucoes-por-eventbridge.md) liga as soluçõ
 consumidora declara no barramento da produtora. Isso funciona quando o fluxo tem um só sentido: a
 `sample-solution` produz, a `receipt-solution` consome, e a produtora sobe primeiro.
 
-A plataforma de cotação ([PRD de backend](../prds/PRD_Cotacao_Seguros_Backend_v2.md), §9) tem duas
+A plataforma de cotação ([PRD de backend](../prds/prd-cotacao-seguros-backend-v2.md), §9) tem duas
 soluções que conversam nos dois sentidos. A `quote-solution` pede enriquecimento e cotações; a
 `provider-solution` devolve os resultados. Com um barramento por solução, cada uma precisaria do
 barramento da outra antes do próprio deploy, um ciclo que só se resolve com deploy em duas passadas.

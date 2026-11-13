@@ -45,7 +45,7 @@ import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsResponse
 import software.amazon.awssdk.services.dynamodb.model.Update;
 
 /**
- * A quote consome os eventos da provider-solution como o {@code docs/events/provider-solution.asyncapi.yaml}
+ * A quote consome os eventos da provider-solution como o {@code contracts/provider-solution/asyncapi.yaml}
  * os documenta, e a provider confere esses exemplos contra o próprio código. Cada exemplo passa pelo
  * {@code resume}, com DynamoDB simulado, até a evidência usada pela versão ou o resultado e a oferta da
  * seguradora, alpha ou beta.
@@ -61,7 +61,7 @@ class ProviderEventsConsumptionTest {
 
     @BeforeAll
     static void load() throws IOException {
-        Object document = new Yaml().load(Files.readString(Path.of("../../docs/events/provider-solution.asyncapi.yaml")));
+        Object document = new Yaml().load(Files.readString(Path.of("../../contracts/provider-solution/asyncapi.yaml")));
         asyncApi = MAPPER.valueToTree(document);
     }
 

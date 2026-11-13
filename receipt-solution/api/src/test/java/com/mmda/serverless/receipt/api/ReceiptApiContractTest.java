@@ -23,14 +23,14 @@ import software.amazon.awssdk.services.sfn.model.StartExecutionRequest;
 import software.amazon.awssdk.services.sfn.model.StartExecutionResponse;
 
 /**
- * Confere requisições e respostas da API contra docs/api/receipt-solution.openapi.yaml. O base path
+ * Confere requisições e respostas da API contra contracts/receipt-solution/openapi.yaml. O base path
  * é zerado porque os servidores do contrato incluem o prefixo do API Gateway.
  */
 @QuarkusTest
 class ReceiptApiContractTest {
 
     private static final String SPECIFICATION =
-            Path.of("../../docs/api/receipt-solution.openapi.yaml").toAbsolutePath().toUri().toString();
+            Path.of("../../contracts/receipt-solution/openapi.yaml").toAbsolutePath().toUri().toString();
 
     private static final OpenApiValidationFilter CONTRACT = new OpenApiValidationFilter(OpenApiInteractionValidator
             .createForSpecificationUrl(SPECIFICATION)

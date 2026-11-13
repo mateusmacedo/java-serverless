@@ -1455,7 +1455,7 @@ class QuoteFunctionsFlociIT {
      */
     private String providerEvent(String detailType, String example, Map<String, String> overrides) throws Exception {
         JsonNode asyncApi = objectMapper.valueToTree(new Yaml().load(
-                Files.readString(Path.of("../../docs/events/provider-solution.asyncapi.yaml"))));
+                Files.readString(Path.of("../../contracts/provider-solution/asyncapi.yaml"))));
         JsonNode examples = asyncApi.at("/components/messages/" + detailType + "/examples");
         JsonNode chosen = examples.get(0);
         for (JsonNode candidate : examples) {

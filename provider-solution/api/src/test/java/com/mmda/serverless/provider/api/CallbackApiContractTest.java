@@ -33,7 +33,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 
 /**
- * Confere requisições e respostas do controller contra {@code docs/api/provider-solution.openapi.yaml}. O base
+ * Confere requisições e respostas do controller contra {@code contracts/provider-solution/openapi.yaml}. O base
  * path é zerado porque os servidores do contrato incluem o prefixo do API Gateway, que não existe no MockMvc.
  */
 @WebMvcTest(CallbackController.class)
@@ -43,7 +43,7 @@ import org.springframework.test.web.servlet.ResultActions;
 class CallbackApiContractTest {
 
     private static final String SPECIFICATION =
-            Path.of("../../docs/api/provider-solution.openapi.yaml").toAbsolutePath().toUri().toString();
+            Path.of("../../contracts/provider-solution/openapi.yaml").toAbsolutePath().toUri().toString();
     private static final byte[] SECRET = "contract-secret".getBytes(StandardCharsets.UTF_8);
     private static final String CALLBACK = CallbackFixtures.callback("bev-1", "beta-1",
             "q_0123456789abcdef0123456789abcdef", CallbackFixtures.OFFER);

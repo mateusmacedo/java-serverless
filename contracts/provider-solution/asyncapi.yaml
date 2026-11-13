@@ -1,14 +1,14 @@
 asyncapi: 3.1.0
 info:
-  title: provider-solution eventos
+  title: Eventos da provider-solution
   version: 0.5.0
   description: |
     Eventos que a `provider-solution`, em Spring, publica no barramento da plataforma
-    `platform-{stage}-events` ([ADR 0013](../decisions/0013-barramento-da-plataforma.md)), com
-    `source` `mmda.provider`. O desenho está em `docs/quotation-platform.md` (§3, §5 e §8).
+    `platform-{stage}-events` ([ADR 0013](../../docs/decisoes/0013-barramento-da-plataforma.md)), com
+    `source` `mmda.provider`. O desenho está em `docs/plataforma-de-cotacao.md` (§3, §5 e §8).
 
     Todo evento nasce de um item `OUTBOX#<eventId>` gravado na mesma transação do resultado
-    ([ADR 0015](../decisions/0015-modelo-dynamodb-e-outbox-da-cotacao.md)) e é publicado pela Lambda
+    ([ADR 0015](../../docs/decisoes/0015-modelo-dynamodb-e-outbox-da-cotacao.md)) e é publicado pela Lambda
     `outboxRelay` (stream da tabela `provider-solution-{stage}-queries`) ou pelo `reconciler`, que republica
     o outbox pendente a cada minuto. A entrega é pelo menos uma vez: o consumidor descarta a repetição pelo
     `eventId`, gravando o registro de consumo na mesma transação do efeito.
@@ -34,7 +34,7 @@ info:
 
     Na seguradora assíncrona `beta`, a resposta `202` só traz o `providerRequestId`, e o resultado chega por
     callback na API da provider (`POST /v1/providers/{provider}/callbacks`, em
-    `docs/api/provider-solution.openapi.yaml`). O `InsurerResultRecorded` da beta é gravado por quem conclui o
+    `contracts/provider-solution/openapi.yaml`). O `InsurerResultRecorded` da beta é gravado por quem conclui o
     callback, a API ou o `insurerWorker` no encontro do `CORR#`, na mesma transação que passa o callback da inbox
     para processado e grava o registro de consumo do pedido; o formato e o `eventId` são os da seguradora
     síncrona.
@@ -88,11 +88,11 @@ channels:
       operationIssueUpdated:
         $ref: '#/components/messages/OperationIssueUpdated'
       enrichmentRequested:
-        $ref: './quote-solution.asyncapi.yaml#/components/messages/EnrichmentRequested'
+        $ref: '../quote-solution/asyncapi.yaml#/components/messages/EnrichmentRequested'
       insurerQuoteRequested:
-        $ref: './quote-solution.asyncapi.yaml#/components/messages/InsurerQuoteRequested'
+        $ref: '../quote-solution/asyncapi.yaml#/components/messages/InsurerQuoteRequested'
       queryReconcileRequested:
-        $ref: './quote-solution.asyncapi.yaml#/components/messages/QueryReconcileRequested'
+        $ref: '../quote-solution/asyncapi.yaml#/components/messages/QueryReconcileRequested'
 operations:
   receiveEnrichmentRequested:
     action: receive

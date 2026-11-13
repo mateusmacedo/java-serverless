@@ -5,7 +5,7 @@
 
 ## Contexto
 
-O [PRD de backend](../prds/PRD_Cotacao_Seguros_Backend_v2.md) pede uma máquina de estado Standard que
+O [PRD de backend](../prds/prd-cotacao-seguros-backend-v2.md) pede uma máquina de estado Standard que
 espera resultados externos (enriquecimento e seguradoras) por task token. O repositório usa um
 framework por solução ([ADR 0010](0010-raiz-neutra-e-parents-por-framework.md)), e as soluções só
 conversam por eventos ([ADR 0011](0011-integracao-entre-solucoes-por-eventbridge.md) e

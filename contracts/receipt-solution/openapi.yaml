@@ -1,13 +1,13 @@
 openapi: 3.1.0
 info:
-  title: receipt-solution API
+  title: API da receipt-solution
   version: 0.1.0
   description: |
     API HTTP da `receipt-solution`, em Quarkus. Consulta o comprovante de um pedido e permite emitir
     um comprovante manualmente.
 
     A emissão normal acontece sem a API: o evento `RequestCompleted` da `sample-solution` inicia a
-    máquina de estado `receipt-flow` ([ADR 0011](../decisions/0011-integracao-entre-solucoes-por-eventbridge.md)).
+    máquina de estado `receipt-flow` ([ADR 0011](../../docs/decisoes/0011-integracao-entre-solucoes-por-eventbridge.md)).
     A emissão manual inicia a mesma máquina com a entrada no mesmo formato do evento; como o passo
     `issue` é idempotente por `requestId`, emitir de novo devolve o comprovante já existente e
     publica `ReceiptIssued` mais uma vez.
@@ -24,13 +24,13 @@ servers:
           Id da API REST. Obtenha com
           `aws --profile localstack apigateway get-rest-apis --query "items[?name=='local-receipt-solution'].id" --output text`.
 tags:
-  - name: receipts
+  - name: comprovantes
     description: Comprovantes de pedidos concluídos
 paths:
   /receipts:
     post:
       tags:
-        - receipts
+        - comprovantes
       operationId: issueReceipt
       summary: Emite um comprovante manualmente
       description: |
@@ -75,7 +75,7 @@ paths:
   /receipts/{requestId}:
     get:
       tags:
-        - receipts
+        - comprovantes
       operationId: findReceipt
       summary: Consulta o comprovante de um pedido
       security: []

@@ -70,7 +70,7 @@ Não foram fornecidos contratos de seguradoras, volumes, custos ou indicadores a
 
 ## 5. Limite com o frontend
 
-Este PRD especifica os serviços e contratos. Telas, componentes, interação e acessibilidade são definidos no PRD_Cotacao_Seguros_Frontend_v2.md. O frontend consome somente a API de produto; não acessa filas, banco, tokens de tarefa ou Step Functions diretamente.
+Este PRD especifica os serviços e contratos. Telas, componentes, interação e acessibilidade são definidos no prd-cotacao-seguros-frontend-v2.md. O frontend consome somente a API de produto; não acessa filas, banco, tokens de tarefa ou Step Functions diretamente.
 
 ## 6. Requisitos funcionais e critérios de aceite
 
@@ -425,7 +425,7 @@ Estrutura no monorepo, seguindo o padrão das soluções existentes:
   - e2e: cenários ponta a ponta no Floci.
   - `serverless.yml`: tabela, filas, DLQs e regras no barramento da plataforma.
 - contracts/openapi.yaml e contracts/fixtures: contrato da API de produto, conforme o contrato compartilhado.
-- docs/events/quote-solution.asyncapi.yaml e docs/events/provider-solution.asyncapi.yaml: eventos entre as soluções.
+- contracts/quote-solution/asyncapi.yaml e contracts/provider-solution/asyncapi.yaml: eventos entre as soluções.
 
 Os módulos domain e simulators são novos em relação às soluções existentes, que têm só api, functions e e2e.
 

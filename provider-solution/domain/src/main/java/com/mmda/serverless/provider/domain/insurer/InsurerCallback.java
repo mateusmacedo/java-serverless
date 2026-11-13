@@ -5,7 +5,7 @@ import java.util.List;
 import java.util.regex.Pattern;
 
 /**
- * Callback de seguradora assíncrona, no contrato {@code docs/api/provider-solution.openapi.yaml}. O
+ * Callback de seguradora assíncrona, no contrato {@code contracts/provider-solution/openapi.yaml}. O
  * {@code externalEventId} se repete na reentrega; o {@code clientReference} é o {@code queryId} do pedido. O
  * {@code result} tem o formato da resposta síncrona e é classificado pela mesma tabela do §9.
  */

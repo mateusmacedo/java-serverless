@@ -3,7 +3,7 @@
 Este guia leva a plataforma de cotação (barramento da plataforma, `provider-solution` e
 `quote-solution`) a uma conta AWS de desenvolvimento, no stage `dev`, e roteia a verificação do M6: o
 que o Floci não reproduz e ficou marcado na coluna "M6" do §13 e na lista "M6" do §14 do
-[desenho técnico](quotation-platform.md).
+[desenho técnico](plataforma-de-cotacao.md).
 
 Estado: os `serverless.yml` e o perfil `e2e-aws` do `quote-e2e` estão preparados para o `dev`, e os
 templates do `dev` foram gerados e conferidos localmente, com todas as chamadas desviadas para o
@@ -29,19 +29,12 @@ Convenções:
 As duas soluções chegam ao barramento pelo nome, sem referência entre stacks, então a ordem acima é
 obrigatória no deploy e invertida na remoção.
 
-O que muda entre o `local` e o `dev` (o `dev` não tem bloco próprio e herda o `default`):
-
-| Solução | Parâmetro | `local` | `dev` | Efeito no `dev` |
-|---|---|---|---|---|
-| quote | `awsEndpointUrl` | `http://floci:4566` | `""` | A condição `HasAwsEndpointUrl` é falsa, e `AWS_ENDPOINT_URL` sai das funções |
-| quote | `jwtIssuerBase` | `http://floci:4566` | `https://cognito-idp.${aws:region}.amazonaws.com` | `JWT_ISSUER` da `api` vira o issuer do user pool na AWS |
-| quote | `insurerTimeoutSeconds` | 20 | 90 | Espera por seguradora; a invariante do §9 dá 20 + 1 × 90 + 30 = 140 s ≤ 300 s |
-| quote | `alarmEmail` | `""` | `""` ou `--param` | Com e-mail, cria a assinatura do tópico de alarmes |
-| provider | `awsEndpointUrl` | `http://floci:4566` | `""` | `AWS_ENDPOINT_URL` e `AWS_ENDPOINT_URL_S3` saem das funções |
-| provider | `s3PathStyleAccess` | `"true"` | `"false"` | S3 no estilo virtual-hosted |
-| provider | `providersBaseUrl` | URL `_user_request_` do Floci | `https://${ApiGatewayRestApi}.execute-api.${aws:region}.amazonaws.com/${sls:stage}` | Workers e `simCallbackSender` chamam a API da própria stack |
-| provider | `betaLateCallbackDelaySeconds` | 30 | 120 | Mantém 3 < 90 < 120 em relação à espera da quote |
-| provider | `alarmEmail` | `""` | `""` ou `--param` | Com e-mail, cria a assinatura do tópico de alarmes |
+O `dev` não tem bloco próprio de `params` e herda o `default`, que traz os valores da AWS. O que muda
+entre o `local` e o `dev` (`awsEndpointUrl`, `jwtIssuerBase`, `insurerTimeoutSeconds`,
+`s3PathStyleAccess`, `providersBaseUrl` e `betaLateCallbackDelaySeconds`), com o efeito de cada valor, está
+nas colunas `default` e `local` dos
+[parâmetros por stage](plataforma-de-cotacao.md#12-parâmetros-por-stage) do desenho técnico. O
+`alarmEmail` é vazio nos dois stages; no `dev`, o e-mail chega por `--param` (seção 2.6).
 
 ## 2. Pré-requisitos
 
@@ -249,7 +242,7 @@ EOF
 o `payloadsBucket` do `provider-solution/serverless.yml` teria de mudar, junto com o nome que o
 `quote-e2e` deriva do stage.
 
-## 3. Deploy
+## 3. Implantação
 
 ### 3.1 Conferir o template antes de implantar
 
@@ -1086,7 +1079,7 @@ termina `ABORTED`, com `ExecutionAborted` como último evento no script do V03; 
 finalizada pelo `reconciler`, com a versão `PARTIAL`, a beta `TIMED_OUT` com `WORKFLOW_ABORTED`, as
 ofertas mantidas, a ocorrência `WORKFLOW_FAILED` aberta e o `QuoteCompleted` no outbox. O alinhamento
 de 51 s ao ciclo do `reconciler` não foi validado com o Scheduler real; uma falha "consolidated before
-the reconciler" tem a causa conhecida descrita no §14.
+the reconciler" tem a causa conhecida descrita nos [limites conhecidos dos testes](testes.md#limites-conhecidos).
 
 #### V18. 429 do API Gateway
 

@@ -21,7 +21,7 @@ import software.amazon.awssdk.services.sfn.SfnClient;
 
 /**
  * Confere requisições e respostas do controller contra o contrato publicado em
- * docs/api/openapi.yaml. O base path é zerado porque os servidores do contrato incluem o prefixo
+ * contracts/sample-solution/openapi.yaml. O base path é zerado porque os servidores do contrato incluem o prefixo
  * do API Gateway, que não existe no MockMvc.
  */
 @WebMvcTest(RequestController.class)
@@ -33,7 +33,7 @@ import software.amazon.awssdk.services.sfn.SfnClient;
 class RequestControllerContractTest {
 
     private static final String SPECIFICATION =
-            Path.of("../../docs/api/openapi.yaml").toAbsolutePath().toUri().toString();
+            Path.of("../../contracts/sample-solution/openapi.yaml").toAbsolutePath().toUri().toString();
 
     private static final OpenApiInteractionValidator CONTRACT = OpenApiInteractionValidator
             .createForSpecificationUrl(SPECIFICATION)

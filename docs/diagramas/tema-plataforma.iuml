@@ -1,0 +1,232 @@
+' Tema único dos diagramas PlantUML do repositório.
+'
+' Inclua com caminho relativo, na linha 2 de cada .puml, logo depois do @startuml <nome-do-arquivo>:
+'   em docs/diagramas/:               !include tema-plataforma.iuml
+'   em <solução>/docs/diagramas/:     !include ../../../docs/diagramas/tema-plataforma.iuml
+'   num bloco plantuml de docs/*.md:  !include diagramas/tema-plataforma.iuml
+' Os sprites vêm da biblioteca padrão embutida no PlantUML (sem rede). Os renderizados vão para
+' build/diagramas/, que o .gitignore ignora; o comando está em docs/README.md, seção Diagramas.
+' Rótulos em PT-BR; nomes de classes, funções, recursos, eventos e rotas ficam como no código.
+
+!include <tupadr3/font-awesome-5/user>
+!include <tupadr3/font-awesome-5/user_cog>
+!include <tupadr3/font-awesome-5/globe>
+!include <tupadr3/font-awesome-5/bolt>
+!include <tupadr3/font-awesome-5/project_diagram>
+!include <tupadr3/font-awesome-5/database>
+!include <tupadr3/font-awesome-5/archive>
+!include <tupadr3/font-awesome-5/inbox>
+!include <tupadr3/font-awesome-5/bullhorn>
+!include <tupadr3/font-awesome-5/exchange_alt>
+!include <tupadr3/font-awesome-5/clock>
+!include <tupadr3/font-awesome-5/key>
+!include <tupadr3/font-awesome-5/user_shield>
+!include <tupadr3/font-awesome-5/paper_plane>
+!include <tupadr3/font-awesome-5/building>
+!include <tupadr3/font-awesome-5/robot>
+!include <tupadr3/font-awesome-5/bell>
+!include <tupadr3/font-awesome-5/exclamation_triangle>
+!include <tupadr3/font-awesome-5/docker>
+!include <tupadr3/font-awesome-5/leaf>
+!include <tupadr3/font-awesome-5/cubes>
+!include <tupadr3/font-awesome-5/car>
+
+' Paleta por camada: fundo ($COR_*) e borda ($BORDA_*)
+!$COR_DOMINIO = "#E8F5E9"
+!$BORDA_DOMINIO = "#2E7D32"
+!$COR_APLICACAO = "#E3F2FD"
+!$BORDA_APLICACAO = "#1565C0"
+!$COR_ENTRADA = "#FFF3E0"
+!$BORDA_ENTRADA = "#EF6C00"
+!$COR_SAIDA = "#F3E5F5"
+!$BORDA_SAIDA = "#6A1B9A"
+!$COR_INFRA = "#ECEFF1"
+!$BORDA_INFRA = "#455A64"
+!$COR_ATOR = "#FFFDE7"
+!$BORDA_ATOR = "#F9A825"
+!$COR_EXTERNO = "#FCE4EC"
+!$BORDA_EXTERNO = "#AD1457"
+!$COR_ERRO = "#FFEBEE"
+!$BORDA_ERRO = "#C62828"
+!$COR_TITULO = "#1A237E"
+
+' Ícones prontos para títulos, participantes e rótulos
+!$I_CLIENTE = "<$user,scale=0.9,color=#F9A825>"
+!$I_OPERADOR = "<$user_cog,scale=0.9,color=#F9A825>"
+!$I_API = "<$globe,scale=0.8,color=#EF6C00>"
+!$I_LAMBDA = "<$bolt,scale=0.8,color=#1565C0>"
+!$I_MAQUINA = "<$project_diagram,scale=0.8,color=#1565C0>"
+!$I_DYNAMODB = "<$database,scale=0.8,color=#455A64>"
+!$I_S3 = "<$archive,scale=0.8,color=#455A64>"
+!$I_SQS = "<$inbox,scale=0.8,color=#455A64>"
+!$I_SNS = "<$bullhorn,scale=0.8,color=#455A64>"
+!$I_EVENTBRIDGE = "<$exchange_alt,scale=0.8,color=#6A1B9A>"
+!$I_AGENDADOR = "<$clock,scale=0.8,color=#455A64>"
+!$I_SEGREDO = "<$key,scale=0.8,color=#455A64>"
+!$I_COGNITO = "<$user_shield,scale=0.8,color=#455A64>"
+!$I_OUTBOX = "<$paper_plane,scale=0.8,color=#6A1B9A>"
+!$I_SEGURADORA = "<$building,scale=0.8,color=#AD1457>"
+!$I_SIMULADOR = "<$robot,scale=0.8,color=#AD1457>"
+!$I_ALARME = "<$bell,scale=0.8,color=#C62828>"
+!$I_DLQ = "<$exclamation_triangle,scale=0.8,color=#C62828>"
+!$I_FLOCI = "<$docker,scale=0.8,color=#455A64>"
+!$I_SPRING = "<$leaf,scale=0.8,color=#2E7D32>"
+!$I_QUARKUS = "<$cubes,scale=0.8,color=#1565C0>"
+!$I_VEICULO = "<$car,scale=0.8,color=#2E7D32>"
+
+' Base
+skinparam shadowing false
+skinparam roundCorner 12
+skinparam defaultFontName "SansSerif"
+skinparam defaultFontSize 13
+skinparam titleFontSize 18
+skinparam titleFontStyle bold
+skinparam titleFontColor $COR_TITULO
+skinparam ArrowColor #455A64
+skinparam ArrowFontSize 12
+skinparam actorStyle awesome
+skinparam packageStyle rectangle
+skinparam BackgroundColor #FFFFFF
+skinparam LegendBackgroundColor #FAFAFA
+skinparam LegendBorderColor #B0BEC5
+skinparam LegendFontSize 12
+skinparam NoteBackgroundColor #FFFDE7
+skinparam NoteBorderColor #F9A825
+
+' Sequência: participantes coloridos pela camada
+skinparam sequence {
+    LifeLineBorderColor #90A4AE
+    LifeLineBackgroundColor #FFFFFF
+    GroupBorderColor #90A4AE
+    GroupBackgroundColor #F7F9FA
+    DividerBackgroundColor #ECEFF1
+    BoxBorderColor #CFD8DC
+}
+skinparam participant {
+    BackgroundColor<<ator>> $COR_ATOR
+    BorderColor<<ator>> $BORDA_ATOR
+    BackgroundColor<<entrada>> $COR_ENTRADA
+    BorderColor<<entrada>> $BORDA_ENTRADA
+    BackgroundColor<<aplicacao>> $COR_APLICACAO
+    BorderColor<<aplicacao>> $BORDA_APLICACAO
+    BackgroundColor<<dominio>> $COR_DOMINIO
+    BorderColor<<dominio>> $BORDA_DOMINIO
+    BackgroundColor<<saida>> $COR_SAIDA
+    BorderColor<<saida>> $BORDA_SAIDA
+    BackgroundColor<<infra>> $COR_INFRA
+    BorderColor<<infra>> $BORDA_INFRA
+    BackgroundColor<<externo>> $COR_EXTERNO
+    BorderColor<<externo>> $BORDA_EXTERNO
+}
+skinparam actor {
+    BackgroundColor $COR_ATOR
+    BorderColor $BORDA_ATOR
+}
+skinparam database {
+    BackgroundColor $COR_INFRA
+    BorderColor $BORDA_INFRA
+}
+skinparam queue {
+    BackgroundColor $COR_INFRA
+    BorderColor $BORDA_INFRA
+}
+
+' Componentes e pacotes (visões de módulos e implantação)
+skinparam component {
+    BackgroundColor $COR_APLICACAO
+    BorderColor $BORDA_APLICACAO
+    BackgroundColor<<entrada>> $COR_ENTRADA
+    BorderColor<<entrada>> $BORDA_ENTRADA
+    BackgroundColor<<dominio>> $COR_DOMINIO
+    BorderColor<<dominio>> $BORDA_DOMINIO
+    BackgroundColor<<saida>> $COR_SAIDA
+    BorderColor<<saida>> $BORDA_SAIDA
+    BackgroundColor<<infra>> $COR_INFRA
+    BorderColor<<infra>> $BORDA_INFRA
+    BackgroundColor<<externo>> $COR_EXTERNO
+    BorderColor<<externo>> $BORDA_EXTERNO
+}
+skinparam package {
+    BackgroundColor #FFFFFF
+    BorderColor #90A4AE
+    FontColor #37474F
+}
+skinparam node {
+    BackgroundColor #F7F9FA
+    BorderColor $BORDA_INFRA
+}
+
+' Classes: agregados, valores, eventos, exceções, serviços e portas
+skinparam class {
+    BackgroundColor #FFFFFF
+    BorderColor #90A4AE
+    BackgroundColor<<agregado>> $COR_DOMINIO
+    BorderColor<<agregado>> $BORDA_DOMINIO
+    BackgroundColor<<valor>> #F1F8E9
+    BorderColor<<valor>> $BORDA_DOMINIO
+    BackgroundColor<<evento>> $COR_SAIDA
+    BorderColor<<evento>> $BORDA_SAIDA
+    BackgroundColor<<exceção>> $COR_ERRO
+    BorderColor<<exceção>> $BORDA_ERRO
+    BackgroundColor<<serviço>> $COR_APLICACAO
+    BorderColor<<serviço>> $BORDA_APLICACAO
+    BackgroundColor<<porta>> $COR_ENTRADA
+    BorderColor<<porta>> $BORDA_ENTRADA
+}
+
+' Casos de uso
+skinparam usecase {
+    BackgroundColor $COR_APLICACAO
+    BorderColor $BORDA_APLICACAO
+    BackgroundColor<<leitura>> $COR_DOMINIO
+    BorderColor<<leitura>> $BORDA_DOMINIO
+    BackgroundColor<<sistema>> $COR_INFRA
+    BorderColor<<sistema>> $BORDA_INFRA
+}
+
+' Estados: inicial, ativo, espera, terminal e erro
+skinparam state {
+    BackgroundColor #FFFFFF
+    BorderColor #90A4AE
+    BackgroundColor<<inicial>> $COR_APLICACAO
+    BorderColor<<inicial>> $BORDA_APLICACAO
+    BackgroundColor<<ativo>> $COR_DOMINIO
+    BorderColor<<ativo>> $BORDA_DOMINIO
+    BackgroundColor<<espera>> $COR_ENTRADA
+    BorderColor<<espera>> $BORDA_ENTRADA
+    BackgroundColor<<terminal>> $COR_INFRA
+    BorderColor<<terminal>> $BORDA_INFRA
+    BackgroundColor<<erro>> $COR_ERRO
+    BorderColor<<erro>> $BORDA_ERRO
+}
+
+' Atividade
+skinparam activity {
+    BackgroundColor $COR_APLICACAO
+    BorderColor $BORDA_APLICACAO
+    DiamondBackgroundColor $COR_ENTRADA
+    DiamondBorderColor $BORDA_ENTRADA
+}
+
+' Legenda das camadas, para chamar no fim do diagrama
+!procedure $legenda_camadas()
+legend right
+    <b>Leitura</b>
+    <back:$COR_ATOR>    </back> Ator (cliente, operador)
+    <back:$COR_ENTRADA>    </back> Entrada (API Gateway, controller, resource)
+    <back:$COR_APLICACAO>    </back> Aplicação (Lambda, máquina de estado)
+    <back:$COR_DOMINIO>    </back> Domínio
+    <back:$COR_SAIDA>    </back> Saída (adaptadores, outbox, eventos)
+    <back:$COR_INFRA>    </back> Infraestrutura AWS ou Floci
+    <back:$COR_EXTERNO>    </back> Externo (seguradora, simulador)
+endlegend
+!endprocedure
+
+' Legenda de desfecho, para fluxos com caminho de erro
+!procedure $legenda_erros()
+legend right
+    <b>Desfecho</b>
+    <back:$COR_DOMINIO>    </back> <color:$BORDA_DOMINIO>2xx</color> ou caminho de sucesso
+    <back:$COR_ERRO>    </back> <color:$BORDA_ERRO>4xx/5xx</color>, DLQ ou falha
+endlegend
+!endprocedure

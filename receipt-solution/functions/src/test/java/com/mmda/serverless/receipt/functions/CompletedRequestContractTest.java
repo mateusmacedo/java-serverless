@@ -8,7 +8,7 @@ import java.io.InputStream;
 import org.junit.jupiter.api.Test;
 
 /**
- * O fixture é o exemplo do {@code RequestCompleted} em {@code docs/events/asyncapi.yaml}, capturado
+ * O fixture é o exemplo do {@code RequestCompleted} em {@code contracts/sample-solution/asyncapi.yaml}, capturado
  * no Floci. Se a sample-solution mudar o evento, o exemplo muda e este teste acusa a quebra.
  */
 class CompletedRequestContractTest {

@@ -1,11 +1,11 @@
 asyncapi: 3.1.0
 info:
-  title: receipt-solution eventos
+  title: Eventos da receipt-solution
   version: 0.1.0
   description: |
     Contratos assíncronos da `receipt-solution`, em Quarkus: o evento `RequestCompleted` que ela
     consome do barramento da `sample-solution` e o evento `ReceiptIssued` que ela publica no próprio
-    barramento ([ADR 0011](../decisions/0011-integracao-entre-solucoes-por-eventbridge.md)).
+    barramento ([ADR 0011](../../docs/decisoes/0011-integracao-entre-solucoes-por-eventbridge.md)).
 
     O `RequestCompleted` é da `sample-solution` e está descrito no AsyncAPI dela; este documento só
     o referencia. Os nomes seguem o padrão `<service>-{stage}-<sufixo>`. O exemplo do `ReceiptIssued`
@@ -22,7 +22,7 @@ channels:
         $ref: '#/components/parameters/stage'
     messages:
       requestCompleted:
-        $ref: './asyncapi.yaml#/components/messages/RequestCompleted'
+        $ref: '../sample-solution/asyncapi.yaml#/components/messages/RequestCompleted'
   receiptEvents:
     address: receipt-solution-{stage}-events
     title: Barramento EventBridge da receipt-solution

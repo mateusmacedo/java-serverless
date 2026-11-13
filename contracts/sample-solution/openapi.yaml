@@ -1,13 +1,13 @@
 openapi: 3.1.0
 info:
-  title: sample-solution API
+  title: API da sample-solution
   version: 0.1.0
   description: |
     API HTTP da solução de referência. Recebe uma requisição em JSON, grava o conteúdo no S3 e
     inicia a máquina de estado `request-flow`, que valida, persiste e notifica de forma assíncrona.
 
     A resposta `202` só confirma o início da execução. O resultado aparece no DynamoDB (sucesso) ou
-    na fila `dlq` (falha); os fluxos estão em `docs/flows.md`.
+    na fila `dlq` (falha); os fluxos estão em `docs/fluxos.md`.
 
     A API não tem autenticação. Métodos não mapeados, como `GET /requests`, são respondidos pelo
     próprio API Gateway com `403` e `{"message":"Missing Authentication Token"}`.
@@ -23,13 +23,13 @@ servers:
   - url: http://localhost:3000/local
     description: serverless-offline, stage local
 tags:
-  - name: requests
+  - name: requisicoes
     description: Entrada de requisições no fluxo de processamento
 paths:
   /requests:
     post:
       tags:
-        - requests
+        - requisicoes
       operationId: createRequest
       summary: Registra uma requisição e inicia o processamento
       description: |
