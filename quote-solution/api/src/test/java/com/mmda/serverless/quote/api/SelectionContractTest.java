@@ -42,8 +42,10 @@ import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsResponse
 import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledException;
 
 /**
- * {@code POST /v1/quotes/{id}/versions/{v}/selection} contra {@code contracts/openapi.yaml}, com a tabela simulada:
- * a transação, as respostas de T18, T28 e T29 do lado da API e as ações da versão depois da seleção.
+ * {@code POST /v1/quotes/{id}/versions/{v}/selection} contra
+ * {@code contracts/openapi.yaml}, com a tabela simulada:
+ * a transação, as respostas de T18, T28 e T29 do lado da API e as ações da
+ * versão depois da seleção.
  */
 @QuarkusTest
 @WithTestResource(JwtKeyResource.class)
@@ -86,7 +88,8 @@ class SelectionContractTest {
         verify(dynamoDb).transactWriteItems(captor.capture());
         List<TransactWriteItem> writes = captor.getValue().transactItems();
         assertThat(writes).hasSize(5);
-        assertThat(writes.get(0).put().item().get("pk").s()).isEqualTo("IDEMPOTENCY#org-acme#SELECT_OFFER#q-1#select-1");
+        assertThat(writes.get(0).put().item().get("pk").s())
+                .isEqualTo("IDEMPOTENCY#org-acme#SELECT_OFFER#q-1#select-1");
         assertThat(writes.get(1).put().item().get("sk").s()).isEqualTo("V#0001#SELECTION");
         assertThat(writes.get(1).put().item().get("selectedBy").s()).isEqualTo("ana");
         assertThat(writes.get(1).put().conditionExpression()).isEqualTo("attribute_not_exists(pk)");
@@ -236,14 +239,16 @@ class SelectionContractTest {
                 "updatedAt", AttributeValue.fromS(Instant.now().toString())));
         Map<String, AttributeValue> beta = Map.of(
                 "sk", AttributeValue.fromS("V#0001#RESULT#beta"), "insurerId", AttributeValue.fromS("beta"),
-                "insurerName", AttributeValue.fromS("Beta Seguros"), "status", AttributeValue.fromS("NEEDS_INFORMATION"),
+                "insurerName", AttributeValue.fromS("Beta Seguros"), "status",
+                AttributeValue.fromS("NEEDS_INFORMATION"),
                 "reasonCode", AttributeValue.fromS("MISSING_DATA"),
                 "missingFields", AttributeValue.fromS(
                         "[{\"path\":\"risk.principalDriver.licenseDate\",\"reasonCode\":\"MISSING_LICENSE_DATE\"}]"),
                 "revision", AttributeValue.fromN("3"), "updatedAt", AttributeValue.fromS(Instant.now().toString()));
         Map<String, AttributeValue> selection = items.get("QUOTE#q-1|V#0001#SELECTION");
         when(dynamoDb.query(any(QueryRequest.class))).thenReturn(QueryResponse.builder()
-                .items(version, beta, items.get("QUOTE#q-1|V#0001#OFFER#of_1"), selection).build());
+                .items(List.of(version, beta, items.get("QUOTE#q-1|V#0001#OFFER#of_1"), selection))
+                .build());
 
         given().filter(CONTRACT).header("Authorization", selector)
                 .when().get("/v1/quotes/q-1/versions/1")
@@ -289,16 +294,22 @@ class SelectionContractTest {
         items.put("QUOTE#q-1|V#0001#OFFER#" + offerId, Map.ofEntries(
                 Map.entry("pk", AttributeValue.fromS("QUOTE#q-1")),
                 Map.entry("sk", AttributeValue.fromS("V#0001#OFFER#" + offerId)),
-                Map.entry("offerId", AttributeValue.fromS(offerId)), Map.entry("insurerId", AttributeValue.fromS("alpha")),
+                Map.entry("offerId", AttributeValue.fromS(offerId)),
+                Map.entry("insurerId", AttributeValue.fromS("alpha")),
                 Map.entry("insurerName", AttributeValue.fromS("Alpha Seguros")),
-                Map.entry("premiumTotal", AttributeValue.fromS("2450.90")), Map.entry("currency", AttributeValue.fromS("BRL")),
+                Map.entry("premiumTotal", AttributeValue.fromS("2450.90")),
+                Map.entry("currency", AttributeValue.fromS("BRL")),
                 Map.entry("installments", AttributeValue.fromS("[{\"count\":1,\"amount\":\"2450.90\"}]")),
-                Map.entry("coverages", AttributeValue.fromS("[]")), Map.entry("deductibles", AttributeValue.fromS("[]")),
+                Map.entry("coverages", AttributeValue.fromS("[]")),
+                Map.entry("deductibles", AttributeValue.fromS("[]")),
                 Map.entry("validUntil", AttributeValue.fromS(validUntil.toString())),
                 Map.entry("createdAt", AttributeValue.fromS(Instant.now().toString()))));
     }
 
-    /** Transação da seleção cancelada pela condição da ação informada (1 seleção, 2 META, 3 oferta). */
+    /**
+     * Transação da seleção cancelada pela condição da ação informada (1 seleção, 2
+     * META, 3 oferta).
+     */
     private static TransactionCanceledException canceledAt(int action) {
         CancellationReason[] reasons = new CancellationReason[5];
         for (int i = 0; i < reasons.length; i++) {
