@@ -8,10 +8,20 @@ convenção de nome, para o build do dia a dia não depender de deploy.
 |---|---|---|---|---|
 | Unitário e contrato | `*Test` | `mvn test` | Nada além do JDK | Segundos |
 | Integração com Floci | `*IT` | `mvn verify` | Docker | Cerca de 30 s |
-| Ponta a ponta | `*E2E` | `pnpm test:e2e` | Docker, Floci do `compose.yaml` no ar e login no Serverless | Cerca de 2 min |
+| Ponta a ponta | `*E2E` | `pnpm test:e2e` | Docker, Floci do `compose.yaml` no ar e login no Serverless | Cerca de 3,5 min, dos quais cerca de 1,5 min no `QuoteFlowE2E` |
 
-O `mvn verify` roda os dois primeiros níveis nas duas soluções. Os módulos `sample-solution/e2e` e
-`receipt-solution/e2e` só entram no build com o perfil `-Pe2e`.
+O `mvn verify` roda os dois primeiros níveis em todas as soluções. Os módulos `sample-solution/e2e`,
+`receipt-solution/e2e` e `quote-solution/e2e` só entram no build com o perfil `-Pe2e`.
+
+Para verificar uma solução só, liste os módulos dela. No Maven 3.9, `mvn -pl <solução> -am verify`
+seleciona só o POM agregador da solução e não roda teste nenhum:
+
+```bash
+mvn -B verify -pl quote-solution/domain,quote-solution/api,quote-solution/functions -am
+mvn -B verify -pl provider-solution/domain,provider-solution/functions,provider-solution/simulators -am
+```
+
+Outra forma é acrescentar `-amd`, que inclui os módulos filhos: `mvn -B verify -pl quote-solution -am -amd`.
 
 ## Unitários
 
@@ -109,18 +119,70 @@ fluxo, e não contagens exatas de reinício.
 
 A regra e a fila que capturam o `ReceiptIssued` são criadas pelo teste e removidas ao final.
 
+`QuoteFlowE2E`, no módulo `quote-solution/e2e`, cobre o M1 da plataforma de cotação, com o barramento
+da plataforma, a `provider-solution` e a `quote-solution` implantados:
+
+- **T01, variante com uma seguradora:** `vehicle-van-2022` com uso `COMMERCIAL` cota só na alpha e
+  termina `COMPLETED`, com uma oferta selecionável, a evidência do enriquecimento na quote e na provider,
+  a evidência da seguradora e uma única execução `SUCCEEDED`. O T01 do PRD, com duas seguradoras, entra
+  no M3.
+- **T02:** o reenvio com a mesma chave, durante a execução (com o body reordenado e indentado) e depois
+  do fim, devolve a mesma cotação, sem execução nova.
+- **T03:** a mesma chave com outro body responde `409 IDEMPOTENCY_CONFLICT`, e a cotação original não
+  muda.
+- **T19** (`t19_scheduledReconcilersRepublishOutboxTheStreamNeverDelivered`): grava, nas tabelas
+  implantadas da quote e da provider, um `OUTBOX_PENDING` de 10 minutos atrás que a relay nunca vê. O
+  `INSERT` sai com `type = E2E_PROBE`, e um `UPDATE` posterior troca para `OUTBOX`; o filtro do stream
+  ignora esse `MODIFY`. O `detail-type` `ReconcilerProbe` não tem regra no barramento. O teste espera o
+  `publishedAt` e a remoção do `gsi2pk` nas duas tabelas, o que confirma o `rate(1 minute)` do
+  EventBridge Scheduler no Floci nas duas soluções.
+- **T23:** veículo salvado termina `INELIGIBLE` (`SALVAGE_VEHICLE`), sem consulta externa.
+- **T24:** condutor sem `licenseDate` termina `NEEDS_INFORMATION` (`MISSING_LICENSE_DATE`), com o
+  `missingFields` em `risk.principalDriverRef` e sem consulta externa.
+
+O usuário de teste é criado pelas APIs administrativas do Cognito (`AdminCreateUser`,
+`AdminSetUserPassword` e `AdminAddUserToGroup`, nos grupos da organização e das permissões), e o
+access token vem de `InitiateAuth` com `USER_PASSWORD_AUTH`. Quem valida o token é a Lambda da API. O
+orçamento de cada espera é lido do bloco `params` do `serverless.yml` da quote, para o teste esperar o
+mesmo prazo que a máquina de estado tem: o T01 e o T02 usam a invariante de orçamento com uma
+seguradora (70 s no local), o T03, o T23 e o T24 usam o `stepsMarginSeconds` (30 s), e o polling segue
+o `retryAfterSeconds` (3 s). O T19 depende do agendamento, não da máquina: espera até 3 min, com
+polling de 5 s. Ele também é coberto pela integração do `quote-functions`.
+
+Na última rodada, os 6 testes do `QuoteFlowE2E` levaram 86 s:
+
+| Teste | Tempo |
+|---|---|
+| T01 | 19,2 s |
+| T02 | 9,1 s |
+| T03 | 3,1 s |
+| T19 | 45,1 s |
+| T23 | 3,1 s |
+| T24 | 5,6 s |
+
 ```bash
 docker compose up -d
 pnpm test:e2e
 ```
 
-O `test:e2e` empacota os módulos sem rodar testes, faz o deploy da `sample-solution` e depois da
-`receipt-solution` no stage `local` e executa
-`mvn verify -Pe2e -pl sample-solution/e2e,receipt-solution/e2e`. Para testar só contra as stacks já
-implantadas:
+O `test:e2e` roda o `deploy:local` e depois
+`mvn -B verify -Pe2e -pl sample-solution/e2e,receipt-solution/e2e,quote-solution/e2e`. O
+`deploy:local` empacota os módulos sem rodar testes (`mvn -B -q package -DskipTests`) e faz o deploy
+no stage `local`, nesta ordem:
+
+| Script | Stack |
+|---|---|
+| `deploy:platform` | Barramento da plataforma (`platform/events`) |
+| `deploy:sample` | `sample-solution` |
+| `deploy:receipt` | `receipt-solution` |
+| `deploy:provider` | `provider-solution` |
+| `deploy:quote` | `quote-solution` |
+
+Cada script também roda sozinho, como `pnpm deploy:quote`, contra os pacotes já gerados. Para testar
+só contra as stacks já implantadas:
 
 ```bash
-mvn -B verify -Pe2e -pl sample-solution/e2e,receipt-solution/e2e
+mvn -B verify -Pe2e -pl sample-solution/e2e,receipt-solution/e2e,quote-solution/e2e
 ```
 
 As propriedades `e2e.endpoint` (padrão `http://localhost:4566`) e `e2e.stage` (padrão `local`) dos

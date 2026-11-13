@@ -69,6 +69,17 @@ Cada fila alvo tem `QueuePolicy` que libera `sqs:SendMessage` para `events.amazo
 `batchSize: 1`. Isso vale só para filas: o stream da tabela usa lotes de 100 (§7). Toda fila tem
 `VisibilityTimeout` explícito e `maxReceiveCount` próprio, com os valores do §12.
 
+**Papéis IAM.** Na quote, cada função tem papel próprio, com as permissões do §7 restritas aos recursos
+da stack. Na provider, as funções de trabalho (no M1, `enrichmentWorker`, `insurerWorker`,
+`outboxRelay` e `reconciler`) dividem um papel, e cada ação dele é restrita ao recurso que usa: tabela
+de consultas e índice `gsi2`, prefixo `raw/` do bucket de respostas, barramento, segredo da chave de
+reuso e as filas de reenvio adiado e de falhas do stream. Só a Lambda `simulators` tem papel próprio,
+porque só ela acessa a tabela dos simuladores.
+
+O Floci não aplica IAM, então três pontos ficam para o M6: o `states:SendTaskSuccess` restrito ao ARN
+da máquina; o `dynamodb:ListStreams` da relay, que não aceita recurso específico e usa `*`; e o papel
+que o `serverless-step-functions` gera para a máquina chamar a `dispatch` com `waitForTaskToken`.
+
 ## 3. Eventos
 
 Todo `detail` tem `eventId` (UUID), `occurredAt` (ISO-8601 UTC) e `schemaVersion` (`"1"`). Valores
@@ -78,12 +89,12 @@ monetários são strings decimais; datas com hora em UTC.
 |---|---|---|
 | `QuoteAccepted` | mmda.quote | `quoteId`, `version`, `organizationId` |
 | `EnrichmentRequested` | mmda.quote | `workRef`, `organizationId`, `quoteId`, `version`, `provider` (`enrichment-sim`), `operation` (`VEHICLE_DRIVER_PROFILE`), `contractVersion` (`1`), `params` (`vehicleRef`, `principalDriverRef`), `deadlineAt` |
-| `InsurerQuoteRequested` | mmda.quote | `workRef`, `organizationId`, `quoteId`, `version`, `insurerId`, `risk` (cópia autorizada do snapshot: `product`, `usage`, `vehicle`, `principalDriver`, `coverageProfile`, `desiredStartDate`), `enrichment` (resumo), `deadlineAt` |
+| `InsurerQuoteRequested` | mmda.quote | `workRef`, `organizationId`, `quoteId`, `version`, `insurerId`, `risk` (cópia autorizada do snapshot: `product`, `usage`, `vehicle`, `principalDriver`, `coverageProfile` resolvido como objeto, com `code`, `label` e `coverages`, `desiredStartDate`), `enrichment` (resumo; `evidenceId` e `queryId` seguem os patterns da provider, `^ev_[0-9a-f]{32}$` e `^q_[0-9a-f]{32}$`), `deadlineAt` |
 | `QuoteCompleted` | mmda.quote | `quoteId`, `version`, `outcome`, `outcomeReason`, `offerCount` |
 | `OfferSelected` | mmda.quote | `quoteId`, `version`, `offerId`, `selectionId` |
 | `QueryReconcileRequested` | mmda.quote | `operationId`, `organizationId`, `queryId`, `reason`, `requestedBy` (consumido pela provider no M4; publicado pela API da quote a partir do M5) |
 | `EnrichmentResolved` | mmda.provider | `workRef`, `quoteId`, `version`, `queryId`, `evidenceId`, `reuseDecision` (`HIT`, `JOIN`, `MISS`), `resultType` (`FOUND`, `NOT_FOUND`, `FAILED`), `result` (perfil normalizado, quando `FOUND`), `notFoundRefs` (quando `NOT_FOUND`: referências que o provedor declarou não encontrar, como `["vehicleRef"]`), `reusableUntil`, `errorClass` (quando `FAILED`) |
-| `InsurerResultRecorded` | mmda.provider | `workRef`, `quoteId`, `version`, `insurerId`, `queryId`, `attemptRef`, `status` (`QUOTED`, `DECLINED`, `NEEDS_INFORMATION`, `UNAVAILABLE`), `reasonCode`, `missingFields` (lista de `{path, reasonCode}`, com `path` relativo ao snapshot, como `risk.principalDriver.licenseDate`), `offer` (quando `QUOTED`: `externalOfferId`, `insurerName`, `premiumTotal`, `currency`, `installments`, `coverages`, `deductibles`, `validUntil`, `rawResponseRef`) |
+| `InsurerResultRecorded` | mmda.provider | `workRef`, `quoteId`, `version`, `insurerId`, `queryId`, `attemptRef`, `status` (`QUOTED`, `DECLINED`, `NEEDS_INFORMATION`, `UNAVAILABLE`), `reasonCode`, `missingFields` (lista de `{path, reasonCode}`, com `path` relativo ao snapshot, como `risk.principalDriver.licenseDate`), `offer` (quando `QUOTED`: `externalOfferId`, `insurerName`, `premiumTotal`, `currency`, `installments`, `coverages` com `code`, `label` e `insuredAmount`, como o `OfferCoverage` do OpenAPI, `deductibles`, `validUntil`, `rawResponseRef`) |
 | `QueryReconciled` | mmda.provider | `operationId`, `organizationId`, `queryId`, `status` (`SUCCEEDED`, `FAILED`), `safeSummary`, `revision` (M4) |
 | `OperationIssueRaised`, `OperationIssueUpdated` | mmda.provider | `issueId`, `organizationId` (ausente em callback sem correlação), `type` (`UNKNOWN_QUERY`, `UNMATCHED_CALLBACK`, `DEAD_LETTER`, `STALE_OUTBOX`), `status` (`OPEN`, `RESOLVED`), `queryId`, `quoteId`, `firstSeenAt`, `lastSeenAt`, `safeSummary`, `reconcilable`, `revision` (M4) |
 
@@ -94,7 +105,8 @@ pedido é o instante da `dispatch` mais o `TimeoutSeconds` da etapa, limitado ao
 versão.
 
 O `eventId` é determinístico quando o mesmo fato pode ser gravado mais de uma vez. O outbox é gravado
-com `attribute_not_exists`, então a repetição não cria um segundo evento:
+com `attribute_not_exists`, então a repetição não cria um segundo evento. Os UUIDv5 das duas soluções
+usam o mesmo namespace, o URL da RFC 9562 (`6ba7b811-9dad-11d1-80b4-00c04fd430c8`):
 
 - `EnrichmentRequested` e `InsurerQuoteRequested`: UUIDv5 do `workRef`.
 - `EnrichmentResolved`: UUIDv5 de `queryId|workRef`, para o líder, cada seguidor e o `HIT`.
@@ -124,12 +136,17 @@ resultado não entregue), `STUCK_VERSION` (`ACTIVE_VERSION` além de `deadlineAt
 Os AsyncAPI das duas soluções definem esses schemas, inclusive o de `missingFields` com paths
 relativos ao snapshot.
 
+O `insurerName` do `RESULT` vem do registro de seguradoras da quote (`Insurers`, na `quote-domain`) e
+é gravado pelo `select-insurers` (§4); o da `OFFER` vem do `offer.insurerName` que a seguradora
+devolve. Os dois precisam ser iguais: `alpha` é "Alpha Seguros" e `beta`, "Beta Seguros". O
+`ProviderEventsConsumptionTest` lê os exemplos do AsyncAPI da provider e confere a igualdade.
+
 ## 4. Tabela da quote-solution
 
 | Item | `pk` | `sk` | Atributos principais |
 |---|---|---|---|
 | Cotação | `QUOTE#<quoteId>` | `META` | `organizationId`, `createdBy`, `currentVersion`, `createdAt`, `gsi1pk`, `gsi1sk`, resumo da versão atual (`phase`, `outcome`, `offerCount`), `selectionId`, `selectedVersion`, `selectedOfferId` |
-| Versão | `QUOTE#<quoteId>` | `V#<nnnn>` | `snapshot` (JSON), `inputHash`, `phase`, `outcome`, `outcomeReason`, `missingFields`, `eligibilityRuleVersion`, `selectionRuleVersion`, `workflowVersion`, `executionName`, `executionArn`, `deadlineAt`, `supersededAt`, `revision`, `updatedAt`, `gsi2pk = ACTIVE_VERSION` enquanto não terminal |
+| Versão | `QUOTE#<quoteId>` | `V#<nnnn>` | `snapshot` (JSON), `inputHash`, `phase`, `outcome`, `outcomeReason`, `missingFields`, `eligibilityDecision`, `eligibilityReasonCode`, `eligibilityMissingFields`, `eligibilityRuleVersion`, `selectedInsurers`, `selectionRuleVersion`, `workflowVersion`, `executionName`, `executionArn`, `deadlineAt`, `supersededAt`, `revision`, `updatedAt`, `gsi2pk = ACTIVE_VERSION` enquanto não terminal |
 | Resultado da seguradora | `QUOTE#<quoteId>` | `V#<nnnn>#RESULT#<insurerId>` | `insurerName`, `status` (`PENDING`, `PROCESSING` ou terminal), `reasonCode`, `missingFields`, `queryRef`, `attemptRef`, `revision`, `updatedAt` |
 | Oferta | `QUOTE#<quoteId>` | `V#<nnnn>#OFFER#<offerId>` | `insurerId`, `insurerName`, `externalOfferId`, `premiumTotal`, `currency`, `installments`, `coverages`, `deductibles`, `validUntil`, `rawResponseRef`, `createdAt` |
 | Seleção | `QUOTE#<quoteId>` | `V#<nnnn>#SELECTION` | `selectionId`, `offerId`, `selectedAt`, `selectedBy` |
@@ -137,23 +154,34 @@ relativos ao snapshot.
 | Resultado tardio | `QUOTE#<quoteId>` | `V#<nnnn>#LATE#<alvo>#<queryId>` | `alvo` = `insurerId` ou `ENRICHMENT`; `reason` (`LATE`, `DUPLICATE`), `status`, `queryRef`, `attemptRef`, `rawResponseRef`, resumo da oferta, `receivedAt` |
 | Idempotência | `IDEMPOTENCY#<orgId>#<operation>#<scope>#<key>` | `META` | `requestHash`, `resourceRef`, `createdAt` |
 | Waiter | `WAITER#<workRef>` | `META` | `tokenCiphertext`, `quoteId`, `version`, `kind`, `insurerId`, `executionArn`, `expiresAt`, `status` (`WAITING`, `RESUMING`, `DONE`, `EXPIRED`), `resultEventId`, `resumePayload`, `updatedAt`, `gsi2pk = WAITER_RESUMING` quando `RESUMING` |
-| Outbox | `OUTBOX#<eventId>` | `META` | `detailType`, `detail`, `createdAt`, `publishedAt`, `attempts`, `lastError`, `gsi2pk = OUTBOX_PENDING` até publicar |
+| Outbox | `OUTBOX#<eventId>` | `META` | `detailType`, `detail`, `createdAt`, `publishedAt`, `attempts`, `lastError`, `gsi2pk = OUTBOX_PENDING` até publicar, `gsi2sk` = `createdAt` até a primeira falha permanente e, depois dela, o instante da última falha permanente (§7) |
 | Evento consumido | `CONSUMED#<eventId>` | `META` | `consumedAt` (descarte de eventos de resultado repetidos) |
 | Ocorrência operacional | `ISSUE#<issueId>` | `META` | `organizationId`, `source` (`quote`, `provider`), `type`, `status`, `queryId`, `quoteId`, `firstSeenAt`, `lastSeenAt`, `safeSummary`, `reconcilable`, `revision`, `gsi1pk = ISSUES#<organizationId>`, `gsi1sk = <lastSeenAt>#<issueId>` (M4) |
 | Consulta conhecida | `QUERYREF#<queryId>` | `META` | `organizationId`; gravado pelo `issue-projector`, autoriza o `RECONCILE` (M5) |
 | Reconciliação manual | `OPERATION#<operationId>` | `META` | `organizationId`, `queryId`, `status`, `safeSummary`, `revision`, `updatedAt` (M5) |
 
 `<nnnn>` é a versão com quatro dígitos. Todo item tem o atributo `type` (ADR 0015), como `QUOTE`,
-`VERSION` ou `OUTBOX`; o filtro do stream depende dele. `eligibilityRuleVersion` é gravado pelo passo
-`evaluate-eligibility` e `selectionRuleVersion` pelo `select-insurers`, cada um quando aplica a regra.
+`VERSION` ou `OUTBOX`; o filtro do stream depende dele. O passo `evaluate-eligibility` grava no `V#n`
+a decisão (`eligibilityDecision`, `eligibilityReasonCode`, `eligibilityMissingFields`) com o
+`eligibilityRuleVersion`, e o `select-insurers` grava a lista (`selectedInsurers`) com o
+`selectionRuleVersion`, cada um quando aplica a regra. Assim a consolidação lê tudo da tabela, sem
+depender do estado da execução, e a reconciliação do M4 refaz a consolidação pelo mesmo caminho.
 O `issue-projector` grava o `ISSUE#` sem `gsi1pk` quando o evento não traz `organizationId`.
+
+O `offerId` é determinístico: `of_` + os 32 primeiros caracteres hexadecimais do SHA-256 de
+`offer|<workRef>`, então a reentrega do mesmo resultado aponta para a mesma `OFFER`.
 
 **Resumo do META.** A transação principal de cada passo grava só o `V#n` e os itens filhos. O resumo do
 `META` (`phase`, `outcome`, `offerCount`) é atualizado depois, por um `UpdateItem` separado, com
 valores absolutos: `SET`, nunca `ADD`; o `offerCount` sai de uma contagem com `ConsistentRead`. A
 condição é `currentVersion = :v`, e um `ConditionalCheckFailed` é ignorado, porque indica versão
 substituída. A criação de versão grava o resumo inicial de `v+1` na mesma transação que muda o
-`currentVersion`. O `reconciler` repara um resumo que divirja do `V#currentVersion`.
+`currentVersion`.
+
+Essa atualização (`QuoteTable.refreshSummary`) é best-effort nos passos do `workflow-steps`, na
+`dispatch` e no `resume`. Uma falha de SDK só gera log: o passo já gravado não cai por causa dela. O
+`META` pode ficar desatualizado até o `reconciler` do M4 repará-lo, comparando-o com o
+`V#currentVersion`.
 
 **Revision.** O `revision` da versão é calculado na leitura, com `Query` e `ConsistentRead` nos itens
 `V#<nnnn>*` da cotação, como soma de contadores monotônicos:
@@ -197,7 +225,7 @@ continuam idênticos e o T22 continua válido.
 | Quota | `QUOTA#<provider>#<credentialRef>#<janela>` | `META` | `used`, `ttl` |
 | Ocorrência | `ISSUE#<issueId>` | `META` | `type`, `status`, `organizationId`, `queryId`, `quoteId`, `firstSeenAt`, `lastSeenAt`, `safeSummary`, `reconcilable`, `revision` (M4) |
 | Reconciliação | `OPERATION#<operationId>` | `META` | `organizationId`, `queryId`, `status`, `safeSummary`, `revision` (M4) |
-| Outbox | `OUTBOX#<eventId>` | `META` | igual à quote |
+| Outbox | `OUTBOX#<eventId>` | `META` | igual à quote, inclusive o `gsi2sk`; a falha permanente também grava `lastAttemptAt` |
 | Evento consumido | `CONSUMED#<eventId>` | `META` | `consumedAt` |
 
 A `queryKey` é o HMAC-SHA256, com o segredo `query-key-secret` como chave, de
@@ -210,10 +238,22 @@ a consulta: cada pedido de seguradora e o líder do enriquecimento. A `QUERY` é
 determinístico pelo tipo e pelo alvo (`queryId` ou `externalEventId`), e cada mudança da ocorrência
 incrementa o `revision`. O limite de cada `QUOTA` vem da configuração por provedor (§12).
 
+O `evidenceId` é `ev_` + os 32 primeiros caracteres hexadecimais do SHA-256 de
+`queryId|<sequência da tentativa>`; a conclusão sem chamada, como por prazo ou quota, usa a sequência 0.
+O `attemptRef` do `InsurerResultRecorded` é `<queryId>#<nnnn>`, com a sequência da `ATTEMPT`. Quando
+não há resposta do fornecedor, a provider grava mesmo assim uma `EVIDENCE` de falha (`FAILED` no
+enriquecimento, `UNAVAILABLE` na seguradora): toda consulta concluída tem evidência, e o
+`EnrichmentResolved` sempre leva `evidenceId`.
+
+No M1 não há liderança: a `QUERY` do enriquecimento já grava a `queryKey`, mas não a
+`fencingVersion`. O M2 acrescenta `REUSE#` e `INFLIGHT#` sem migração e trata a `fencingVersion`
+ausente como consulta sem liderança.
+
 ## 6. Máquina de estado principal
 
 Entrada: `{"quoteId": "...", "version": 1}`. Nome da execução: `q-<quoteId>-v<version>`.
-`TimeoutSeconds` da máquina: `quoteDeadlineSeconds` + `workflowMarginSeconds` (360 no local). Ele é
+`TimeoutSeconds` da máquina: `quoteDeadlineSeconds` + `workflowMarginSeconds` (parâmetro
+`workflowTimeoutSeconds`, 360 no local; §12). Ele é
 só rede de segurança: o prazo real vem da invariante de orçamento (§9). Um timeout da execução encerra
 em `TIMED_OUT` sem passar por `Catch`, e o `reconciler` finaliza a versão (§9).
 
@@ -231,20 +271,26 @@ nova tentativa, relê e devolve o que já gravou. Depois da transação, o passo
    `executionArn` (`$$.Execution.Id`); `TimeoutSeconds = enrichmentTimeoutSeconds`; resultado em
    `$.enrichment`. O `Catch` de `States.Timeout` e `States.ALL` chama `RecordEnrichmentOutcome`
    (`step = record-enrichment-outcome`): ele lê o waiter e usa o `resumePayload` quando existe; se não
-   existe, devolve `{resultType: FAILED, errorClass}` e marca o waiter `EXPIRED` com a condição
-   `status = WAITING`. Só `FOUND` segue; `NOT_FOUND` e `FAILED` vão para `ConsolidateQuote`.
+   existe, devolve `{resultType: FAILED, errorClass}`, com o nome do erro capturado (`Error`, sem a
+   `Cause`), e marca o waiter `EXPIRED` (regra abaixo). Só `FOUND` segue; `NOT_FOUND` e `FAILED` vão
+   para `ConsolidateQuote`.
 4. `SelectInsurers` (`step = select-insurers`): `$.selection.insurers`, limitada a `maxInsurers`, e
    grava o `selectionRuleVersion`. Numa transação, grava a fase `QUOTING` e um `RESULT` `PENDING`, com
    `insurerName`, para cada seguradora. Lista vazia vai para `ConsolidateQuote`.
 5. `QuoteInsurers`: `Map` com `MaxConcurrency = mapConcurrency` (2) e
    `ItemSelector = {quoteId, version, insurerId, executionArn}`. Cada item chama a `dispatch` com
    `kind = INSURER` e `TimeoutSeconds = insurerTimeoutSeconds`. `States.Timeout` chama
-   `RecordInsurerOutcome` (`step = record-insurer-outcome`) com `TIMED_OUT`, e `States.ALL` com
-   `UNAVAILABLE`; ele grava o `RESULT` só se ainda não for terminal e marca o waiter `EXPIRED` com a
-   condição `status = WAITING`. `ResultPath: null`.
+   `RecordInsurerOutcome` (`step = record-insurer-outcome`) com `TIMED_OUT` e `reasonCode =
+   STEP_TIMEOUT`, e `States.ALL` com `UNAVAILABLE` e `reasonCode = TASK_FAILED`. Ele marca o waiter
+   `EXPIRED` (regra abaixo) e grava o `RESULT` só se ainda não for terminal. `ResultPath: null`.
 6. `ConsolidateQuote` (`step = consolidate`): aplica a precedência do PRD (§8) com atualização
    condicional pela `revision` do `V#n`, grava `TERMINAL`, `outcome`, `outcomeReason` e o outbox
    `QuoteCompleted`.
+
+Os dois `record-*-outcome` marcam o waiter `EXPIRED` com a condição
+`attribute_not_exists(pk) OR status = WAITING`: se a `dispatch` nunca gravou o waiter (a invocação
+falhou antes), eles o criam já `EXPIRED`. Assim a consolidação distingue uma etapa que falhou de uma
+que nunca rodou, e um resultado que chegue depois vira evidência tardia (§8).
 
 Toda tarefa Lambda da máquina (`workflow-steps` e `dispatch`) tem `Retry` para
 `Lambda.ServiceException`, `Lambda.AWSLambdaException`, `Lambda.SdkClientException` e
@@ -264,7 +310,7 @@ Toda tarefa declara `TimeoutSeconds`: as esperas usam os parâmetros do §12, e 
 | API (`quote-api`) | API Gateway `/v1/{proxy+}` | API de produto |
 | `workflow-steps` | Máquina (`lambda:invoke`) | Passos simples, escolhidos pelo campo `step`: `load-snapshot`, `evaluate-eligibility`, `select-insurers`, `consolidate`, `record-insurer-outcome`, `record-enrichment-outcome` |
 | `dispatch` | Máquina (`waitForTaskToken`) | Waiter + outbox do pedido |
-| `resume` | Fila `results` | Grava resultado, retoma com `SendTaskSuccess` |
+| `resume` | Fila `results` | Grava resultado, retoma com `SendTaskSuccess`; falha que não vem de condição volta em `batchItemFailures` (§8) |
 | `outbox-relay` | Stream da tabela | Publica eventos, inicia execuções e grava o `executionArn` |
 | `issue-projector` | Fila `issues` | Projeta ocorrências e reconciliações (M5) |
 | `reconciler` | Agendamento (1 min) | M1: republica `OUTBOX_PENDING`. M4: waiters, versões presas, execuções encerradas, resumo do `META`, ocorrências da quote e DLQs (§9) |
@@ -276,6 +322,10 @@ passos e só toca a tabela da quote. `dispatch`, `resume`, `outbox-relay`, `issu
 só na `dispatch`, no `resume` e no `reconciler`; `states:StartExecution` na relay e no `reconciler`,
 que republica também o `StartQuoteRequested` com o mesmo código de publicação da relay;
 `states:DescribeExecution` só no `reconciler`.
+
+O `outbox-relay` e o `resume` não usam os modelos do `aws-lambda-java-events`: leem o JSON cru do
+evento de stream ou de SQS e convertem o `NewImage` direto para o `AttributeValue` do SDK v2. O Jackson
+do Quarkus não mapeia `Records` e `NewImage` desses modelos sem mixins.
 
 ### provider-solution (`SPRING_CLOUD_FUNCTION_DEFINITION`)
 
@@ -290,9 +340,10 @@ que republica também o `StartQuoteRequested` com o mesmo código de publicaçã
 | `outboxRelay` | Stream da tabela | Publica eventos |
 | `reconciler` | Agendamento (1 min) | M1: republica `OUTBOX_PENDING`. M4: leases vencidas, consultas `UNKNOWN`, inbox parada ou sem correlação, ocorrências e DLQs (§9) |
 
-O `provider-functions` declara `com.amazonaws:aws-lambda-java-events` no escopo `compile`, ou recebe os
-eventos como `Map`. O primeiro teste no Floci confere a desserialização de `SQSEvent` e
-`DynamodbEvent`. A configuração leva `logging.level.org.springframework.cloud.function.adapter.aws=WARN`.
+O `provider-functions` lê `SQSEvent` e `DynamodbEvent` com `com.amazonaws:aws-lambda-java-events` e
+`aws-lambda-java-serialization`, os dois no escopo `compile`. A desserialização desses eventos foi
+verificada no Floci (§13). A configuração leva
+`logging.level.org.springframework.cloud.function.adapter.aws=WARN`.
 
 ### Relay de outbox (as duas soluções)
 
@@ -304,11 +355,18 @@ O evento `stream` do `outbox-relay` e do `outboxRelay` declara:
 - `functionResponseType: ReportBatchItemFailures`;
 - `destinations.onFailure` para a fila `stream-failures`, que tem alarme.
 
-A relay trata cada registro separadamente. Ela converte o `AttributeValue` do modelo de eventos para o
-do SDK v2 ao ler o `NewImage`. `ExecutionAlreadyExists` com a mesma entrada conta como sucesso. O
+A relay trata cada registro separadamente. Ela lê o `NewImage` como `AttributeValue` do SDK v2: na
+quote, direto do JSON do evento; na provider, convertendo o do modelo de eventos.
+`ExecutionAlreadyExists` com a mesma entrada conta como sucesso. O
 `FailedEntryCount` do `PutEvents` é conferido por entrada. Erro transitório vira falha do item em
 `batchItemFailures`. Erro permanente grava `attempts` e `lastError` no `OUTBOX` e não derruba o lote; o
 item continua `OUTBOX_PENDING`.
+
+O `gsi2sk` do `OUTBOX_PENDING` nasce com o `createdAt`. A falha permanente o troca pelo instante da
+falha, e cada nova falha permanente o atualiza de novo. O republicador lê os pendentes mais antigos pelo
+`gsi2sk`, então um item que sempre falha vai para o fim da fila e não prende os demais. Na quote, a
+gravação da falha exige `attribute_exists(gsi2pk)`, para não tocar um item já publicado. A ocorrência
+`STALE_OUTBOX` do M4 mede a idade pelo `createdAt`, não pelo `gsi2sk`.
 
 Com `ReportBatchItemFailures`, o stream reentrega o lote a partir do registro que falhou, inclusive os
 seguintes, e a divisão do lote reentrega registros vizinhos mais de uma vez (§13). Por isso a
@@ -324,10 +382,11 @@ da execução.
 
 As chamadas a fornecedores usam HTTP. A URL base vem de `PROVIDERS_BASE_URL`, montada no
 `serverless.yml` com `Fn::Sub` a partir do `ApiGatewayRestApi` da própria stack: no stage `local`,
-`http://floci:4566/restapis/${ApiGatewayRestApi}/local/_user_request_`; na AWS,
-`https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/<stage>`. O caminho
-`_user_request_` chamado de dentro de uma Lambda ainda não foi verificado no Floci; a alternativa está
-no §13.
+`http://floci:4566/restapis/${ApiGatewayRestApi}/local/_user_request_`; nos demais,
+`https://${ApiGatewayRestApi}.execute-api.${aws:region}.amazonaws.com/${sls:stage}`. O Serverless
+resolve `${aws:region}` e `${sls:stage}` antes do deploy, e só `${ApiGatewayRestApi}` chega ao
+`Fn::Sub`; `${AWS::Region}` conflitaria com a sintaxe de variáveis do Serverless. O caminho
+`_user_request_` chamado de dentro de uma Lambda funciona no Floci (§13).
 
 ## 8. Fluxos
 
@@ -337,13 +396,27 @@ transação: idempotência, `META` (com o resumo inicial), `V#0001` (`phase = RE
 determinístico e grava o `executionArn` no `V#0001`; `ExecutionAlreadyExists` com a mesma entrada
 conta como sucesso.
 
-**Conflitos de idempotência.** O `TransactionCanceledException` é tratado pelo motivo de cada item:
+O `POST /v1/quotes` rejeita campos desconhecidos com 400, inclusive dentro de `risk`: o `requestHash`
+é calculado sobre o body, e ele não pode depender de um campo que a API ignoraria. Pelo mesmo motivo,
+JSON com conteúdo depois do primeiro valor, como `{...} lixo`, responde 400. O `202` traz no
+`Location` o caminho relativo, igual ao `statusUrl`. O header é montado à mão, porque o
+`Response.location(URI)` do JAX-RS resolve o caminho contra a URI base da aplicação e, atrás do API
+Gateway, produz uma URL absoluta sem o stage.
 
-- `ConditionalCheckFailed` no `IDEMPOTENCY`: ler o registro existente com `GetItem` e `ConsistentRead`
-  (ou `ReturnValuesOnConditionCheckFailure = ALL_OLD`, se o Floci suportar; §13) e comparar o
-  `requestHash`. Mesmo hash devolve a mesma identidade; hash diferente, 409 `IDEMPOTENCY_CONFLICT`.
-- `TransactionConflict`: repetir com backoff e jitter e depois fazer `GetItem` com `ConsistentRead`. A
-  API responde 503 só se o registro continuar ausente.
+**Conflitos de idempotência.** O `TransactionConflict` é repetido no código, com backoff e jitter, em
+até 4 tentativas. Uma transação que continua cancelada, por qualquer motivo, é decidida pelo registro
+de idempotência, lido com `GetItem` e `ConsistentRead` (ou `ReturnValuesOnConditionCheckFailure =
+ALL_OLD`, se o Floci suportar; §13):
+
+- Registro presente: compara o `requestHash`. Mesmo hash devolve a mesma identidade; hash diferente,
+  409 `IDEMPOTENCY_CONFLICT`.
+- Registro ausente: a transação não gravou nada, e nenhuma outra criação com a chave foi aceita. A API
+  responde 503 `SERVICE_UNAVAILABLE`.
+
+Toda falha antes da aceitação durável responde 503 `SERVICE_UNAVAILABLE`, com a orientação de reenviar
+com a mesma `Idempotency-Key`. Além da transação cancelada sem registro de idempotência, isso cobre o
+timeout do SDK e o throttling ou 5xx do DynamoDB. Se a gravação aconteceu apesar do erro, o reenvio
+relê o registro e devolve a mesma cotação. Só um 4xx de serviço que não seja throttling continua 500.
 
 O mesmo tratamento vale para `CREATE_VERSION`, `SELECT_OFFER` e `RECONCILE`.
 
@@ -394,9 +467,15 @@ Seleção e nova versão escrevem o mesmo `META`. Por isso o DynamoDB deixa só 
 
 `unavailabilityReason` é um enum fechado no OpenAPI.
 
-**Pedido.** A `dispatch` recebe `kind`, `insurerId` e o `executionArn`. Ela cifra o token
-(AES-256-GCM com chave derivada do segredo `token-key`). O `eventId` do pedido é o UUIDv5 do
-`workRef`, sem o token. A `dispatch` é idempotente:
+**Listagem de ofertas.** O `GET /v1/quotes/{id}/versions/{v}/offers` pagina com `cursor` e `limit`. O
+`limit` vai de 1 a 100; ausente ou vazio (`limit=`), vale 20. Valor não numérico ou fora da faixa
+responde 400 `VALIDATION_ERROR`, com `fieldErrors[path=limit]`.
+
+**Pedido.** A `dispatch` recebe `kind`, `insurerId` e o `executionArn`. Ela cifra o token com
+AES-256-GCM, usando o `workRef` como dado associado. A chave é o HMAC-SHA256 do segredo `token-key`
+sobre o rótulo `quote-solution/task-token/v1`. O `eventId` do pedido é o UUIDv5 do `workRef`, sem o
+token. No `InsurerQuoteRequested`, o `risk.coverageProfile` vai resolvido no catálogo, como objeto
+(§3). A `dispatch` é idempotente:
 
 - Na primeira vez, uma transação faz Put do waiter `WAITING` e do outbox do pedido, os dois com
   `attribute_not_exists`. Na seguradora, a mesma transação passa o `RESULT` de `PENDING` para
@@ -406,7 +485,8 @@ Seleção e nova versão escrevem o mesmo `META`. Por isso o DynamoDB deixa só 
 - Se o waiter já tiver `resumePayload` (`RESUMING`, `DONE` ou `EXPIRED`), a `dispatch` chama
   `SendTaskSuccess` com o token novo e esse `resumePayload`.
 
-A `dispatch` não grava o `V#n`: as fases são dos passos do `workflow-steps` (§6).
+A `dispatch` não grava o `V#n`: as fases são dos passos do `workflow-steps` (§6). Na seguradora,
+depois da transação, ela atualiza o resumo do `META`, em best-effort (§4).
 
 **Retomada.** O `resume` lê o evento da fila `results`. Se agora ≥ `expiresAt` do waiter (o
 `deadlineAt` do pedido), grava `LATE` com o `CONSUMED` e para; como o prazo é imutável, a verificação
@@ -419,13 +499,20 @@ fica no código. Nos demais casos, faz uma única transação com:
   o mesmo pedido;
 - o `CONSUMED#<eventId>`.
 
-Se a condição falhar, o `resume` relê o waiter. `RESUMING` com o mesmo `resultEventId` segue para o
-`SendTaskSuccess`: é a retomada refeita na reentrega. Fora desse caso, se o `CONSUMED#<eventId>` já
-existe, o evento é descartado. Nos demais casos, grava o resultado tardio (§4)
-com o `CONSUMED`: `DUPLICATE` quando o waiter já retomou com outro resultado, `LATE` quando expirou ou
-o resultado já é terminal. Depois do `SendTaskSuccess`, marca `DONE` com a condição
+Se a transação for cancelada por `ConditionalCheckFailed`, o `resume` relê o waiter. `RESUMING` com o
+mesmo `resultEventId` segue para o `SendTaskSuccess`: é a retomada refeita na reentrega. Fora desse
+caso, se o `CONSUMED#<eventId>` já existe, o evento é descartado. Nos demais casos, grava o resultado
+tardio (§4) com o `CONSUMED`: `DUPLICATE` quando o waiter já retomou com outro resultado, `LATE` quando
+expirou ou o resultado já é terminal. Depois do `SendTaskSuccess`, marca `DONE` com a condição
 `status = RESUMING`. `TaskTimedOut` ou `InvalidToken` marcam `EXPIRED`, também só com
-`status = RESUMING`, para nunca rebaixar um `DONE`. Por fim, atualiza o resumo do `META` (§4).
+`status = RESUMING`, para nunca rebaixar um `DONE`. Por fim, atualiza o resumo do `META`, em
+best-effort (§4).
+
+Só o `ConditionalCheckFailed` leva a `DUPLICATE` ou `LATE`. Os outros motivos de cancelamento, como
+throttling, `ProvisionedThroughputExceeded` e o `TransactionConflict` que sobra depois das 4
+tentativas, não dizem nada sobre o estado gravado: o `resume` relança o erro, e a mensagem volta em
+`batchItemFailures`. A gravação do resultado tardio segue a mesma regra: só o `ConditionalCheckFailed`
+do `CONSUMED` descarta o evento.
 
 **Enriquecimento.** O `enrichmentWorker` trata a reentrega (abaixo), confere o `deadlineAt` antes de
 qualquer chamada (§9) e calcula a `queryKey`. Evidência válida no `REUSE` é `HIT`: uma transação grava o outbox `EnrichmentResolved` e o `CONSUMED` do pedido.
@@ -463,13 +550,23 @@ seguidor escrevem ou conferem o mesmo `INFLIGHT`, nenhum seguidor fica sem respo
 mesmo `workRef` já gravou, nesta ordem:
 
 1. A `QUERY` do seu `workRef` existe: ele foi líder e nunca se registra como seguidor de si mesmo. Com
-   `COMPLETED`, refaz o fan-out. Com `IN_FLIGHT`, não repete a chamada: passa a `QUERY` para `UNKNOWN`
-   se houver tentativa aberta (`FAILED` se não houver) e conclui a liderança com `FAILED`, se a
-   `fencingVersion` ainda for a sua.
+   `COMPLETED`, refaz o fan-out. Com `IN_FLIGHT`, não repete a chamada. Enquanto outra entrega pode
+   estar viva (regra abaixo), adia o pedido e não toca a `QUERY`. Depois desse limite, passa a `QUERY`
+   para `UNKNOWN` se houver tentativa aberta (`FAILED` se não houver) e conclui a liderança com
+   `FAILED`, se a `fencingVersion` ainda for a sua.
 2. O `CONSUMED` do pedido existe: o `HIT` já foi publicado.
 3. Existe `FOLLOWER#<v>#<workRef>` na liderança atual: com `COMPLETED`, publica para si o resultado
    gravado, com o mesmo `eventId` do fan-out; com `IN_FLIGHT`, não faz nada, porque o fan-out o
    alcança.
+
+**Entrega duplicada ainda viva.** A publicação é pelo menos uma vez, então duas entregas do mesmo
+pedido podem rodar ao mesmo tempo. Uma `QUERY` `IN_FLIGHT` cuja última `ATTEMPT` (o `startedAt` ou o
+`finishedAt` mais recente) é mais nova que `workerTimeoutSeconds` + 5 s pode pertencer a uma entrega
+que ainda está no HTTP ou no backoff entre tentativas. Nesse caso, a reentrega não a trata como
+interrompida e não abre nova tentativa. Ela reenvia o pedido com `DelaySeconds` até esse limite, pelo
+mesmo mecanismo da quota (§9), sem gastar `maxReceiveCount`, e não toca a `QUERY`. Os 5 s cobrem a
+diferença de relógio entre instâncias. A regra vale nos dois workers; o limite se apoia no fato de
+nenhuma invocação passar do timeout da função (§12).
 
 O fan-out lê todos os `FOLLOWER#` da `queryKey`, de qualquer `fencingVersion`: quando uma lease vence
 e outra mensagem assume a liderança (v+1), o novo líder também responde aos seguidores registrados na
@@ -486,8 +583,9 @@ repetir a chamada sem consultar o estado primeiro (M4).
 | Ausente | Segue os três passos abaixo |
 | `COMPLETED` ou `FAILED` | Nada: o outbox do resultado já existe |
 | `IN_FLIGHT` com `providerRequestId` | Refaz a metade do worker no `CORR#`, que é idempotente |
-| `IN_FLIGHT` com tentativa aberta, sem resposta | Passa para `UNKNOWN` e consulta a situação (`GET /sim/insurers/beta/quotes/{ref}`); sem API de situação, como na alpha, fica `UNKNOWN` para a reconciliação e nunca repete a chamada |
-| `IN_FLIGHT` sem tentativa aberta (só falhas antes do envio) | Segue com nova `ATTEMPT` se ainda couber em `workerRetries` e no `deadlineAt`; senão, `UNAVAILABLE` (§9) |
+| `IN_FLIGHT` com a última `ATTEMPT` (`startedAt` ou `finishedAt`) mais nova que `workerTimeoutSeconds` + 5 s | Pode ser uma entrega duplicada ainda viva, no HTTP ou no backoff: reenvia o pedido com `DelaySeconds` até esse limite, sem gastar `maxReceiveCount`, e não toca a `QUERY` (entrega duplicada ainda viva, acima) |
+| `IN_FLIGHT` com tentativa aberta, sem resposta, depois desse limite | Passa para `UNKNOWN` e consulta a situação (`GET /sim/insurers/beta/quotes/{ref}`); sem API de situação, como na alpha, fica `UNKNOWN` para a reconciliação e nunca repete a chamada |
+| `IN_FLIGHT` sem tentativa aberta (só falhas antes do envio), depois desse limite | Segue com nova `ATTEMPT` se ainda couber em `workerRetries` e no `deadlineAt`; senão, `UNAVAILABLE` (§9) |
 | `UNKNOWN` | Nada: a reconciliação cuida (M4) |
 
 1. Antes do HTTP, uma transação grava a `QUERY` (`IN_FLIGHT`, `attribute_not_exists`,
@@ -531,16 +629,38 @@ Classificação das respostas por protocolo:
 
 | Fornecedor | Resposta | Classificação |
 |---|---|---|
-| Enriquecimento | 200 | `FOUND` |
+| Enriquecimento | 200 com perfil legível | `FOUND` |
 | Enriquecimento | 404 declarado pelo provedor, com `notFoundRefs` | `NOT_FOUND` |
-| Enriquecimento | 5xx ou erro de conexão antes do envio | Transitório; esgotado o orçamento, `FAILED` |
-| Enriquecimento | 4xx de autenticação ou payload inválido | `FAILED`, nunca `NOT_FOUND` (RN07) |
-| Enriquecimento | Timeout de leitura depois do envio | `FAILED` para a quote, sem repetição; a `QUERY` fica `UNKNOWN` |
+| Enriquecimento | 404 sem essa declaração | `FAILED` com `UNDECLARED_NOT_FOUND`, nunca `NOT_FOUND` (RN07) |
+| Enriquecimento | 429, 5xx ou falha antes do envio | Transitório; esgotado o orçamento, `FAILED` |
+| Enriquecimento | Outros 4xx (autenticação, payload inválido, recusa) | `FAILED`, sem retry, nunca `NOT_FOUND` (RN07) |
+| Enriquecimento | 2xx ilegível, inclusive `marketValue` fora do formato decimal | `FAILED` com `INVALID_PROVIDER_RESPONSE` |
+| Enriquecimento | Sem resposta depois do envio | `FAILED` para a quote, sem repetição; a `QUERY` fica `UNKNOWN` |
 | Seguradora | Oferta | `QUOTED` |
 | Seguradora | Recusa | `DECLINED`, sem retry |
 | Seguradora | Pendência de dados | `NEEDS_INFORMATION` |
-| Seguradora | 5xx ou erro de conexão antes do envio | Transitório; esgotado o orçamento, `UNAVAILABLE` |
-| Seguradora | Timeout de leitura depois do envio | `UNKNOWN`, sem repetição |
+| Seguradora | 429, 5xx ou falha antes do envio | Transitório; esgotado o orçamento, `UNAVAILABLE` |
+| Seguradora | Outros 4xx | `UNAVAILABLE`, sem retry |
+| Seguradora | 2xx ilegível, inclusive oferta fora dos formatos do contrato | `UNAVAILABLE` com `INVALID_PROVIDER_RESPONSE` |
+| Seguradora | `insurerId` sem rota na provider | `UNAVAILABLE` com `UNSUPPORTED_INSURER`, sem chamada |
+| Seguradora | Sem resposta depois do envio | `UNKNOWN`, sem repetição |
+
+Só `ConnectException` (conexão recusada) e o timeout de conexão contam como falha antes do envio.
+Qualquer outra falha de rede, inclusive o timeout de leitura, pode ter chegado ao fornecedor e conta
+como sem resposta depois do envio.
+
+Uma oferta fora dos formatos do `InsurerResultRecorded` no AsyncAPI da provider é resposta ilegível,
+não oferta. Isso inclui:
+
+- `validUntil` que não é date-time;
+- `currency` fora de `^[A-Z]{3}$`;
+- `installments.count` menor que 1;
+- valor monetário (`premiumTotal`, `installments.amount`, `coverages.insuredAmount`,
+  `deductibles.amount`) com sinal, expoente ou separador, porque o pattern é `^\d+(\.\d+)?$`;
+- cobertura sem rótulo: `coverages[].label` é obrigatório.
+
+O `marketValue` do perfil de enriquecimento segue o mesmo pattern. O `validUntil` aceito é normalizado
+para UTC com milissegundos.
 
 **Dono do retry.** O worker é o único dono do retry: em processo, até `workerRetries` (2), com backoff
 exponencial e jitter. Cada retry grava nova `ATTEMPT` e reserva quota. O cliente HTTP fica sem retry
@@ -551,13 +671,19 @@ reprocessamento. Com o prazo vencido, grava resultado terminal sem chamar: `UNAV
 `reasonCode = DEADLINE_EXCEEDED_BEFORE_CALL` na seguradora, `FAILED` no enriquecimento.
 
 **Quota.** A reserva condicional vale para a seguradora e para o líder do enriquecimento, só no `MISS`;
-`HIT` e `JOIN` não consomem. Sem quota, o worker reenvia a mensagem com `DelaySeconds` até a virada da
-janela, se ainda couber no `deadlineAt`, e apaga a original, para não gastar `maxReceiveCount`. Se não
-couber, grava `UNAVAILABLE` com `QUOTA_EXHAUSTED` (`FAILED` no enriquecimento), sem chamada.
+`HIT` e `JOIN` não consomem. Sem quota na primeira reserva, o worker reenvia a mensagem com
+`DelaySeconds` até a virada da janela, se ainda couber no `deadlineAt`, e apaga a original, para não
+gastar `maxReceiveCount`. Se não couber, grava `UNAVAILABLE` com `QUOTA_EXHAUSTED` (`FAILED` no
+enriquecimento), sem chamada. Quando a quota acaba no meio dos retries, a seguradora segue a mesma
+regra, com reenvio atrasado do pedido; o enriquecimento conclui na hora com `FAILED` e
+`QUOTA_EXHAUSTED`, sem reenvio.
 
 **Invariantes de tempo.** Os valores estão no §12.
 
 - Timeout da função do worker ≥ `providerHttpTimeoutSeconds` × 3 + `retryBackoffMaxSeconds`.
+- `WORKER_TIMEOUT_SECONDS` = timeout da função do `enrichmentWorker` e do `insurerWorker`. A reentrega
+  usa esse valor para separar uma entrega duplicada viva de uma interrompida (§8), e o
+  `ServerlessConfigurationTest` confere a igualdade.
 - `enrichmentLeaseSeconds` > timeout da função do `enrichmentWorker`.
 - Toda fila tem `VisibilityTimeout` explícito, maior ou igual ao timeout da função que a consome. A AWS
   valida isso ao criar o ESM e recomenda cerca de 6 vezes. O Floci não valida (§13), então o teste de
@@ -568,11 +694,17 @@ couber, grava `UNAVAILABLE` com `QUOTA_EXHAUSTED` (`FAILED` no enriquecimento), 
   PRD (§9), já que o Floci ignora `TimeoutSecondsPath`.
 
 Um crash do worker só é reentregue depois do `VisibilityTimeout`, que passa do prazo da etapa. A etapa
-termina em `TIMED_OUT`, e o resultado que chegar depois vira evidência tardia.
+termina em `TIMED_OUT`, e o resultado que chegar depois vira evidência tardia. Nessa reentrega, a
+última `ATTEMPT` já é mais velha que `workerTimeoutSeconds` + 5 s (150 s de visibilidade contra 30 s no
+local), então a tentativa é tratada como interrompida pela tabela do §8. Outra coisa é uma entrega
+duplicada do mesmo pedido que chega enquanto a primeira ainda roda, no HTTP ou no backoff entre
+tentativas: nos dois workers, ela é adiada com `DelaySeconds` até esse limite, sem tocar a `QUERY` (§8).
 
-**Conflitos de transação.** `TransactionConflict` é repetido no código, com backoff e jitter, porque o
-SDK não repete esse caso. O Floci não emula o conflito (§13): esse caminho tem teste unitário e é
-repetido no M6.
+**Conflitos de transação.** `TransactionConflict` é repetido no código, com backoff e jitter, em até 4
+tentativas, porque o SDK não repete esse caso. O Floci não emula o conflito (§13). Esse caminho tem
+testes unitários na API da quote (o 503 e o replay da criação, no `QuoteApiContractTest`) e no `resume`
+(o reenvio da mensagem em vez de `LATE` ou `DUPLICATE`, no `ResumeCancellationTest`), e é repetido no
+M6.
 
 **DLQs e reprocessamento.** Toda fila de trabalho tem DLQ, inclusive a `sim-callbacks`. A
 `stream-failures` é só destino de falha do stream: não tem consumidor nem é reprocessada (§7). O
@@ -584,7 +716,8 @@ criar outra função.
 
 **Reconciliação (M4).** O `reconciler` da quote, a cada minuto:
 
-- republica `OUTBOX_PENDING` mais antigo que `outboxRepublishAfterSeconds` (já no M1);
+- republica `OUTBOX_PENDING` com `gsi2sk` mais antigo que `outboxRepublishAfterSeconds` (já no M1;
+  §7);
 - retoma waiters `RESUMING` parados com o `resumePayload` (T13);
 - finaliza versões `ACTIVE_VERSION` cuja execução terminou em `TIMED_OUT`, `FAILED` ou `ABORTED`
   (`DescribeExecution` pelo `executionArn`): uma transação condicionada à `revision` passa os `RESULT`
@@ -597,7 +730,8 @@ O `reconciler` da provider, a cada minuto: republica `OUTBOX_PENDING` (já no M1
 vencidas; passa para `UNKNOWN` as consultas `QUERY_IN_FLIGHT` além do `deadlineAt`, como as da
 `vehicle-beta-silent`; consulta a situação das consultas `UNKNOWN` quando há API de situação e, sem
 ela, abre `UNKNOWN_QUERY`; processa inbox `RECEIVED` parada e marca `UNMATCHED`, com
-`UNMATCHED_CALLBACK`; abre `STALE_OUTBOX` para outbox envelhecida; e reprocessa as DLQs.
+`UNMATCHED_CALLBACK`; abre `STALE_OUTBOX` para outbox envelhecida, com a idade medida pelo
+`createdAt` e não pelo `gsi2sk` (§7); e reprocessa as DLQs.
 
 **Alarmes (M4).** Declarados como `AWS::CloudWatch::Alarm` nas stacks das soluções, com os limiares
 do §12. Workers e reconcilers publicam as métricas próprias em EMF.
@@ -617,7 +751,7 @@ O Floci só reconhece o tipo do recurso. O disparo dos alarmes é verificado no 
 
 | Rota | Comportamento |
 |---|---|
-| `POST /sim/enrichment/profiles` | Perfil do veículo e do condutor; 404 `NOT_FOUND` com `notFoundRefs: ["vehicleRef"]` para veículo desconhecido; 503 nas duas primeiras chamadas de cada referência de pedido para `vehicle-flaky`; 504 sempre para `vehicle-enrichment-down` |
+| `POST /sim/enrichment/profiles` | Perfil sintético do veículo e do condutor; 404 `NOT_FOUND` com `notFoundRefs` (`vehicleRef`, `principalDriverRef` ou os dois) para referência que contém `unknown` ou `not-found`; 503 nas duas primeiras chamadas de cada referência de pedido para `vehicle-flaky`; 504 sempre para `vehicle-enrichment-down` |
 | `POST /sim/insurers/alpha/quotes` | Seguradora síncrona: oferta; `DECLINED` para `vehicle-alpha-declines`; 503 para `vehicle-alpha-down` |
 | `POST /sim/insurers/beta/quotes` | Seguradora assíncrona: recebe `clientReference`, responde `202` com `providerRequestId` e agenda o callback, com o `clientReference`, na fila `sim-callbacks` |
 | `GET /sim/insurers/beta/quotes/{ref}` | Situação atual por `providerRequestId` ou `clientReference`, para reconciliação (M4) |
@@ -627,6 +761,11 @@ callback, gera `TIMED_OUT`); `vehicle-beta-duplicate` (callback enviado duas vez
 `vehicle-beta-late` (callback depois do prazo); `vehicle-beta-needs-info`; `vehicle-beta-early`
 (callback enviado antes da resposta `202`, só com o `providerRequestId`, para exercitar o encontro no
 `CORR#` e o T12 no M3).
+
+Os simuladores não leem o catálogo: decidem só pela referência recebida. O perfil do enriquecimento é
+sintético e determinístico. O ano do veículo sai de um ano de quatro dígitos na referência
+(`vehicle-classic-1998` dá 1998) ou, sem ele, de um hash da referência entre 2012 e 2023, sempre a
+partir de 2000. Por isso só uma referência com ano anterior a 2000 exercita o `NO_APPLICABLE_INSURER`.
 
 O estado dos simuladores fica na tabela `provider-solution-<stage>-simulators`, com TTL, que só a
 Lambda `simulators` acessa. O contador do `vehicle-flaky` é por referência do pedido (o
@@ -644,7 +783,9 @@ Regras de laboratório:
 
 - Elegibilidade (`elig-1`, só dados de entrada): veículo com `salvage = true` é `INELIGIBLE`
   (`SALVAGE_VEHICLE`); condutor sem `licenseDate` é `NEEDS_INFORMATION` (`missingFields` com
-  `risk.principalDriverRef`, `MISSING_LICENSE_DATE`).
+  `risk.principalDriverRef`, `MISSING_LICENSE_DATE`). Com as duas condições ao mesmo tempo, vale
+  `NEEDS_INFORMATION`, na ordem da precedência do PRD (§8): entrada incompleta vem antes da regra que
+  impede continuar.
 - Enriquecimento obrigatório: `NOT_FOUND` vira `NEEDS_INFORMATION` com `ENRICHMENT_NOT_FOUND`. Cada
   item de `notFoundRefs` vira um `missingFields`: `vehicleRef` → `risk.vehicleRef`,
   `principalDriverRef` → `risk.principalDriverRef`.
@@ -669,8 +810,9 @@ smallrye.jwt.required.claims=token_use,client_id
 ```
 
 - `JWT_ISSUER` por stage: no local, `http://floci:4566/<poolId>`, igual ao `issuer` do
-  `openid-configuration`; na AWS, `https://cognito-idp.<region>.amazonaws.com/<poolId>`, via
-  `Fn::Sub`.
+  `openid-configuration`; na AWS, `https://cognito-idp.<region>.amazonaws.com/<poolId>`. O valor é
+  montado com `Fn::Join` do parâmetro `jwtIssuerBase` (§12) e do `Ref` do user pool. `Fn::Sub` não
+  serve, porque a sintaxe `${...}` dele conflita com a de variáveis do Serverless.
 - `mp.jwt.verify.audiences` não é definido, porque o access token do Cognito não tem `aud`.
 - ID tokens são rejeitados: `smallrye.jwt.required.claims` exige `token_use` e `client_id`, e um
   `SecurityIdentityAugmentor` confere `token_use = access` e `client_id` igual ao app client.
@@ -699,14 +841,17 @@ plataforma; aparece no alarme de callbacks `UNMATCHED` e no log da provider. `RE
 |---|---|---|
 | `quoteDeadlineSeconds` | 300 | Prazo total da versão (`deadlineAt`) |
 | `workflowMarginSeconds` | 60 | Margem somada ao `TimeoutSeconds` da máquina (rede de segurança) |
-| `enrichmentTimeoutSeconds` | 20 | Espera do enriquecimento (ver nota) |
-| `insurerTimeoutSeconds` | 20 | Espera por seguradora (90 na AWS; ver nota) |
+| `workflowTimeoutSeconds` | 360 | `TimeoutSeconds` da máquina: `quoteDeadlineSeconds` + `workflowMarginSeconds`, declarado explícito porque o Serverless não soma variáveis; o teste de configuração confere a soma |
+| `jwtIssuerBase` | `http://floci:4566` | Base do `JWT_ISSUER`, unida ao id do user pool com `Fn::Join` (§11) |
+| `enrichmentTimeoutSeconds` | 20 | Espera do enriquecimento (ver a medição abaixo) |
+| `insurerTimeoutSeconds` | 20 | Espera por seguradora (90 na AWS; ver a medição abaixo) |
 | `mapConcurrency` | 2 | Itens simultâneos do Map |
 | `maxInsurers` | 2 | Seguradoras por versão, no máximo |
 | `stepsMarginSeconds` | 30 | Margem dos passos na invariante de orçamento |
 | `providerHttpTimeoutSeconds` | 5 | Timeout de conexão e leitura por chamada |
 | `workerRetries` | 2 | Retries do worker, além da tentativa inicial |
 | `retryBackoffMaxSeconds` | 3 | Soma máxima dos backoffs (exponencial com jitter) |
+| `workerTimeoutSeconds` | 25 | Timeout das funções `enrichmentWorker` e `insurerWorker`. Chega aos workers na variável de ambiente `WORKER_TIMEOUT_SECONDS`, que vira `ProviderProperties.workerTimeoutSeconds` (padrão 25), para a reentrega reconhecer uma entrega duplicada viva (§8). O `ServerlessConfigurationTest` confere que a variável e o timeout são iguais |
 | `enrichmentLeaseSeconds` | 30 | Lease da liderança |
 | `inflightTombstoneSeconds` | 3600 | TTL da lápide do `INFLIGHT` |
 | `enrichmentValiditySeconds` | 900 | Validade do enriquecimento simulado |
@@ -729,22 +874,36 @@ plataforma; aparece no alarme de callbacks `UNMATCHED` e no log da provider. `RE
 | provider `reconcile-requests` | `reconcileWorker` | 25 s | 150 s | 3 |
 | provider `sim-callbacks` | `simCallbackSender` | 15 s | 90 s | 5 |
 
-Conferência das invariantes do §9 com esses valores: 5 × 3 + 3 = 18 s ≤ 25 s; lease de 30 s > 25 s;
-visibilidade de 6 vezes o timeout; 20 + 1 × 20 + 30 = 70 s ≤ 300 s no local e 20 + 1 × 90 + 30 =
-140 s ≤ 300 s na AWS.
+Conferência das invariantes do §9 com esses valores: 5 × 3 + 3 = 18 s ≤ 25 s; `WORKER_TIMEOUT_SECONDS`
+= 25 s, o timeout dos workers; lease de 30 s > 25 s; visibilidade de 6 vezes o timeout; 20 + 1 × 20 +
+30 = 70 s ≤ 300 s no local e 20 + 1 × 90 + 30 = 140 s ≤ 300 s na AWS.
 
-Nota: no M1, medir no Floci o tempo da cadeia do enriquecimento (stream da quote, fila de pedidos,
-stream da provider e fila de resultados, com os cold starts). Se ela não couber em 20 s, usar
-`enrichmentTimeoutSeconds` e `insurerTimeoutSeconds` de 45 a 60 s no stage `local`; a invariante
-continua valendo (60 + 60 + 30 ≤ 300). O Floci remove o container de uma Lambda depois de 300 s sem
-invocação (§13), então a medição separa a primeira execução, com cold start, das seguintes, e os
-cenários ponta a ponta não podem supor funções aquecidas.
+**Medição no Floci (M1).** A cadeia do T01 com uma seguradora (stream da quote, fila de pedidos, stream
+da provider e fila de resultados) foi medida no Floci do `compose.yaml`. A coluna "fria" é a primeira
+execução, com os cold starts; a "quente", as seguintes.
+
+| Trecho | Fria | Quente |
+|---|---|---|
+| Resposta do `POST` | 2,32 s | 0,01 s |
+| `POST` até o início da execução | 1,92 s | 0,34 a 0,67 s |
+| Enriquecimento | 11,9 s | 3,1 s |
+| Seguradora `alpha` | 4,55 s | 2,9 s |
+| Execução inteira | 17,96 s | 6,2 s |
+| `POST` até `TERMINAL` | 22,25 s | 6,5 a 7,1 s |
+
+Os 20 s de `enrichmentTimeoutSeconds` e `insurerTimeoutSeconds` no stage `local` bastam: o
+enriquecimento frio deixa cerca de 8 s de folga. O Floci remove o container de uma Lambda depois de
+300 s sem invocação (§13), então os cenários ponta a ponta não podem supor funções aquecidas.
+
+Latência da API aquecida, em 30 requisições sequenciais: `POST` com p50 de 20,3 ms e p95 de 26,7 ms;
+`GET` com p50 de 10,3 ms e p95 de 13,3 ms. O teste de carga do PRD (10 criações por segundo durante
+5 min) não foi feito.
 
 ## 13. Limites do Floci 2.4.0
 
-Comportamentos verificados nas revisões do desenho e no spike do M0. "Não verificado" marca o que
-nenhum teste cobriu ainda; nessas linhas, a coluna do meio diz a alternativa caso o Floci não atenda. A
-coluna M6 marca o que precisa ser repetido na AWS.
+Comportamentos verificados nas revisões do desenho, no spike do M0 e na integração do M1. "Não
+verificado" marca o que nenhum teste cobriu ainda; nessas linhas, a coluna do meio diz a alternativa
+caso o Floci não atenda. A coluna M6 marca o que precisa ser repetido na AWS.
 
 | Recurso | Resultado no Floci | M6 |
 |---|---|---|
@@ -771,10 +930,11 @@ coluna M6 marca o que precisa ser repetido na AWS.
 | `VisibilityTimeout` × timeout da função no ESM de SQS | Não validado: o Floci aceita visibilidade menor que o timeout, e a AWS rejeita com `InvalidParameterValueException`. O teste de configuração confere a relação (§9) | Repetir |
 | `DelaySeconds` por mensagem | Funciona: com 12 s de atraso, a mensagem chegou à função em 13 s, contra 1 s sem atraso | |
 | Regra do EventBridge com SQS ou Lambda como alvo | Funciona | |
-| EventBridge Scheduler | `rate(5 minutes)` dispara (ADR 0007). `rate(1 minute)` não foi verificado; o primeiro teste do republicador, no M1, confere. Se não disparar, o `reconciler` roda a cada 5 min e o `outboxRepublishAfterSeconds` não muda | |
-| `/v1/{proxy+}` e `/sim/{proxy+}` em `AWS_PROXY` | Não verificado; rota com parâmetro de caminho funciona (receipt). Se `{proxy+}` falhar, declarar uma rota por recurso do contrato | |
-| Lambda chamando o API Gateway da própria stack (`PROVIDERS_BASE_URL`) | Não verificado; as Lambdas já alcançam `http://floci:4566` para as APIs AWS, falta o caminho `_user_request_`. Se falhar, o cliente de fornecedor e o `simCallbackSender` ganham, só no stage `local`, uma implementação que invoca a Lambda de destino com um evento de proxy do API Gateway | |
-| `serverless-step-functions`: IAM de `waitForTaskToken` e `TimeoutSeconds` padrão em `lambda:invoke` | Não verificado. O desenho declara `TimeoutSeconds` em toda tarefa (§6) e não depende do padrão | Repetir (IAM) |
+| EventBridge Scheduler | `rate(5 minutes)` dispara (ADR 0007). `rate(1 minute)` também dispara, nas duas soluções: no T19 do `quote-e2e`, um `OUTBOX_PENDING` que o filtro do stream não entrega foi republicado pelos `reconciler` da quote e da provider, e o teste passou em 45 s. Numa medição anterior do M1, só na quote, a republicação levou de 37 a 66 s, e o T19 terminou com uma única execução | |
+| `/v1/{proxy+}` e `/sim/{proxy+}` em `AWS_PROXY` | Funcionam: a API da quote atende `/v1/{proxy+}` e os simuladores da provider, `/sim/{proxy+}` | |
+| Lambda chamando o API Gateway da própria stack (`PROVIDERS_BASE_URL`) | Funciona: os workers da provider chamam os simuladores por `http://floci:4566/restapis/<id>/local/_user_request_` | |
+| Desserialização de `SQSEvent` e `DynamodbEvent` (`aws-lambda-java-events` com `aws-lambda-java-serialization`) | Funciona nas Lambdas da provider (§7) | |
+| `serverless-step-functions`: IAM de `waitForTaskToken` e `TimeoutSeconds` padrão em `lambda:invoke` | Não verificado: o Floci não aplica IAM, e as pendências de IAM estão no §2. O desenho declara `TimeoutSeconds` em toda tarefa (§6) e não depende do padrão | Repetir (IAM) |
 | `iss` do Cognito | `http://floci:4566/<poolId>`, com o host do `FLOCI_HOSTNAME` mesmo em chamada por `localhost`; igual ao `issuer` do `openid-configuration`. O `jwks_uri` usa o mesmo host. Tokens `RS256` com `kid = <poolId>`; a assinatura confere com o JWKS | Repetir (issuer da AWS) |
 | Claims dos tokens do Cognito | Access token: `token_use = access`, `client_id`, `cognito:groups`, sem `aud`. ID token: `token_use = id`, `aud = client_id`, `cognito:groups`. `InitiateAuth` com `USER_PASSWORD_AUTH` devolve tokens sem challenge para usuário `CONFIRMED` | |
 | Containers de Lambda ociosos | Removidos depois de 300 s sem invocação (verificação a cada 30 s); a invocação seguinte paga o cold start. Chave `floci.services.lambda.container-idle-timeout-seconds`; a variável de ambiente equivalente não foi testada | |
@@ -784,7 +944,7 @@ coluna M6 marca o que precisa ser repetido na AWS.
 
 | Marco | Casos do PRD | Onde |
 |---|---|---|
-| M1 | T01 (uma seguradora), T02, T03, T19, T23, T24 | Unitários no `domain`, integração com Floci em `api` e `functions`, `quote-e2e` |
+| M1 | T01 (uma seguradora), T02, T03, T19, T23, T24 | Unitários no `domain`, integração com Floci em `api` e `functions` (o T19 também no `quote-functions`), `quote-e2e` (T01, T02, T03, T19, T23 e T24) |
 | M2 | T04, T05, T06, T15, T25, T27 | Integração com Floci em `provider-functions`, `quote-e2e` |
 | M3 | T01, T07, T08, T11, T12, T21, T26 | `provider-functions`, `provider-api`, `quote-e2e` |
 | M4 | T09, T10, T13, T14, T16, T17, T20, T31 | `quote-functions`, `provider-functions`, `quote-e2e` |
@@ -797,8 +957,11 @@ Além dos casos do PRD:
   registro a registro, com reentrega por `ReportBatchItemFailures`; teste de configuração das
   invariantes de orçamento e de visibilidade × timeout; desserialização de `SQSEvent` e
   `DynamodbEvent` na provider; catálogo dentro do `-lambda.zip`; issuer lido do
-  `openid-configuration` nos `@QuarkusTest`; medição da cadeia do enriquecimento; rotas `{proxy+}` e
-  chamada ao API Gateway da própria stack, ainda não verificadas (§13).
+  `openid-configuration` nos `@QuarkusTest`; medição da cadeia do enriquecimento (§12); rotas
+  `{proxy+}` e chamada ao API Gateway da própria stack, verificadas no Floci (§13).
+- M1, variante do T01: o T01 do PRD tem duas seguradoras. No M1, ele roda com uma só, com o
+  `vehicle-van-2022` e uso `COMMERCIAL`, que só cota na alpha (§10). O T01 com duas seguradoras entra
+  no M3, com a beta.
 - M2: o harness limpa `REUSE#` e `INFLIGHT#` antes de T04, T05 e T06.
 - M3: T12 com `vehicle-beta-early`; T21 também no provedor de enriquecimento.
 - M4: o `POST /v1/quotes/{id}/versions` entra no M4, porque o T17 está no M4; o bloqueio de seleção em
@@ -809,3 +972,19 @@ Além dos casos do PRD:
   visibilidade × timeout, issuer do Cognito, recuperação e disparo dos alarmes.
 
 Cada teste leva o identificador do caso no nome (por exemplo, `t02_resubmissionReturnsSameQuote`).
+
+**Orçamento de espera do `quote-e2e`.** Os casos do fluxo não têm número próprio de espera: leem o
+bloco `params` do `serverless.yml` da quote, no stage do teste. O T01 e o T02 esperam pela invariante
+do §9 com uma seguradora (20 + 1 × 20 + 30 = 70 s no local). O T03, o T23 e o T24 terminam nos passos
+simples e esperam `stepsMarginSeconds` (30 s). O polling segue o `retryAfterSeconds` (3 s).
+
+O T19 é a exceção, porque depende do agendamento e não da máquina de estado. Ele grava, nas tabelas
+implantadas da quote e da provider, um `OUTBOX_PENDING` de 10 minutos atrás que a relay nunca vê: o
+`INSERT` sai com `type = E2E_PROBE`, e um `UPDATE` posterior troca para `OUTBOX`; o filtro do stream
+ignora esse `MODIFY` (§7). O `detail-type` `ReconcilerProbe` não tem regra no barramento. O teste espera
+até 3 min, com polling de 5 s, pelo `publishedAt` e pela remoção do `gsi2pk` nas duas tabelas.
+
+**Seleção de módulos no Maven 3.9.** `mvn -pl <solução> -am verify` seleciona só o POM agregador da
+solução e não roda teste nenhum. Para rodar os testes de uma solução, liste os módulos, como em
+`mvn -pl quote-solution/domain,quote-solution/api,quote-solution/functions -am verify`, ou acrescente
+`-amd` (`mvn -pl quote-solution -am -amd verify`).
