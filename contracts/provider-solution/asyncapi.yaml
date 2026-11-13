@@ -75,24 +75,24 @@ channels:
       `OperationIssueUpdated` com outra regra, de alvo na fila `quote-solution-{stage}-issues`.
     parameters:
       stage:
-        $ref: '#/components/parameters/stage'
+        $ref: "#/components/parameters/stage"
     messages:
       enrichmentResolved:
-        $ref: '#/components/messages/EnrichmentResolved'
+        $ref: "#/components/messages/EnrichmentResolved"
       insurerResultRecorded:
-        $ref: '#/components/messages/InsurerResultRecorded'
+        $ref: "#/components/messages/InsurerResultRecorded"
       queryReconciled:
-        $ref: '#/components/messages/QueryReconciled'
+        $ref: "#/components/messages/QueryReconciled"
       operationIssueRaised:
-        $ref: '#/components/messages/OperationIssueRaised'
+        $ref: "#/components/messages/OperationIssueRaised"
       operationIssueUpdated:
-        $ref: '#/components/messages/OperationIssueUpdated'
+        $ref: "#/components/messages/OperationIssueUpdated"
       enrichmentRequested:
-        $ref: '../quote-solution/asyncapi.yaml#/components/messages/EnrichmentRequested'
+        $ref: "../quote-solution/asyncapi.yaml#/components/messages/EnrichmentRequested"
       insurerQuoteRequested:
-        $ref: '../quote-solution/asyncapi.yaml#/components/messages/InsurerQuoteRequested'
+        $ref: "../quote-solution/asyncapi.yaml#/components/messages/InsurerQuoteRequested"
       queryReconcileRequested:
-        $ref: '../quote-solution/asyncapi.yaml#/components/messages/QueryReconcileRequested'
+        $ref: "../quote-solution/asyncapi.yaml#/components/messages/QueryReconcileRequested"
 operations:
   receiveEnrichmentRequested:
     action: receive
@@ -110,9 +110,9 @@ operations:
       esgotada sem caber no prazo, o pedido conclui a própria consulta sem chamada e sem liderança, com `MISS` e
       `FAILED` (`DEADLINE_EXCEEDED_BEFORE_CALL` ou `QUOTA_EXHAUSTED`).
     channel:
-      $ref: '#/channels/platformEvents'
+      $ref: "#/channels/platformEvents"
     messages:
-      - $ref: '#/channels/platformEvents/messages/enrichmentRequested'
+      - $ref: "#/channels/platformEvents/messages/enrichmentRequested"
   receiveInsurerQuoteRequested:
     action: receive
     title: O insurerWorker cota numa seguradora
@@ -125,9 +125,9 @@ operations:
       consulta fica `UNKNOWN` para a reconciliação (M4) e nenhum evento é publicado. A quota de cada provedor é
       comum a todos os workflows (T21).
     channel:
-      $ref: '#/channels/platformEvents'
+      $ref: "#/channels/platformEvents"
     messages:
-      - $ref: '#/channels/platformEvents/messages/insurerQuoteRequested'
+      - $ref: "#/channels/platformEvents/messages/insurerQuoteRequested"
   receiveQueryReconcileRequested:
     action: receive
     title: O reconcileWorker reconcilia uma consulta a pedido de um operador (M4)
@@ -141,23 +141,23 @@ operations:
       `InsurerResultRecorded` de sempre. A reentrega depois do resultado não faz nada. A API da quote publica o pedido
       a partir do M5.
     channel:
-      $ref: '#/channels/platformEvents'
+      $ref: "#/channels/platformEvents"
     messages:
-      - $ref: '#/channels/platformEvents/messages/queryReconcileRequested'
+      - $ref: "#/channels/platformEvents/messages/queryReconcileRequested"
   emitEnrichmentResolved:
     action: send
     title: Resultado do enriquecimento, um por pedido
     channel:
-      $ref: '#/channels/platformEvents'
+      $ref: "#/channels/platformEvents"
     messages:
-      - $ref: '#/channels/platformEvents/messages/enrichmentResolved'
+      - $ref: "#/channels/platformEvents/messages/enrichmentResolved"
   emitInsurerResultRecorded:
     action: send
     title: Resultado terminal de uma seguradora
     channel:
-      $ref: '#/channels/platformEvents'
+      $ref: "#/channels/platformEvents"
     messages:
-      - $ref: '#/channels/platformEvents/messages/insurerResultRecorded'
+      - $ref: "#/channels/platformEvents/messages/insurerResultRecorded"
   emitQueryReconciled:
     action: send
     title: Resultado de uma reconciliação manual (M4)
@@ -166,9 +166,9 @@ operations:
       a organização, ainda está em voo dentro do prazo ou continua `UNKNOWN`. O `revision` é o do `OPERATION#`, em
       que o `RUNNING` é a revisão 1, então o resultado sai com a revisão 2.
     channel:
-      $ref: '#/channels/platformEvents'
+      $ref: "#/channels/platformEvents"
     messages:
-      - $ref: '#/channels/platformEvents/messages/queryReconciled'
+      - $ref: "#/channels/platformEvents/messages/queryReconciled"
   emitOperationIssue:
     action: send
     title: Ocorrência operacional aberta ou atualizada (M4)
@@ -183,10 +183,10 @@ operations:
       exceto os próprios eventos de ocorrência. O `issueId` é `is_` + os 32 primeiros hexadecimais do SHA-256 de
       `type|alvo`.
     channel:
-      $ref: '#/channels/platformEvents'
+      $ref: "#/channels/platformEvents"
     messages:
-      - $ref: '#/channels/platformEvents/messages/operationIssueRaised'
-      - $ref: '#/channels/platformEvents/messages/operationIssueUpdated'
+      - $ref: "#/channels/platformEvents/messages/operationIssueRaised"
+      - $ref: "#/channels/platformEvents/messages/operationIssueUpdated"
 components:
   parameters:
     stage:
@@ -201,7 +201,7 @@ components:
       summary: Resultado do enriquecimento para um pedido. `eventId` = UUIDv5 de `queryId|workRef`.
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/EnrichmentResolvedEvent'
+        $ref: "#/components/schemas/EnrichmentResolvedEvent"
       examples:
         - name: found
           payload:
@@ -209,8 +209,8 @@ components:
             detail-type: EnrichmentResolved
             detail:
               eventId: 10e8cdee-fc77-5a26-b5b1-de8100101838
-              occurredAt: '2026-11-11T19:31:15.035Z'
-              schemaVersion: '1'
+              occurredAt: "2026-11-11T19:31:15.035Z"
+              schemaVersion: "1"
               workRef: wr_8829bb26c0c0a15c44c4cd6c5ef1e50f
               quoteId: m1chk-df5690-vehicle-hatch-2021
               version: 1
@@ -225,20 +225,20 @@ components:
                   make: Volkswagen
                   model: Polo
                   year: 2021
-                  marketValue: '75000.00'
+                  marketValue: "75000.00"
                 principalDriver:
                   ref: driver-acme-ana
                   licenseYears: 14
                   claimsLast5Years: 1
-              reusableUntil: '2026-11-11T19:46:14.992Z'
+              reusableUntil: "2026-11-11T19:46:14.992Z"
         - name: not-found
           payload:
             source: mmda.provider
             detail-type: EnrichmentResolved
             detail:
               eventId: fd7a3501-0173-551c-8b4f-817ad995d999
-              occurredAt: '2026-11-11T19:31:15.695Z'
-              schemaVersion: '1'
+              occurredAt: "2026-11-11T19:31:15.695Z"
+              schemaVersion: "1"
               workRef: wr_ddcab35a31643c3f453b7e56f29e3eb4
               quoteId: m1chk-df5690-vehicle-not-found
               version: 1
@@ -249,15 +249,15 @@ components:
               resultType: NOT_FOUND
               notFoundRefs:
                 - vehicleRef
-              reusableUntil: '2026-11-11T19:46:15.695Z'
+              reusableUntil: "2026-11-11T19:46:15.695Z"
         - name: failed
           payload:
             source: mmda.provider
             detail-type: EnrichmentResolved
             detail:
               eventId: 86efc52c-253d-5ae9-a1bb-adcc745f2ec3
-              occurredAt: '2026-11-11T19:31:18.415Z'
-              schemaVersion: '1'
+              occurredAt: "2026-11-11T19:31:18.415Z"
+              schemaVersion: "1"
               workRef: wr_997ead7aee7106c3fe4d9b07a9e45759
               quoteId: m1chk-df5690-vehicle-enrichment-down
               version: 1
@@ -273,8 +273,8 @@ components:
             detail-type: EnrichmentResolved
             detail:
               eventId: 1f8f0e46-e783-5422-88e6-0d9149b9dce2
-              occurredAt: '2026-11-11T19:31:15.061Z'
-              schemaVersion: '1'
+              occurredAt: "2026-11-11T19:31:15.061Z"
+              schemaVersion: "1"
               workRef: wr_de761ff8b1a3cd5b50226c10cb5d5848
               quoteId: m2chk-7c41e2-join-hatch-2021
               version: 1
@@ -289,20 +289,20 @@ components:
                   make: Volkswagen
                   model: Polo
                   year: 2021
-                  marketValue: '75000.00'
+                  marketValue: "75000.00"
                 principalDriver:
                   ref: driver-acme-ana
                   licenseYears: 14
                   claimsLast5Years: 1
-              reusableUntil: '2026-11-11T19:46:14.992Z'
+              reusableUntil: "2026-11-11T19:46:14.992Z"
         - name: hit
           payload:
             source: mmda.provider
             detail-type: EnrichmentResolved
             detail:
               eventId: b0dce761-24cf-5bfd-8cbc-022c7524c5a0
-              occurredAt: '2026-11-11T19:33:02.418Z'
-              schemaVersion: '1'
+              occurredAt: "2026-11-11T19:33:02.418Z"
+              schemaVersion: "1"
               workRef: wr_165ece057a6748fc598b9b95ce8d579b
               quoteId: m2chk-7c41e2-hit-hatch-2021
               version: 1
@@ -317,19 +317,19 @@ components:
                   make: Volkswagen
                   model: Polo
                   year: 2021
-                  marketValue: '75000.00'
+                  marketValue: "75000.00"
                 principalDriver:
                   ref: driver-acme-ana
                   licenseYears: 14
                   claimsLast5Years: 1
-              reusableUntil: '2026-11-11T19:46:14.992Z'
+              reusableUntil: "2026-11-11T19:46:14.992Z"
     InsurerResultRecorded:
       name: InsurerResultRecorded
       title: Evento InsurerResultRecorded
       summary: Resultado terminal de uma seguradora para um pedido. `eventId` = UUIDv5 do `queryId`.
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/InsurerResultRecordedEvent'
+        $ref: "#/components/schemas/InsurerResultRecordedEvent"
       examples:
         - name: quoted
           payload:
@@ -337,8 +337,8 @@ components:
             detail-type: InsurerResultRecorded
             detail:
               eventId: ce547b97-7fd4-526c-9aea-2477dcdc3a61
-              occurredAt: '2026-11-11T19:31:14.984Z'
-              schemaVersion: '1'
+              occurredAt: "2026-11-11T19:31:14.984Z"
+              schemaVersion: "1"
               workRef: wr_35ffeb9cce1cb2276f17a25720ea90ba
               quoteId: m1chk-df5690-vehicle-hatch-2021
               version: 1
@@ -349,27 +349,27 @@ components:
               offer:
                 externalOfferId: ALPHA-A1B2452A
                 insurerName: Alpha Seguros
-                premiumTotal: '2341.00'
+                premiumTotal: "2341.00"
                 currency: BRL
                 installments:
                   - count: 1
-                    amount: '2341.00'
+                    amount: "2341.00"
                   - count: 10
-                    amount: '234.10'
+                    amount: "234.10"
                 coverages:
                   - code: COLLISION
                     label: Colisão, incêndio e roubo
-                    insuredAmount: '75000.00'
+                    insuredAmount: "75000.00"
                   - code: THIRD_PARTY_PROPERTY
                     label: Danos materiais a terceiros
-                    insuredAmount: '100000.00'
+                    insuredAmount: "100000.00"
                   - code: THIRD_PARTY_BODILY
                     label: Danos corporais a terceiros
-                    insuredAmount: '200000.00'
+                    insuredAmount: "200000.00"
                 deductibles:
                   - coverageCode: COLLISION
-                    amount: '3750.00'
-                validUntil: '2026-11-11T20:01:14.932Z'
+                    amount: "3750.00"
+                validUntil: "2026-11-11T20:01:14.932Z"
                 rawResponseRef: raw/q_f984c8f42ef1391e6b52c3799f2ec025/0001.json
         - name: declined
           payload:
@@ -377,8 +377,8 @@ components:
             detail-type: InsurerResultRecorded
             detail:
               eventId: 0adfa6aa-4277-5518-b792-603fb6e2bd1a
-              occurredAt: '2026-11-11T19:31:17.717Z'
-              schemaVersion: '1'
+              occurredAt: "2026-11-11T19:31:17.717Z"
+              schemaVersion: "1"
               workRef: wr_08ade0226fe2e9d6847b6183cecbdfb4
               quoteId: m1chk-df5690-vehicle-alpha-declines
               version: 1
@@ -394,8 +394,8 @@ components:
             detail-type: InsurerResultRecorded
             detail:
               eventId: 0fb0f427-12ff-53f0-bee1-51e88b60f9a2
-              occurredAt: '2026-11-12T01:39:54.702Z'
-              schemaVersion: '1'
+              occurredAt: "2026-11-12T01:39:54.702Z"
+              schemaVersion: "1"
               workRef: wr_ac8e54d6b2b4ad11d353fe20a102c5f8
               quoteId: m3chk-659717-vehicle-hatch-2021
               version: 1
@@ -406,27 +406,27 @@ components:
               offer:
                 externalOfferId: BETA-095D0858
                 insurerName: Beta Seguros
-                premiumTotal: '2481.46'
+                premiumTotal: "2481.46"
                 currency: BRL
                 installments:
                   - count: 1
-                    amount: '2481.46'
+                    amount: "2481.46"
                   - count: 12
-                    amount: '206.79'
+                    amount: "206.79"
                 coverages:
                   - code: COLLISION
                     label: Colisão, incêndio e roubo
-                    insuredAmount: '75000.00'
+                    insuredAmount: "75000.00"
                   - code: THIRD_PARTY_PROPERTY
                     label: Danos materiais a terceiros
-                    insuredAmount: '150000.00'
+                    insuredAmount: "150000.00"
                   - code: THIRD_PARTY_BODILY
                     label: Danos corporais a terceiros
-                    insuredAmount: '300000.00'
+                    insuredAmount: "300000.00"
                 deductibles:
                   - coverageCode: COLLISION
-                    amount: '3000.00'
-                validUntil: '2026-11-12T02:09:50.786Z'
+                    amount: "3000.00"
+                validUntil: "2026-11-12T02:09:50.786Z"
                 rawResponseRef: raw/q_4a8fc925121ecc4ed1f65738ea1e9423/callback-bev-fe7bb0a0-b97a-45c2-a09e-8a833a573277.json
         - name: needs-information
           summary: Pendência de dados da seguradora assíncrona beta (`vehicle-beta-needs-info`), por callback.
@@ -435,8 +435,8 @@ components:
             detail-type: InsurerResultRecorded
             detail:
               eventId: 60451a71-e7c9-5e95-a4dd-6ebe1efb4b4d
-              occurredAt: '2026-11-12T01:39:56.701Z'
-              schemaVersion: '1'
+              occurredAt: "2026-11-12T01:39:56.701Z"
+              schemaVersion: "1"
               workRef: wr_750f79a5c5738b471698ecd8c0df4ec8
               quoteId: m3chk-659717-vehicle-beta-needs-info
               version: 1
@@ -457,8 +457,8 @@ components:
             detail-type: InsurerResultRecorded
             detail:
               eventId: ef49dab1-b515-53d8-a0e3-585162732974
-              occurredAt: '2026-11-12T04:43:57.917Z'
-              schemaVersion: '1'
+              occurredAt: "2026-11-12T04:43:57.917Z"
+              schemaVersion: "1"
               workRef: wr_43f32977796545f4ec4ccb08bc6d4880
               quoteId: 0c35d5e0-44c7-4d98-9bd1-5fc069c0aac7
               version: 1
@@ -469,27 +469,27 @@ components:
               offer:
                 externalOfferId: BETA-F243F270
                 insurerName: Beta Seguros
-                premiumTotal: '3376.10'
+                premiumTotal: "3376.10"
                 currency: BRL
                 installments:
                   - count: 1
-                    amount: '3376.10'
+                    amount: "3376.10"
                   - count: 12
-                    amount: '281.34'
+                    amount: "281.34"
                 coverages:
                   - code: COLLISION
                     label: Colisão, incêndio e roubo
-                    insuredAmount: '84000.00'
+                    insuredAmount: "84000.00"
                   - code: THIRD_PARTY_PROPERTY
                     label: Danos materiais a terceiros
-                    insuredAmount: '150000.00'
+                    insuredAmount: "150000.00"
                   - code: THIRD_PARTY_BODILY
                     label: Danos corporais a terceiros
-                    insuredAmount: '300000.00'
+                    insuredAmount: "300000.00"
                 deductibles:
                   - coverageCode: COLLISION
-                    amount: '3360.00'
-                validUntil: '2026-11-12T05:12:53.749Z'
+                    amount: "3360.00"
+                validUntil: "2026-11-12T05:12:53.749Z"
                 rawResponseRef: raw/q_e4e62febe1fc95b943f89ddaa90339e6/status-0001.json
     QueryReconciled:
       name: QueryReconciled
@@ -497,7 +497,7 @@ components:
       summary: Resultado de uma reconciliação manual. `eventId` = UUIDv5 de `operationId|revision`.
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/QueryReconciledEvent'
+        $ref: "#/components/schemas/QueryReconciledEvent"
       examples:
         - name: succeeded
           summary: A consulta já estava concluída, pela API de situação da beta.
@@ -506,8 +506,8 @@ components:
             detail-type: QueryReconciled
             detail:
               eventId: 1f385083-676b-599e-ae58-5ebf63ade1d5
-              occurredAt: '2026-11-12T04:13:18.636Z'
-              schemaVersion: '1'
+              occurredAt: "2026-11-12T04:13:18.636Z"
+              schemaVersion: "1"
               operationId: op_m4_example_settled
               organizationId: org-acme
               queryId: q_e78b22964de2335f75590ba01585c58b
@@ -521,8 +521,8 @@ components:
             detail-type: QueryReconciled
             detail:
               eventId: 5d8e3ae7-4a73-5d1d-9f03-dec15c6dcab0
-              occurredAt: '2026-11-12T04:13:18.155Z'
-              schemaVersion: '1'
+              occurredAt: "2026-11-12T04:13:18.155Z"
+              schemaVersion: "1"
               operationId: op_m4_example_unknown
               organizationId: org-acme
               queryId: q_099d4987d3e2f2e6656e9285ac76a83e
@@ -535,7 +535,7 @@ components:
       summary: Ocorrência operacional aberta. `eventId` = UUIDv5 de `issueId|revision`.
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/OperationIssueEvent'
+        $ref: "#/components/schemas/OperationIssueEvent"
       examples:
         - name: unknown-query
           summary: Consulta da alpha sem resposta depois do envio; a alpha não tem API de situação.
@@ -544,16 +544,16 @@ components:
             detail-type: OperationIssueRaised
             detail:
               eventId: bbaa1658-764c-5af4-8200-6516b07797cd
-              occurredAt: '2026-11-12T04:12:57.575Z'
-              schemaVersion: '1'
+              occurredAt: "2026-11-12T04:12:57.575Z"
+              schemaVersion: "1"
               issueId: is_377e241dcf78da8d2801824b0048a237
               organizationId: org-acme
               type: UNKNOWN_QUERY
               status: OPEN
               queryId: q_099d4987d3e2f2e6656e9285ac76a83e
               quoteId: m4-example-5fa40e44
-              firstSeenAt: '2026-11-12T04:12:57.575Z'
-              lastSeenAt: '2026-11-12T04:12:57.575Z'
+              firstSeenAt: "2026-11-12T04:12:57.575Z"
+              lastSeenAt: "2026-11-12T04:12:57.575Z"
               safeSummary: Consulta sem resposta do fornecedor, que não tem API de situação
               reconcilable: true
               revision: 1
@@ -563,7 +563,7 @@ components:
       summary: Ocorrência operacional atualizada. `eventId` = UUIDv5 de `issueId|revision`.
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/OperationIssueEvent'
+        $ref: "#/components/schemas/OperationIssueEvent"
       examples:
         - name: resolved
           summary: A ocorrência do exemplo de abertura, resolvida quando a consulta deixou de ser `UNKNOWN`.
@@ -572,16 +572,16 @@ components:
             detail-type: OperationIssueUpdated
             detail:
               eventId: ca86d06c-dc9b-5abe-9adb-e65cb9d79493
-              occurredAt: '2026-11-12T04:14:07.584Z'
-              schemaVersion: '1'
+              occurredAt: "2026-11-12T04:14:07.584Z"
+              schemaVersion: "1"
               issueId: is_377e241dcf78da8d2801824b0048a237
               organizationId: org-acme
               type: UNKNOWN_QUERY
               status: RESOLVED
               queryId: q_099d4987d3e2f2e6656e9285ac76a83e
               quoteId: m4-example-5fa40e44
-              firstSeenAt: '2026-11-12T04:12:57.575Z'
-              lastSeenAt: '2026-11-12T04:14:07.584Z'
+              firstSeenAt: "2026-11-12T04:12:57.575Z"
+              lastSeenAt: "2026-11-12T04:14:07.584Z"
               safeSummary: A consulta foi concluída
               reconcilable: true
               revision: 2
@@ -614,34 +614,34 @@ components:
             type: string
     EnrichmentResolvedEvent:
       allOf:
-        - $ref: '#/components/schemas/Envelope'
+        - $ref: "#/components/schemas/Envelope"
         - type: object
           properties:
             detail-type:
               const: EnrichmentResolved
             detail:
-              $ref: '#/components/schemas/EnrichmentResolvedDetail'
+              $ref: "#/components/schemas/EnrichmentResolvedDetail"
     InsurerResultRecordedEvent:
       allOf:
-        - $ref: '#/components/schemas/Envelope'
+        - $ref: "#/components/schemas/Envelope"
         - type: object
           properties:
             detail-type:
               const: InsurerResultRecorded
             detail:
-              $ref: '#/components/schemas/InsurerResultRecordedDetail'
+              $ref: "#/components/schemas/InsurerResultRecordedDetail"
     QueryReconciledEvent:
       allOf:
-        - $ref: '#/components/schemas/Envelope'
+        - $ref: "#/components/schemas/Envelope"
         - type: object
           properties:
             detail-type:
               const: QueryReconciled
             detail:
-              $ref: '#/components/schemas/QueryReconciledDetail'
+              $ref: "#/components/schemas/QueryReconciledDetail"
     OperationIssueEvent:
       allOf:
-        - $ref: '#/components/schemas/Envelope'
+        - $ref: "#/components/schemas/Envelope"
         - type: object
           properties:
             detail-type:
@@ -649,7 +649,7 @@ components:
                 - OperationIssueRaised
                 - OperationIssueUpdated
             detail:
-              $ref: '#/components/schemas/OperationIssueDetail'
+              $ref: "#/components/schemas/OperationIssueDetail"
     DetailHeader:
       type: object
       required:
@@ -664,10 +664,10 @@ components:
           type: string
           format: date-time
         schemaVersion:
-          const: '1'
+          const: "1"
     EnrichmentResolvedDetail:
       allOf:
-        - $ref: '#/components/schemas/DetailHeader'
+        - $ref: "#/components/schemas/DetailHeader"
         - type: object
           description: |
             Um evento por pedido (`workRef`), inclusive para cada seguidor de uma consulta compartilhada
@@ -688,7 +688,7 @@ components:
           properties:
             workRef:
               type: string
-              pattern: '^wr_[0-9a-f]{32}$'
+              pattern: "^wr_[0-9a-f]{32}$"
             quoteId:
               type: string
             version:
@@ -696,11 +696,11 @@ components:
               minimum: 1
             queryId:
               type: string
-              pattern: '^q_[0-9a-f]{32}$'
+              pattern: "^q_[0-9a-f]{32}$"
               description: Consulta que produziu a evidência; num `JOIN` ou `HIT`, a do líder.
             evidenceId:
               type: string
-              pattern: '^ev_[0-9a-f]{32}$'
+              pattern: "^ev_[0-9a-f]{32}$"
             reuseDecision:
               description: |
                 `HIT` usou a evidência válida do índice de reuso, sem chamada externa; `JOIN` recebeu o
@@ -713,7 +713,7 @@ components:
                 - MISS
             policyVersion:
               type: string
-              pattern: '^[A-Za-z0-9][A-Za-z0-9._-]*$'
+              pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
               description: |
                 Versão da política de reuso da provider (parâmetro `reusePolicyVersion` do serverless.yml)
                 que produziu a evidência. Ela vai também na evidência e no índice de reuso; um índice gravado
@@ -724,7 +724,7 @@ components:
                 - NOT_FOUND
                 - FAILED
             result:
-              $ref: '#/components/schemas/EnrichmentProfile'
+              $ref: "#/components/schemas/EnrichmentProfile"
             notFoundRefs:
               type: array
               minItems: 1
@@ -790,7 +790,7 @@ components:
               type: integer
     InsurerResultRecordedDetail:
       allOf:
-        - $ref: '#/components/schemas/DetailHeader'
+        - $ref: "#/components/schemas/DetailHeader"
         - type: object
           description: |
             `offer` só existe em `QUOTED`; `missingFields` só em `NEEDS_INFORMATION`; `reasonCode` em todo
@@ -807,7 +807,7 @@ components:
           properties:
             workRef:
               type: string
-              pattern: '^wr_[0-9a-f]{32}$'
+              pattern: "^wr_[0-9a-f]{32}$"
             quoteId:
               type: string
             version:
@@ -817,10 +817,10 @@ components:
               type: string
             queryId:
               type: string
-              pattern: '^q_[0-9a-f]{32}$'
+              pattern: "^q_[0-9a-f]{32}$"
             attemptRef:
               type: string
-              pattern: '^q_[0-9a-f]{32}#[0-9]{4}$'
+              pattern: "^q_[0-9a-f]{32}#[0-9]{4}$"
             status:
               enum:
                 - QUOTED
@@ -839,9 +839,9 @@ components:
               type: array
               minItems: 1
               items:
-                $ref: '#/components/schemas/MissingField'
+                $ref: "#/components/schemas/MissingField"
             offer:
-              $ref: '#/components/schemas/Offer'
+              $ref: "#/components/schemas/Offer"
     MissingField:
       type: object
       required:
@@ -878,7 +878,7 @@ components:
           pattern: '^\d+(\.\d+)?$'
         currency:
           type: string
-          pattern: '^[A-Z]{3}$'
+          pattern: "^[A-Z]{3}$"
         installments:
           type: array
           items:
@@ -933,7 +933,7 @@ components:
           type: string
     QueryReconciledDetail:
       allOf:
-        - $ref: '#/components/schemas/DetailHeader'
+        - $ref: "#/components/schemas/DetailHeader"
         - type: object
           description: |
             Publicado pelo `reconcileWorker` (M4). `revision` é monotônico por `operationId`. `organizationId` e
@@ -965,7 +965,7 @@ components:
               minimum: 1
     OperationIssueDetail:
       allOf:
-        - $ref: '#/components/schemas/DetailHeader'
+        - $ref: "#/components/schemas/DetailHeader"
         - type: object
           description: |
             Publicado pelo `reconciler` (M4). `organizationId` falta quando a ocorrência não tem organização
@@ -984,7 +984,7 @@ components:
           properties:
             issueId:
               type: string
-              pattern: '^is_[0-9a-f]{32}$'
+              pattern: "^is_[0-9a-f]{32}$"
             organizationId:
               type: string
               description: Organização da consulta ou do pedido descartado; a quote indexa a ocorrência por ela.

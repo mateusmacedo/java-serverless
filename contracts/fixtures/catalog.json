@@ -7,10 +7,26 @@
       "label": "Completa",
       "summary": "Colisão, incêndio, roubo e furto e danos a terceiros",
       "coverages": [
-        { "code": "COLLISION", "label": "Colisão", "insuredAmount": "90000.00" },
-        { "code": "FIRE_THEFT", "label": "Incêndio, roubo e furto", "insuredAmount": "90000.00" },
-        { "code": "THIRD_PARTY_PROPERTY", "label": "Danos materiais a terceiros", "insuredAmount": "100000.00" },
-        { "code": "THIRD_PARTY_BODILY", "label": "Danos corporais a terceiros", "insuredAmount": "100000.00" }
+        {
+          "code": "COLLISION",
+          "label": "Colisão",
+          "insuredAmount": "90000.00"
+        },
+        {
+          "code": "FIRE_THEFT",
+          "label": "Incêndio, roubo e furto",
+          "insuredAmount": "90000.00"
+        },
+        {
+          "code": "THIRD_PARTY_PROPERTY",
+          "label": "Danos materiais a terceiros",
+          "insuredAmount": "100000.00"
+        },
+        {
+          "code": "THIRD_PARTY_BODILY",
+          "label": "Danos corporais a terceiros",
+          "insuredAmount": "100000.00"
+        }
       ]
     },
     {
@@ -18,9 +34,21 @@
       "label": "Roubo, furto e terceiros",
       "summary": "Incêndio, roubo e furto e danos a terceiros, sem colisão",
       "coverages": [
-        { "code": "FIRE_THEFT", "label": "Incêndio, roubo e furto", "insuredAmount": "90000.00" },
-        { "code": "THIRD_PARTY_PROPERTY", "label": "Danos materiais a terceiros", "insuredAmount": "50000.00" },
-        { "code": "THIRD_PARTY_BODILY", "label": "Danos corporais a terceiros", "insuredAmount": "50000.00" }
+        {
+          "code": "FIRE_THEFT",
+          "label": "Incêndio, roubo e furto",
+          "insuredAmount": "90000.00"
+        },
+        {
+          "code": "THIRD_PARTY_PROPERTY",
+          "label": "Danos materiais a terceiros",
+          "insuredAmount": "50000.00"
+        },
+        {
+          "code": "THIRD_PARTY_BODILY",
+          "label": "Danos corporais a terceiros",
+          "insuredAmount": "50000.00"
+        }
       ]
     },
     {
@@ -28,8 +56,16 @@
       "label": "Somente terceiros",
       "summary": "Danos materiais e corporais a terceiros",
       "coverages": [
-        { "code": "THIRD_PARTY_PROPERTY", "label": "Danos materiais a terceiros", "insuredAmount": "50000.00" },
-        { "code": "THIRD_PARTY_BODILY", "label": "Danos corporais a terceiros", "insuredAmount": "50000.00" }
+        {
+          "code": "THIRD_PARTY_PROPERTY",
+          "label": "Danos materiais a terceiros",
+          "insuredAmount": "50000.00"
+        },
+        {
+          "code": "THIRD_PARTY_BODILY",
+          "label": "Danos corporais a terceiros",
+          "insuredAmount": "50000.00"
+        }
       ]
     }
   ],
@@ -38,65 +74,216 @@
       "id": "org-acme",
       "label": "Acme Corretora (sintética)",
       "customers": [
-        { "id": "customer-acme-ana", "label": "Ana Lima (sintética)" },
-        { "id": "customer-acme-bruno", "label": "Bruno Rocha (sintética)" },
-        { "id": "customer-acme-frota", "label": "Frota Acme Logística (sintética)" }
+        {
+          "id": "customer-acme-ana",
+          "label": "Ana Lima (sintética)"
+        },
+        {
+          "id": "customer-acme-bruno",
+          "label": "Bruno Rocha (sintética)"
+        },
+        {
+          "id": "customer-acme-frota",
+          "label": "Frota Acme Logística (sintética)"
+        }
       ],
       "drivers": [
-        { "id": "driver-acme-ana", "label": "Ana Lima", "licenseDate": "2012-03-15" },
-        { "id": "driver-acme-bruno", "label": "Bruno Rocha", "licenseDate": "2018-07-02" },
-        { "id": "driver-no-license", "label": "Caio Nunes (sem data de habilitação no cadastro)", "licenseDate": null,
-          "scenario": "elig-1 devolve NEEDS_INFORMATION com MISSING_LICENSE_DATE (T24)" },
-        { "id": "driver-not-found", "label": "Davi Souza (desconhecido do provedor)", "licenseDate": "2016-05-10",
-          "scenario": "Enriquecimento responde 404 NOT_FOUND com notFoundRefs [principalDriverRef]; com o vehicle-not-found, as duas referências" }
+        {
+          "id": "driver-acme-ana",
+          "label": "Ana Lima",
+          "licenseDate": "2012-03-15"
+        },
+        {
+          "id": "driver-acme-bruno",
+          "label": "Bruno Rocha",
+          "licenseDate": "2018-07-02"
+        },
+        {
+          "id": "driver-no-license",
+          "label": "Caio Nunes (sem data de habilitação no cadastro)",
+          "licenseDate": null,
+          "scenario": "elig-1 devolve NEEDS_INFORMATION com MISSING_LICENSE_DATE (T24)"
+        },
+        {
+          "id": "driver-not-found",
+          "label": "Davi Souza (desconhecido do provedor)",
+          "licenseDate": "2016-05-10",
+          "scenario": "Enriquecimento responde 404 NOT_FOUND com notFoundRefs [principalDriverRef]; com o vehicle-not-found, as duas referências"
+        }
       ],
       "vehicles": [
-        { "id": "vehicle-hatch-2021", "label": "Hatch 1.0 2021", "make": "Fiat", "model": "Argo", "year": 2021, "salvage": false,
-          "scenario": "Normal: enriquecimento FOUND; alpha e beta ofertam" },
-        { "id": "vehicle-sedan-2019", "label": "Sedã 2.0 2019", "make": "Toyota", "model": "Corolla", "year": 2019, "salvage": false,
-          "scenario": "Normal: enriquecimento FOUND; alpha e beta ofertam" },
-        { "id": "vehicle-van-2022", "label": "Furgão 2022", "make": "Renault", "model": "Master", "year": 2022, "salvage": false,
-          "scenario": "Normal; com uso COMMERCIAL, sel-1 escolhe só a alpha" },
-        { "id": "vehicle-salvage", "label": "Hatch 2017 (recuperado de sinistro)", "make": "Volkswagen", "model": "Gol", "year": 2017, "salvage": true,
-          "scenario": "elig-1 devolve INELIGIBLE com SALVAGE_VEHICLE (T23)" },
-        { "id": "vehicle-classic-1998", "label": "Sedã 1998", "make": "Chevrolet", "model": "Vectra", "year": 1998, "salvage": false,
-          "scenario": "sel-1 não encontra seguradora: NO_OFFER com NO_APPLICABLE_INSURER (T26)" },
-        { "id": "vehicle-not-found", "label": "Hatch 2020 (desconhecido do provedor)", "make": "Hyundai", "model": "HB20", "year": 2020, "salvage": false,
-          "scenario": "Enriquecimento responde 404 NOT_FOUND com notFoundRefs [vehicleRef] (T25)" },
-        { "id": "vehicle-flaky", "label": "Hatch 2020 (provedor instável)", "make": "Renault", "model": "Kwid", "year": 2020, "salvage": false,
-          "scenario": "Enriquecimento responde 503 nas duas primeiras chamadas de cada pedido" },
-        { "id": "vehicle-enrichment-down", "label": "Sedã 2019 (provedor fora do ar)", "make": "Honda", "model": "City", "year": 2019, "salvage": false,
-          "scenario": "Enriquecimento responde 504 sempre: TECHNICAL_FAILURE com ENRICHMENT_FAILED (T27)" },
-        { "id": "vehicle-alpha-declines", "label": "SUV 2021 (alpha recusa)", "make": "Jeep", "model": "Renegade", "year": 2021, "salvage": false,
-          "scenario": "A alpha responde DECLINED" },
-        { "id": "vehicle-alpha-down", "label": "SUV 2020 (alpha fora do ar)", "make": "Nissan", "model": "Kicks", "year": 2020, "salvage": false,
-          "scenario": "A alpha responde 503" },
-        { "id": "vehicle-beta-declines", "label": "Hatch 2022 (beta recusa)", "make": "Peugeot", "model": "208", "year": 2022, "salvage": false,
-          "scenario": "A beta responde DECLINED no callback" },
-        { "id": "vehicle-beta-silent", "label": "Sedã 2021 (beta sem callback)", "make": "Volkswagen", "model": "Virtus", "year": 2021, "salvage": false,
-          "scenario": "A beta aceita e nunca envia callback: TIMED_OUT" },
-        { "id": "vehicle-beta-duplicate", "label": "Hatch 2021 (callback duplicado)", "make": "Chevrolet", "model": "Onix", "year": 2021, "salvage": false,
-          "scenario": "A beta envia o mesmo callback duas vezes (T11)" },
-        { "id": "vehicle-beta-late", "label": "SUV 2022 (callback tardio)", "make": "Hyundai", "model": "Creta", "year": 2022, "salvage": false,
-          "scenario": "A beta envia o callback depois do prazo (T16)" },
-        { "id": "vehicle-beta-needs-info", "label": "Sedã 2020 (beta pede dados)", "make": "Honda", "model": "Civic", "year": 2020, "salvage": false,
-          "scenario": "A beta responde NEEDS_INFORMATION com missingFields" },
-        { "id": "vehicle-beta-early", "label": "Hatch 2023 (callback antes do 202)", "make": "Citroën", "model": "C3", "year": 2023, "salvage": false,
-          "scenario": "O callback chega antes da resposta 202, só com o providerRequestId (T12)" }
+        {
+          "id": "vehicle-hatch-2021",
+          "label": "Hatch 1.0 2021",
+          "make": "Fiat",
+          "model": "Argo",
+          "year": 2021,
+          "salvage": false,
+          "scenario": "Normal: enriquecimento FOUND; alpha e beta ofertam"
+        },
+        {
+          "id": "vehicle-sedan-2019",
+          "label": "Sedã 2.0 2019",
+          "make": "Toyota",
+          "model": "Corolla",
+          "year": 2019,
+          "salvage": false,
+          "scenario": "Normal: enriquecimento FOUND; alpha e beta ofertam"
+        },
+        {
+          "id": "vehicle-van-2022",
+          "label": "Furgão 2022",
+          "make": "Renault",
+          "model": "Master",
+          "year": 2022,
+          "salvage": false,
+          "scenario": "Normal; com uso COMMERCIAL, sel-1 escolhe só a alpha"
+        },
+        {
+          "id": "vehicle-salvage",
+          "label": "Hatch 2017 (recuperado de sinistro)",
+          "make": "Volkswagen",
+          "model": "Gol",
+          "year": 2017,
+          "salvage": true,
+          "scenario": "elig-1 devolve INELIGIBLE com SALVAGE_VEHICLE (T23)"
+        },
+        {
+          "id": "vehicle-classic-1998",
+          "label": "Sedã 1998",
+          "make": "Chevrolet",
+          "model": "Vectra",
+          "year": 1998,
+          "salvage": false,
+          "scenario": "sel-1 não encontra seguradora: NO_OFFER com NO_APPLICABLE_INSURER (T26)"
+        },
+        {
+          "id": "vehicle-not-found",
+          "label": "Hatch 2020 (desconhecido do provedor)",
+          "make": "Hyundai",
+          "model": "HB20",
+          "year": 2020,
+          "salvage": false,
+          "scenario": "Enriquecimento responde 404 NOT_FOUND com notFoundRefs [vehicleRef] (T25)"
+        },
+        {
+          "id": "vehicle-flaky",
+          "label": "Hatch 2020 (provedor instável)",
+          "make": "Renault",
+          "model": "Kwid",
+          "year": 2020,
+          "salvage": false,
+          "scenario": "Enriquecimento responde 503 nas duas primeiras chamadas de cada pedido"
+        },
+        {
+          "id": "vehicle-enrichment-down",
+          "label": "Sedã 2019 (provedor fora do ar)",
+          "make": "Honda",
+          "model": "City",
+          "year": 2019,
+          "salvage": false,
+          "scenario": "Enriquecimento responde 504 sempre: TECHNICAL_FAILURE com ENRICHMENT_FAILED (T27)"
+        },
+        {
+          "id": "vehicle-alpha-declines",
+          "label": "SUV 2021 (alpha recusa)",
+          "make": "Jeep",
+          "model": "Renegade",
+          "year": 2021,
+          "salvage": false,
+          "scenario": "A alpha responde DECLINED"
+        },
+        {
+          "id": "vehicle-alpha-down",
+          "label": "SUV 2020 (alpha fora do ar)",
+          "make": "Nissan",
+          "model": "Kicks",
+          "year": 2020,
+          "salvage": false,
+          "scenario": "A alpha responde 503"
+        },
+        {
+          "id": "vehicle-beta-declines",
+          "label": "Hatch 2022 (beta recusa)",
+          "make": "Peugeot",
+          "model": "208",
+          "year": 2022,
+          "salvage": false,
+          "scenario": "A beta responde DECLINED no callback"
+        },
+        {
+          "id": "vehicle-beta-silent",
+          "label": "Sedã 2021 (beta sem callback)",
+          "make": "Volkswagen",
+          "model": "Virtus",
+          "year": 2021,
+          "salvage": false,
+          "scenario": "A beta aceita e nunca envia callback: TIMED_OUT"
+        },
+        {
+          "id": "vehicle-beta-duplicate",
+          "label": "Hatch 2021 (callback duplicado)",
+          "make": "Chevrolet",
+          "model": "Onix",
+          "year": 2021,
+          "salvage": false,
+          "scenario": "A beta envia o mesmo callback duas vezes (T11)"
+        },
+        {
+          "id": "vehicle-beta-late",
+          "label": "SUV 2022 (callback tardio)",
+          "make": "Hyundai",
+          "model": "Creta",
+          "year": 2022,
+          "salvage": false,
+          "scenario": "A beta envia o callback depois do prazo (T16)"
+        },
+        {
+          "id": "vehicle-beta-needs-info",
+          "label": "Sedã 2020 (beta pede dados)",
+          "make": "Honda",
+          "model": "Civic",
+          "year": 2020,
+          "salvage": false,
+          "scenario": "A beta responde NEEDS_INFORMATION com missingFields"
+        },
+        {
+          "id": "vehicle-beta-early",
+          "label": "Hatch 2023 (callback antes do 202)",
+          "make": "Citroën",
+          "model": "C3",
+          "year": 2023,
+          "salvage": false,
+          "scenario": "O callback chega antes da resposta 202, só com o providerRequestId (T12)"
+        }
       ]
     },
     {
       "id": "org-globex",
       "label": "Globex Seguros Corretora (sintética)",
       "customers": [
-        { "id": "customer-globex-carla", "label": "Carla Dias (sintética)" }
+        {
+          "id": "customer-globex-carla",
+          "label": "Carla Dias (sintética)"
+        }
       ],
       "drivers": [
-        { "id": "driver-globex-carla", "label": "Carla Dias", "licenseDate": "2015-11-20" }
+        {
+          "id": "driver-globex-carla",
+          "label": "Carla Dias",
+          "licenseDate": "2015-11-20"
+        }
       ],
       "vehicles": [
-        { "id": "vehicle-globex-suv-2022", "label": "SUV 2022", "make": "Volkswagen", "model": "T-Cross", "year": 2022, "salvage": false,
-          "scenario": "Normal: enriquecimento FOUND; alpha e beta ofertam" }
+        {
+          "id": "vehicle-globex-suv-2022",
+          "label": "SUV 2022",
+          "make": "Volkswagen",
+          "model": "T-Cross",
+          "year": 2022,
+          "salvage": false,
+          "scenario": "Normal: enriquecimento FOUND; alpha e beta ofertam"
+        }
       ]
     }
   ]
