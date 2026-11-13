@@ -1,0 +1,81 @@
+<a
+  class="skip-link btn btn-primary position-fixed top-0 start-0 m-2"
+  href="#conteudo"
+  style="z-index: 2000"
+>
+  Pular para o conteúdo
+</a>
+<c-sidebar
+  #sidebar1="cSidebar"
+  class="d-print-none sidebar sidebar-fixed border-end"
+  colorScheme="dark"
+  id="sidebar1"
+  visible
+>
+  <c-sidebar-header class="border-bottom">
+    <c-sidebar-brand [routerLink]="[]" aria-label="Cotação de seguros" role="img">
+      <svg
+        [class]="{ icon: false }"
+        aria-hidden="true"
+        cIcon
+        class="sidebar-brand-full"
+        height="32"
+        name="logo"
+      ></svg>
+      <svg aria-hidden="true" cIcon class="sidebar-brand-narrow" height="32" name="signet"></svg>
+    </c-sidebar-brand>
+  </c-sidebar-header>
+
+  <ng-scrollbar appearance="compact" orientation="vertical" visibility="hover" visibleOnScroll>
+    <c-sidebar-nav [navItems]="navItems()" dropdownMode="close" compact />
+  </ng-scrollbar>
+
+  @if (!sidebar1.narrow) {
+    <c-sidebar-footer
+      cSidebarToggle="sidebar1"
+      class="border-top d-none d-lg-flex"
+      toggle="unfoldable"
+      style="cursor: pointer"
+    >
+      <button aria-label="Recolher ou expandir o menu lateral" cSidebarToggler></button>
+    </c-sidebar-footer>
+  }
+</c-sidebar>
+
+<div class="wrapper d-flex flex-column min-vh-100">
+  <app-default-header
+    [cShadowOnScroll]="'sm'"
+    class="mb-4 d-print-none header header-sticky p-0 shadow-sm"
+    position="sticky"
+    sidebarId="sidebar1"
+  />
+  <main class="body flex-grow-1" id="conteudo">
+    <c-container breakpoint="lg" class="h-auto px-4">
+      @switch (sessionStatus()) {
+        @case ('loading') {
+          <app-loading-state label="Carregando suas permissões…" />
+        }
+        @case ('error') {
+          <app-error-state
+            (retry)="retrySession()"
+            [error]="sessionError()"
+            message="Não foi possível carregar suas permissões."
+          />
+        }
+        @case ('expired') {
+          <app-error-state
+            (retry)="signInAgain()"
+            actionLabel="Entrar de novo"
+            message="Sua sessão expirou. Entre de novo para continuar."
+          />
+        }
+        @default {
+          <router-outlet />
+        }
+      }
+    </c-container>
+  </main>
+  <app-default-footer />
+</div>
+<app-toast-host />
+<app-leave-confirm-host />

@@ -1,0 +1,59 @@
+{
+  "name": "backoffice",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "ng": "ng",
+    "configure": "node scripts/configure.mjs",
+    "users:local": "node scripts/local-users.mjs",
+    "codegen": "openapi-ts -f openapi-ts.config.ts",
+    "start": "ng serve",
+    "build": "ng build",
+    "test": "ng test",
+    "lint": "eslint .",
+    "e2e": "playwright test",
+    "typecheck:e2e": "tsc -p tsconfig.e2e.json",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "@angular/aria": "22.2.6",
+    "@angular/cdk": "22.2.6",
+    "@angular/common": "22.2.5",
+    "@angular/compiler": "22.2.5",
+    "@angular/core": "22.2.5",
+    "@angular/forms": "22.2.5",
+    "@angular/platform-browser": "22.2.5",
+    "@angular/router": "22.2.5",
+    "@coreui/angular": "5.7.42",
+    "@coreui/coreui": "5.9.1",
+    "@coreui/icons": "3.1.0",
+    "@coreui/icons-angular": "5.7.42",
+    "ngx-scrollbar": "19.1.5",
+    "rxjs": "7.8.2",
+    "tslib": "2.8.1"
+  },
+  "devDependencies": {
+    "@angular/build": "22.2.6",
+    "@angular/cli": "22.2.6",
+    "@angular/compiler-cli": "22.2.5",
+    "@angular/language-service": "22.2.5",
+    "@eslint/js": "9.39.5",
+    "@hey-api/openapi-ts": "0.99.0",
+    "@playwright/test": "1.65.0",
+    "@types/node": "24.19.2",
+    "angular-eslint": "22.6.0",
+    "eslint": "9.39.5",
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-playwright": "1.8.3",
+    "jsdom": "27.4.0",
+    "prettier": "3.9.10",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.1",
+    "vitest": "5.1.0"
+  }
+}

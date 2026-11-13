@@ -1,0 +1,5 @@
+# Gerados por `pnpm configure` a partir da stack implantada; mudam a cada implantação.
+/runtime/
+/public/config.json
+# Cache do build do Angular.
+/.angular/

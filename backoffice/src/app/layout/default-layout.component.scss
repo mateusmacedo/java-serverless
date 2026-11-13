@@ -1,0 +1,18 @@
+:host::ng-deep {
+  .ng-scrollbar {
+    // NOTE: altura cheia; sem ela, o flex-shrink espreme o cabeçalho do menu até a altura mínima.
+    height: 100%;
+    --scrollbar-track-offset: 1px;
+    --scrollbar-track-thickness: calc(5px + 2 * var(--scrollbar-track-offset));
+    --scrollbar-track-hover-thickness: calc(7.5px + 2 * var(--scrollbar-track-offset));
+    --scrollbar-track-shape: 5px;
+    --scrollbar-thumb-shape: 5px;
+    --scrollbar-thumb-color: var(--cui-gray-500, #aab3c5);
+    --scrollbar-thumb-hover-color: var(--cui-gray-400, #cfd4de);
+  }
+
+  .ng-scroll-content {
+    display: flex;
+    min-height: 100%;
+  }
+}
