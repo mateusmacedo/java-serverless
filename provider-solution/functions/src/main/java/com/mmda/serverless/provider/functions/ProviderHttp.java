@@ -33,12 +33,24 @@ class ProviderHttp {
     }
 
     CallOutcome<String> postJson(String path, String body) {
-        HttpRequest request = HttpRequest.newBuilder(URI.create(stripTrailingSlash(properties.providersBaseUrl()) + path))
+        return send(HttpRequest.newBuilder(URI.create(stripTrailingSlash(properties.providersBaseUrl()) + path))
                 .timeout(properties.httpTimeout())
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body))
-                .build();
+                .build());
+    }
+
+    /** Leitura sem efeito no fornecedor, como a API de situação da seguradora assíncrona (§10). */
+    CallOutcome<String> getJson(String path) {
+        return send(HttpRequest.newBuilder(URI.create(stripTrailingSlash(properties.providersBaseUrl()) + path))
+                .timeout(properties.httpTimeout())
+                .header("Accept", "application/json")
+                .GET()
+                .build());
+    }
+
+    private CallOutcome<String> send(HttpRequest request) {
         try {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             return new CallOutcome.Responded<>(response.statusCode(), response.body());

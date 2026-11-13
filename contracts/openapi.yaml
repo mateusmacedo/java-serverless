@@ -1,13 +1,13 @@
 openapi: 3.1.0
 info:
   title: Plataforma de cotação — API de produto
-  version: 0.1.0
+  version: 0.2.0
   description: |
     API de produto da `quote-solution`, conforme o contrato compartilhado dos PRDs de backend e de
     frontend (versão 2.0) e o desenho técnico (`docs/quotation-platform.md`).
 
-    Versão parcial do marco M1: identidade (`GET /v1/me`), criação de cotação e leitura de uma versão e
-    das suas ofertas. Catálogo, listagem, nova versão, seleção e operações entram nos marcos seguintes,
+    Versão parcial: identidade (`GET /v1/me`), criação de cotação, nova versão (marco M4) e leitura de
+    uma versão e das suas ofertas. Catálogo, listagem, seleção e operações entram nos marcos seguintes,
     sem mudança incompatível nos schemas abaixo.
 
     Autenticação: access token do user pool Cognito da stack (`Authorization: Bearer <token>`). ID
@@ -107,6 +107,99 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /v1/quotes/{quoteId}/versions:
+    post:
+      tags:
+        - quotes
+      operationId: createQuoteVersion
+      summary: Cria uma nova versão da cotação com um novo pedido
+      description: |
+        Substitui a versão atual por uma nova, com o pedido completo resolvido no catálogo da organização,
+        como na criação. `expectedVersion` é a versão atual que o cliente leu: se outra versão foi criada
+        depois, responde `409` `VERSION_CONFLICT`; se a cotação já tem uma oferta selecionada, `409`
+        `QUOTE_ALREADY_SELECTED`. Seleção e nova versão são serializadas no servidor, e só uma das duas vence.
+
+        A versão substituída continua consultável, com `supersededAt` preenchido, e os resultados que
+        chegarem para ela ficam nela, sem afetar a nova. Nela, `allowedActions` fica vazio e toda oferta
+        deixa de ser selecionável, com `unavailabilityReason = VERSION_SUPERSEDED`. A execução da versão
+        antiga não é cancelada.
+
+        Reenviar a mesma `Idempotency-Key` com o mesmo body devolve a mesma versão, sem nova execução; a
+        mesma chave com outro body responde `409` `IDEMPOTENCY_CONFLICT`. Cotação de outra organização
+        responde `404`. Exige `quotes:write`.
+      parameters:
+        - $ref: '#/components/parameters/QuoteId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateVersionRequest'
+            examples:
+              newVehicle:
+                summary: Troca do veículo depois da versão 1
+                value:
+                  expectedVersion: 1
+                  product: AUTO
+                  applicantRef: customer-acme-ana
+                  risk:
+                    vehicleRef: vehicle-sedan-2019
+                    usage: PERSONAL
+                    principalDriverRef: driver-acme-ana
+                  coverageProfile: COMPREHENSIVE
+                  desiredStartDate: '2026-12-01'
+      responses:
+        '202':
+          description: Nova versão aceita duravelmente, ou a mesma versão de um reenvio idêntico.
+          headers:
+            Location:
+              description: Mesmo valor de `statusUrl`.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteAccepted'
+              examples:
+                accepted:
+                  summary: Versão 2 aceita
+                  value:
+                    quoteId: 5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11
+                    version: 2
+                    phase: RECEIVED
+                    statusUrl: /v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/2
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Chave já usada com outro body, versão desatualizada ou cotação com seleção.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConflictError'
+              examples:
+                versionConflict:
+                  summary: expectedVersion não é mais a versão atual
+                  value:
+                    code: VERSION_CONFLICT
+                    message: A versão informada em expectedVersion não é mais a atual; leia a cotação e tente de novo.
+                    correlationId: 7d1c2a9e-1f6b-4c3a-9e8d-0a1b2c3d4e5f
+                alreadySelected:
+                  summary: A cotação já tem uma oferta selecionada
+                  value:
+                    code: QUOTE_ALREADY_SELECTED
+                    message: A cotação já tem uma oferta selecionada e não aceita nova versão.
+                    correlationId: 7d1c2a9e-1f6b-4c3a-9e8d-0a1b2c3d4e60
         '415':
           $ref: '#/components/responses/UnsupportedMediaType'
         '503':
@@ -306,23 +399,60 @@ components:
           minLength: 1
           maxLength: 128
         risk:
-          type: object
-          additionalProperties: false
-          required:
-            - vehicleRef
-            - usage
-            - principalDriverRef
-          properties:
-            vehicleRef:
-              type: string
-              minLength: 1
-              maxLength: 128
-            usage:
-              $ref: '#/components/schemas/Usage'
-            principalDriverRef:
-              type: string
-              minLength: 1
-              maxLength: 128
+          $ref: '#/components/schemas/RiskInput'
+        coverageProfile:
+          type: string
+          minLength: 1
+          maxLength: 128
+        desiredStartDate:
+          type: string
+          format: date
+    RiskInput:
+      type: object
+      description: Referências do risco no catálogo da organização.
+      additionalProperties: false
+      required:
+        - vehicleRef
+        - usage
+        - principalDriverRef
+      properties:
+        vehicleRef:
+          type: string
+          minLength: 1
+          maxLength: 128
+        usage:
+          $ref: '#/components/schemas/Usage'
+        principalDriverRef:
+          type: string
+          minLength: 1
+          maxLength: 128
+    CreateVersionRequest:
+      type: object
+      description: |
+        Pedido completo da nova versão, com os mesmos campos da criação, e a versão atual que o cliente leu.
+      additionalProperties: false
+      required:
+        - expectedVersion
+        - product
+        - applicantRef
+        - risk
+        - coverageProfile
+        - desiredStartDate
+      properties:
+        expectedVersion:
+          type: integer
+          minimum: 1
+          maximum: 9998
+          description: Versão atual da cotação; a nova versão recebe `expectedVersion + 1`.
+        product:
+          type: string
+          const: AUTO
+        applicantRef:
+          type: string
+          minLength: 1
+          maxLength: 128
+        risk:
+          $ref: '#/components/schemas/RiskInput'
         coverageProfile:
           type: string
           minLength: 1

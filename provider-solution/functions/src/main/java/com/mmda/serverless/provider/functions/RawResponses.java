@@ -32,6 +32,11 @@ class RawResponses {
         return put("raw/" + queryId + "/callback-" + externalEventId + ".json", body);
     }
 
+    /** Situação lida pela reconciliação na API de situação; a chave leva a tentativa que ela conclui. */
+    String storeStatus(String queryId, int attemptSequence, String body) {
+        return put("raw/" + queryId + "/status-" + Identities.sequence(attemptSequence) + ".json", body);
+    }
+
     private String put(String key, String body) {
         s3.putObject(builder -> builder
                         .bucket(properties.payloadsBucket())

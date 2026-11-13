@@ -31,6 +31,17 @@ params:
     reconcilerTimeoutSeconds: 60
     resultsVisibilityTimeoutSeconds: 90
     resultsMaxReceiveCount: 5
+    # Reconciliação do M4 (§9): tentativas da DLQ contando a entrega original (ADR 0007), margem do
+    # STUCK_VERSION e idade do RESUMING que o reconciler retoma, maior que o timeout do resume
+    dlqMaxAttempts: 3
+    stuckVersionMarginSeconds: 120
+    resumingRetryAfterSeconds: 30
+    # Limiares dos alarmes (§12)
+    alarmPeriodSeconds: 60
+    dlqAlarmMessages: 1
+    dlqAlarmAgeSeconds: 300
+    outboxAlarmAgeSeconds: 120
+    expiredTasksAlarmThreshold: 1
 
 custom:
   names:
@@ -48,6 +59,8 @@ custom:
   platformEventBusArn: arn:aws:events:${aws:region}:${aws:accountId}:event-bus/${self:custom.names.platformEventBus}
   # Versão do workflow gravada em cada versão da cotação; mude junto com a definição da máquina
   workflowVersion: quote-flow-1
+  # Namespace das métricas EMF do reconciler e dos alarmes sobre elas (§9)
+  metricsNamespace: mmda/${self:service}
   functionsPackage: functions/target/quote-functions-lambda.zip
   # Handler das duas extensões usadas (quarkus-amazon-lambda e quarkus-amazon-lambda-rest)
   quarkusHandler: io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest
@@ -77,6 +90,14 @@ provider:
     QUOTE_DEADLINE_SECONDS: "${param:quoteDeadlineSeconds}"
     RETRY_AFTER_SECONDS: "${param:retryAfterSeconds}"
     WORKFLOW_VERSION: ${self:custom.workflowVersion}
+    # Usados só pelo reconciler; ficam aqui porque o zip das functions valida a configuração ao subir
+    RESULTS_QUEUE_URL: !Ref ResultsQueue
+    RESULTS_DLQ_URL: !Ref ResultsDeadLetterQueue
+    DLQ_MAX_ATTEMPTS: "${param:dlqMaxAttempts}"
+    STUCK_VERSION_MARGIN_SECONDS: "${param:stuckVersionMarginSeconds}"
+    RESUMING_RETRY_AFTER_SECONDS: "${param:resumingRetryAfterSeconds}"
+    METRICS_NAMESPACE: ${self:custom.metricsNamespace}
+    STAGE: ${sls:stage}
 
 package:
   individually: true
@@ -490,6 +511,110 @@ resources:
         QueueName: ${self:custom.names.streamFailuresQueue}
         MessageRetentionPeriod: 1209600
 
+    # Alarmes do M4 (§9), sem ação até o M6: o Floci só reconhece o tipo do recurso (§13). Volume e idade de
+    # cada DLQ e da stream-failures; outbox envelhecida e tarefas expiradas pelas métricas EMF do reconciler
+    ResultsDeadLetterQueueMessagesAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${sls:stage}-results-dlq-messages
+        AlarmDescription: Mensagens na results-dlq, à espera do reprocessamento pelo reconciler
+        Namespace: AWS/SQS
+        MetricName: ApproximateNumberOfMessagesVisible
+        Dimensions:
+          - Name: QueueName
+            Value: ${self:custom.names.resultsDeadLetterQueue}
+        Statistic: Maximum
+        Period: ${param:alarmPeriodSeconds}
+        EvaluationPeriods: 1
+        Threshold: ${param:dlqAlarmMessages}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
+    ResultsDeadLetterQueueAgeAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${sls:stage}-results-dlq-age
+        AlarmDescription: Mensagem parada na results-dlq além do limiar de idade
+        Namespace: AWS/SQS
+        MetricName: ApproximateAgeOfOldestMessage
+        Dimensions:
+          - Name: QueueName
+            Value: ${self:custom.names.resultsDeadLetterQueue}
+        Statistic: Maximum
+        Period: ${param:alarmPeriodSeconds}
+        EvaluationPeriods: 1
+        Threshold: ${param:dlqAlarmAgeSeconds}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
+    StreamFailuresQueueMessagesAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${sls:stage}-stream-failures-messages
+        AlarmDescription: Registros do stream descartados pela relay; o outbox volta pelo reconciler
+        Namespace: AWS/SQS
+        MetricName: ApproximateNumberOfMessagesVisible
+        Dimensions:
+          - Name: QueueName
+            Value: ${self:custom.names.streamFailuresQueue}
+        Statistic: Maximum
+        Period: ${param:alarmPeriodSeconds}
+        EvaluationPeriods: 1
+        Threshold: ${param:dlqAlarmMessages}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
+    StreamFailuresQueueAgeAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${sls:stage}-stream-failures-age
+        AlarmDescription: Falha do stream sem tratamento além do limiar de idade
+        Namespace: AWS/SQS
+        MetricName: ApproximateAgeOfOldestMessage
+        Dimensions:
+          - Name: QueueName
+            Value: ${self:custom.names.streamFailuresQueue}
+        Statistic: Maximum
+        Period: ${param:alarmPeriodSeconds}
+        EvaluationPeriods: 1
+        Threshold: ${param:dlqAlarmAgeSeconds}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
+    OutboxPendingAgeAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${sls:stage}-outbox-pending-age
+        AlarmDescription: Outbox pendente mais antigo que o limiar, medido pelo createdAt
+        Namespace: ${self:custom.metricsNamespace}
+        MetricName: OutboxPendingAgeSeconds
+        Dimensions:
+          - Name: Stage
+            Value: ${sls:stage}
+        Statistic: Maximum
+        Period: ${param:alarmPeriodSeconds}
+        EvaluationPeriods: 1
+        Threshold: ${param:outboxAlarmAgeSeconds}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
+    ExpiredTasksAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${sls:stage}-expired-tasks
+        AlarmDescription: Resultado gravado que a execução encerrada não recebeu (TASK_EXPIRED)
+        Namespace: ${self:custom.metricsNamespace}
+        MetricName: ExpiredTasks
+        Dimensions:
+          - Name: Stage
+            Value: ${sls:stage}
+        Statistic: Sum
+        Period: ${param:alarmPeriodSeconds}
+        EvaluationPeriods: 1
+        Threshold: ${param:expiredTasksAlarmThreshold}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
     # source e detail-type precisam bater com os eventos da provider-solution (docs/events)
     ProviderResultsRule:
       Type: AWS::Events::Rule
@@ -596,10 +721,12 @@ resources:
             PolicyDocument:
               Version: "2012-10-17"
               Statement:
+                # UpdateItem: a nova versão atualiza o META e a versão substituída na transação (§8)
                 - Effect: Allow
                   Action:
                     - dynamodb:GetItem
                     - dynamodb:PutItem
+                    - dynamodb:UpdateItem
                     - dynamodb:Query
                   Resource: !GetAtt QuotesTable.Arn
 
@@ -723,10 +850,14 @@ resources:
             PolicyDocument:
               Version: "2012-10-17"
               Statement:
+                # PutItem e Query na tabela: a finalização (T20) grava o outbox QuoteCompleted e lê os itens da
+                # versão; UpdateItem também grava as ocorrências e o resumo do META (§9)
                 - Effect: Allow
                   Action:
                     - dynamodb:GetItem
+                    - dynamodb:PutItem
                     - dynamodb:UpdateItem
+                    - dynamodb:Query
                   Resource: !GetAtt QuotesTable.Arn
                 - Effect: Allow
                   Action: dynamodb:Query
@@ -734,9 +865,31 @@ resources:
                 - Effect: Allow
                   Action: events:PutEvents
                   Resource: ${self:custom.platformEventBusArn}
+                # SendTaskSuccess retoma o waiter parado em RESUMING (T13), com a chave da cifra dos tokens
                 - Effect: Allow
-                  Action: states:StartExecution
+                  Action:
+                    - states:StartExecution
+                    - states:SendTaskSuccess
                   Resource: ${self:custom.stateMachineArn}
+                # GetExecutionHistory confere se o resultado gravado chegou à execução antes do TASK_EXPIRED
+                - Effect: Allow
+                  Action:
+                    - states:DescribeExecution
+                    - states:GetExecutionHistory
+                  Resource: arn:aws:states:${aws:region}:${aws:accountId}:execution:${self:custom.names.stateMachine}:*
+                - Effect: Allow
+                  Action: secretsmanager:GetSecretValue
+                  Resource: !Ref TokenKeySecret
+                # Reprocessamento da results-dlq (ADR 0007): lê e apaga na DLQ e reenvia à fila results
+                - Effect: Allow
+                  Action:
+                    - sqs:ReceiveMessage
+                    - sqs:DeleteMessage
+                    - sqs:GetQueueAttributes
+                  Resource: !GetAtt ResultsDeadLetterQueue.Arn
+                - Effect: Allow
+                  Action: sqs:SendMessage
+                  Resource: !GetAtt ResultsQueue.Arn
 
   Outputs:
     QuotesTableName:

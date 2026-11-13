@@ -51,12 +51,13 @@ class EnrichmentRequestHandler {
     private final Clock clock;
     private final Sleeper sleeper;
     private final RandomGenerator jitter;
+    private final Metrics metrics;
 
     EnrichmentRequestHandler(QueryLedger ledger, ReuseLedger reuseLedger, EnrichmentResolutions resolutions,
                              ProviderClients clients, RawResponses rawResponses, QueryKeySecret queryKeySecret,
                              DelayedRedelivery redelivery, EventJson json, ProviderProperties properties,
                              ReuseProperties reuse, RetryPolicy retryPolicy, Clock clock, Sleeper sleeper,
-                             RandomGenerator jitter) {
+                             RandomGenerator jitter, Metrics metrics) {
         this.ledger = ledger;
         this.reuseLedger = reuseLedger;
         this.resolutions = resolutions;
@@ -71,18 +72,19 @@ class EnrichmentRequestHandler {
         this.clock = clock;
         this.sleeper = sleeper;
         this.jitter = jitter;
+        this.metrics = metrics;
     }
 
     /**
      * Antes do índice de reuso, a reentrega confere, nesta ordem, a consulta do próprio {@code workRef} (foi
      * líder), o {@code CONSUMED} do pedido (já resolvido) e o registro como seguidor na cadeia corrente (§8).
      */
-    void handle(String messageBody) {
-        EnrichmentRequest request = json.detail(messageBody, EnrichmentRequest.class);
+    void handle(QueuedMessage message) {
+        EnrichmentRequest request = json.detail(message.body(), EnrichmentRequest.class);
         String queryId = Identities.queryId(request.workRef());
         Optional<QueryRecord> existing = ledger.load(queryId);
         if (existing.isPresent()) {
-            redelivered(request, existing.get(), messageBody);
+            redelivered(request, existing.get(), message);
             return;
         }
         if (ledger.isConsumed(EnrichmentResolutions.consumedId(request.workRef()))) {
@@ -102,12 +104,12 @@ class EnrichmentRequestHandler {
             concludeWithoutCall(request, queryId, queryKey, ErrorClasses.DEADLINE_EXCEEDED_BEFORE_CALL, now);
             return;
         }
-        plan(request, queryId, queryKey, leadership, messageBody);
+        plan(request, queryId, queryKey, leadership, message);
     }
 
     /** Releituras com {@code ConsistentRead} até o pedido usar, esperar ou liderar a consulta da {@code queryKey}. */
     private void plan(EnrichmentRequest request, String queryId, String queryKey, Optional<Leadership> firstRead,
-                      String messageBody) {
+                      QueuedMessage message) {
         Optional<Leadership> leadership = firstRead;
         for (int round = 1; round <= MAX_PLAN_ROUNDS; round++) {
             Instant now = clock.instant();
@@ -119,9 +121,9 @@ class EnrichmentRequestHandler {
                     yield true;
                 }
                 case ReusePlan.Join join -> join(request, queryKey, join);
-                case ReusePlan.Lead lead -> lead(request, queryId, queryKey, lead, messageBody, now);
+                case ReusePlan.Lead lead -> lead(request, queryId, queryKey, lead, message, now);
                 case ReusePlan.OwnLeadership ignored -> {
-                    ownLeadership(request, queryId, messageBody);
+                    ownLeadership(request, queryId, message);
                     yield true;
                 }
             };
@@ -134,7 +136,7 @@ class EnrichmentRequestHandler {
     }
 
     private boolean lead(EnrichmentRequest request, String queryId, String queryKey, ReusePlan.Lead lead,
-                         String messageBody, Instant now) {
+                         QueuedMessage message, Instant now) {
         QuotaReservation quota = QuotaReservation.of(properties, request.provider(), now);
         switch (ledger.lead(draft(request, queryId, queryKey), lead, quota, now)) {
             case LEADING -> {
@@ -144,7 +146,7 @@ class EnrichmentRequestHandler {
                 return true;
             }
             case QUOTA_EXHAUSTED -> {
-                quotaExhausted(request, queryId, queryKey, messageBody, quota, now);
+                quotaExhausted(request, queryId, queryKey, message, quota, now);
                 return true;
             }
             case QUERY_EXISTS -> {
@@ -177,10 +179,10 @@ class EnrichmentRequestHandler {
         return false;
     }
 
-    private void ownLeadership(EnrichmentRequest request, String queryId, String messageBody) {
+    private void ownLeadership(EnrichmentRequest request, String queryId, QueuedMessage message) {
         QueryRecord query = ledger.load(queryId).orElseThrow(() -> new IllegalStateException(
                 "The request leads the shared query but has no query: workRef=" + request.workRef()));
-        redelivered(request, query, messageBody);
+        redelivered(request, query, message);
     }
 
     /** Seguidor já registrado: com a liderança concluída, publica para si; em voo, o fan-out o alcança. */
@@ -197,6 +199,8 @@ class EnrichmentRequestHandler {
         while (true) {
             ProviderExchange<EnrichmentReply> exchange = clients.fetchProfile(queryId, request.params());
             EnrichmentVerdict verdict = EnrichmentProtocol.classify(exchange.outcome());
+            metrics.providerCall(request.provider(), verdict instanceof EnrichmentVerdict.Transient
+                    || verdict instanceof EnrichmentVerdict.Unknown || verdict instanceof EnrichmentVerdict.Failed);
             if (!(verdict instanceof EnrichmentVerdict.Transient transientFailure)) {
                 conclude(request, queryId, term, sequence, verdict, exchange);
                 return;
@@ -294,7 +298,7 @@ class EnrichmentRequestHandler {
      * {@code UNKNOWN} (com tentativa aberta) ou {@code FAILED}, e a liderança conclui com {@code FAILED} se
      * ainda for a dela.
      */
-    private void redelivered(EnrichmentRequest request, QueryRecord query, String messageBody) {
+    private void redelivered(EnrichmentRequest request, QueryRecord query, QueuedMessage message) {
         if (query.state().isSettled()) {
             if (query.isLeader()) {
                 resolutions.redoFanOut(query, request.workRef());
@@ -303,50 +307,29 @@ class EnrichmentRequestHandler {
             return;
         }
         Instant now = clock.instant();
-        if (deferredWhileBusy(query, messageBody, now)) {
+        if (deferredWhileBusy(query, message, now)) {
             return;
         }
-        boolean openAttempt = query.hasOpenAttempt();
-        String errorClass = openAttempt ? ErrorClasses.INTERRUPTED_ATTEMPT : ErrorClasses.INTERRUPTED_BEFORE_CALL;
-        resolutions.settle(request, query.queryId(), null, openAttempt ? QueryState.UNKNOWN : QueryState.FAILED, null,
-                failedEvidence(query.queryId(), query.attemptCount(), errorClass, query.fencingVersion(), now),
-                EnrichmentResolved.Outcome.failed(errorClass), interruptedTerm(query), now);
+        resolutions.settleInterrupted(EnrichmentResolved.Recipient.of(request), query, now);
     }
 
-    /**
-     * A liderança da consulta interrompida, se a {@code fencingVersion} e o {@code queryId} do {@code INFLIGHT#}
-     * ainda forem os dela.
-     */
-    private LeaderTerm interruptedTerm(QueryRecord query) {
-        if (!query.isLeader()) {
-            return null;
-        }
-        return reuseLedger.leadership(query.queryKey())
-                .filter(leadership -> leadership.state() == Leadership.State.IN_FLIGHT
-                        && leadership.fencingVersion() == query.fencingVersion()
-                        && leadership.queryId().equals(query.queryId()))
-                .map(leadership -> new LeaderTerm(query.queryKey(), leadership.fencingVersion(),
-                        leadership.firstFencingVersion()))
-                .orElse(null);
-    }
-
-    private boolean deferredWhileBusy(QueryRecord query, String messageBody, Instant now) {
+    private boolean deferredWhileBusy(QueryRecord query, QueuedMessage message, Instant now) {
         Optional<Instant> busyUntil = query.busyUntil(properties.workerTimeout());
         if (busyUntil.isEmpty() || !now.isBefore(busyUntil.get())) {
             return false;
         }
         int delay = (int) Duration.between(now, busyUntil.get()).toSeconds() + 1;
-        redelivery.send(properties.enrichmentRequestsQueueUrl(), messageBody, delay);
+        redelivery.send(properties.enrichmentRequestsQueueUrl(), message, delay);
         LOGGER.info("Enrichment query may be in progress in another delivery, request delayed {} s: queryId={}",
                 delay, query.queryId());
         return true;
     }
 
-    private void quotaExhausted(EnrichmentRequest request, String queryId, String queryKey, String messageBody,
+    private void quotaExhausted(EnrichmentRequest request, String queryId, String queryKey, QueuedMessage message,
                                 QuotaReservation quota, Instant now) {
         long delay = quota.window().secondsUntilEnd(now) + 1;
         if (delay <= DelayedRedelivery.MAX_DELAY_SECONDS && now.plusSeconds(delay).isBefore(request.deadlineAt())) {
-            redelivery.send(properties.enrichmentRequestsQueueUrl(), messageBody, (int) delay);
+            redelivery.send(properties.enrichmentRequestsQueueUrl(), message, (int) delay);
             LOGGER.info("Enrichment quota exhausted, request delayed {} s: queryId={}", delay, queryId);
             return;
         }

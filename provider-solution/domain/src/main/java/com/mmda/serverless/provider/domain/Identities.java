@@ -1,5 +1,6 @@
 package com.mmda.serverless.provider.domain;
 
+import com.mmda.serverless.provider.domain.operations.IssueType;
 import java.util.Objects;
 
 /**
@@ -43,6 +44,16 @@ public final class Identities {
     /** Referência da tentativa lógica que a quote guarda no resultado da seguradora (RN09). */
     public static String attemptRef(String queryId, int attemptSequence) {
         return queryId + "#" + sequence(attemptSequence);
+    }
+
+    /**
+     * Ocorrência operacional: {@code is_} e os 32 primeiros caracteres hexadecimais do SHA-256 de
+     * {@code type|alvo}, com o {@code queryId}, o {@code externalEventId} ou o {@code eventId} como alvo (§5). A
+     * mesma situação observada de novo chega à mesma ocorrência.
+     */
+    public static String issueId(IssueType type, String target) {
+        Objects.requireNonNull(target, "target");
+        return "is_" + prefix(type.name() + "|" + target);
     }
 
     /** Sequência da tentativa com quatro dígitos, como no {@code sk} {@code ATTEMPT#<nnnn>}. */

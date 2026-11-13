@@ -5,6 +5,8 @@ import static com.mmda.serverless.quote.functions.Attr.s;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mmda.serverless.quote.domain.Phase;
+import com.mmda.serverless.quote.domain.QuoteIssues;
 import com.mmda.serverless.quote.domain.QuoteKeys;
 import com.mmda.serverless.quote.domain.Retries;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -14,6 +16,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import org.jboss.logging.Logger;
 import software.amazon.awssdk.core.exception.SdkException;
@@ -173,25 +176,66 @@ public class QuoteTable {
      */
     void refreshSummary(String quoteId, int version, Instant now) {
         try {
-            writeSummary(quoteId, version, now);
+            Optional<Map<String, AttributeValue>> versionItem =
+                    get(QuoteKeys.quotePk(quoteId), QuoteKeys.versionSk(version));
+            if (versionItem.isEmpty()) {
+                return;
+            }
+            writeSummary(quoteId, version, versionItem.get(),
+                    count(QuoteKeys.quotePk(quoteId), QuoteKeys.offerPrefix(version)), now);
+            if (QuoteKeys.SUMMARY_PENDING.equals(Attr.string(versionItem.get(), QuoteKeys.GSI2_PK))) {
+                clearSummaryPending(quoteId, version);
+            }
         } catch (SdkException failure) {
             LOG.warnf("summary of quoteId=%s version=%d left for the reconciler: %s", quoteId, version,
                     failure.getMessage());
         }
     }
 
-    private void writeSummary(String quoteId, int version, Instant now) {
+    /** Tira a versão {@code TERMINAL} do índice {@code SUMMARY_PENDING} depois que o resumo foi conferido. */
+    void clearSummaryPending(String quoteId, int version) {
+        updateIf(update(QuoteKeys.quotePk(quoteId), QuoteKeys.versionSk(version))
+                .updateExpression("REMOVE " + QuoteKeys.GSI2_PK + ", " + QuoteKeys.GSI2_SK)
+                .conditionExpression(QuoteKeys.GSI2_PK + " = :pending")
+                .expressionAttributeValues(Map.of(":pending", s(QuoteKeys.SUMMARY_PENDING)))
+                .build());
+    }
+
+    /**
+     * Reparo do {@code reconciler} (M4): compara o resumo do {@code META} com o {@code V#currentVersion} e o
+     * regrava só quando diverge. Devolve {@code true} quando reparou.
+     */
+    boolean repairSummary(String quoteId, int version, Instant now) {
+        Optional<Map<String, AttributeValue>> meta = get(QuoteKeys.quotePk(quoteId), QuoteKeys.META);
+        if (meta.isEmpty() || Attr.number(meta.get(), "currentVersion", 0) != version) {
+            return false;
+        }
         Optional<Map<String, AttributeValue>> versionItem = get(QuoteKeys.quotePk(quoteId), QuoteKeys.versionSk(version));
         if (versionItem.isEmpty()) {
-            return;
+            return false;
         }
         int offerCount = count(QuoteKeys.quotePk(quoteId), QuoteKeys.offerPrefix(version));
-        String outcome = Attr.string(versionItem.get(), "outcome");
+        boolean current = Objects.equals(Attr.string(meta.get(), "phase"), Attr.string(versionItem.get(), "phase"))
+                && Objects.equals(Attr.string(meta.get(), "outcome"), Attr.string(versionItem.get(), "outcome"))
+                && Attr.number(meta.get(), "offerCount", -1) == offerCount;
+        return !current && writeSummary(quoteId, version, versionItem.get(), offerCount, now);
+    }
+
+    private boolean writeSummary(String quoteId, int version, Map<String, AttributeValue> versionItem, int offerCount,
+            Instant now) {
+        String outcome = Attr.string(versionItem, "outcome");
+        String phase = Attr.string(versionItem, "phase");
         Map<String, AttributeValue> values = new HashMap<>(Map.of(
-                ":phase", s(Attr.string(versionItem.get(), "phase")),
+                ":phase", s(phase),
                 ":offerCount", n(offerCount),
                 ":now", s(now.toString()),
                 ":v", n(version)));
+        String condition = "currentVersion = :v";
+        if (!Phase.TERMINAL.name().equals(phase)) {
+            // INVARIANT: TERMINAL é final; uma leitura anterior à consolidação não rebaixa o resumo
+            values.put(":terminal", s(Phase.TERMINAL.name()));
+            condition += " AND (attribute_not_exists(phase) OR phase <> :terminal)";
+        }
         String expression = "SET phase = :phase, offerCount = :offerCount, updatedAt = :now";
         if (outcome != null) {
             values.put(":outcome", s(outcome));
@@ -199,11 +243,65 @@ public class QuoteTable {
         } else {
             expression += " REMOVE outcome";
         }
-        updateIf(update(QuoteKeys.quotePk(quoteId), QuoteKeys.META)
+        return updateIf(update(QuoteKeys.quotePk(quoteId), QuoteKeys.META)
                 .updateExpression(expression)
-                .conditionExpression("currentVersion = :v")
+                .conditionExpression(condition)
                 .expressionAttributeValues(values)
                 .build());
+    }
+
+    /**
+     * Grava ou atualiza a ocorrência, sem condição: a mesma situação observada de novo atualiza
+     * {@code lastSeenAt} e incrementa o {@code revision}, e {@code firstSeenAt} fica o da primeira vez.
+     */
+    TransactWriteItem issueWrite(QuoteIssue issue, Instant now) {
+        Map<String, String> names = Map.of("#type", QuoteKeys.TYPE, "#status", "status", "#source", "source");
+        Map<String, AttributeValue> values = new HashMap<>(Map.of(
+                ":type", s(QuoteKeys.TYPE_ISSUE),
+                ":issueType", s(issue.type().name()),
+                ":open", s(QuoteIssues.Status.OPEN.name()),
+                ":source", s(QuoteIssues.SOURCE),
+                ":issueId", s(issue.issueId()),
+                ":summary", s(issue.safeSummary()),
+                ":reconcilable", AttributeValue.fromBool(false),
+                ":now", s(now.toString()),
+                ":zero", n(0),
+                ":one", n(1)));
+        StringBuilder expression = new StringBuilder("SET #type = :type, issueType = :issueType, #status = :open, "
+                + "#source = :source, "
+                + "issueId = :issueId, safeSummary = :summary, reconcilable = :reconcilable, "
+                + "firstSeenAt = if_not_exists(firstSeenAt, :now), lastSeenAt = :now, "
+                + "revision = if_not_exists(revision, :zero) + :one");
+        if (issue.organizationId() != null) {
+            values.put(":org", s(issue.organizationId()));
+            values.put(":gsi1pk", s(QuoteKeys.issuesIndexPk(issue.organizationId())));
+            values.put(":gsi1sk", s(now + "#" + issue.issueId()));
+            expression.append(", organizationId = :org, ").append(QuoteKeys.GSI1_PK).append(" = :gsi1pk, ")
+                    .append(QuoteKeys.GSI1_SK).append(" = :gsi1sk");
+        }
+        if (issue.quoteId() != null) {
+            values.put(":quoteId", s(issue.quoteId()));
+            expression.append(", quoteId = :quoteId");
+        }
+        if (issue.version() != null) {
+            values.put(":version", n(issue.version()));
+            expression.append(", version = :version");
+        }
+        if (issue.queryId() != null) {
+            values.put(":queryId", s(issue.queryId()));
+            expression.append(", queryId = :queryId");
+        }
+        return update(QuoteKeys.issuePk(issue.issueId()), QuoteKeys.META, expression.toString(), null, names, values);
+    }
+
+    void writeIssue(QuoteIssue issue, Instant now) {
+        transact(List.of(issueWrite(issue, now)));
+    }
+
+    /** Organização da cotação, lida do {@code META}; nula quando a cotação não existe. */
+    String organizationOf(String quoteId) {
+        return get(QuoteKeys.quotePk(quoteId), QuoteKeys.META).map(meta -> Attr.string(meta, "organizationId"))
+                .orElse(null);
     }
 
     static boolean isTransactionConflict(RuntimeException failure) {

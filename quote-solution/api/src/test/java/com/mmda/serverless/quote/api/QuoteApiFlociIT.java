@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -261,6 +262,108 @@ class QuoteApiFlociIT {
                 .contentType(ContentType.JSON).body(BODY)
                 .when().post("/v1/quotes")
                 .then().statusCode(403);
+    }
+
+    @Test
+    void t17_newVersionSupersedesTheCurrentOneAndBlocksSelectionOnTheOldOne() throws Exception {
+        String quoteId = create(writerToken, UUID.randomUUID().toString(), BODY).path("quoteId");
+        putOffer(quoteId, "of_a", Instant.now().plusSeconds(600));
+        String key = UUID.randomUUID().toString();
+
+        given().header("Authorization", "Bearer " + writerToken).header("Idempotency-Key", key)
+                .contentType(ContentType.JSON).body(QuoteApiContractTest.VERSION_BODY)
+                .when().post("/v1/quotes/" + quoteId + "/versions")
+                .then().statusCode(202)
+                .header("Location", equalTo("/v1/quotes/" + quoteId + "/versions/2"))
+                .body("version", equalTo(2))
+                .body("phase", equalTo("RECEIVED"));
+
+        Map<String, AttributeValue> meta = item("QUOTE#" + quoteId, "META");
+        assertThat(meta.get("currentVersion").n()).isEqualTo("2");
+        assertThat(meta.get("phase").s()).isEqualTo("RECEIVED");
+        assertThat(meta.get("offerCount").n()).isEqualTo("0");
+        Map<String, AttributeValue> superseded = item("QUOTE#" + quoteId, "V#0001");
+        assertThat(superseded).containsKey("supersededAt");
+        assertThat(superseded.get("revision").n()).isEqualTo("2");
+        Map<String, AttributeValue> current = item("QUOTE#" + quoteId, "V#0002");
+        assertThat(current.get("gsi2pk").s()).isEqualTo("ACTIVE_VERSION");
+        assertThat(current.get("executionName").s()).isEqualTo("q-" + quoteId + "-v2");
+        assertThat(objectMapper.readTree(current.get("snapshot").s()).at("/risk/vehicleRef").asText())
+                .isEqualTo("vehicle-sedan-2019");
+        assertThat(item("IDEMPOTENCY#org-acme#CREATE_VERSION#" + quoteId + "#" + key, "META").get("version").n())
+                .isEqualTo("2");
+        assertThat(outboxOf(quoteId)).hasSize(4);
+        assertThat(outboxOf(quoteId)).filteredOn(item -> item.get("version").n().equals("2"))
+                .extracting(item -> item.get("detailType").s())
+                .containsExactlyInAnyOrder("StartQuoteRequested", "QuoteAccepted");
+
+        given().header("Authorization", "Bearer " + writerToken)
+                .when().get("/v1/quotes/" + quoteId + "/versions/1")
+                .then().statusCode(200)
+                .body("currentVersion", equalTo(2))
+                .body("supersededAt", notNullValue())
+                .body("allowedActions", empty());
+        given().header("Authorization", "Bearer " + writerToken)
+                .when().get("/v1/quotes/" + quoteId + "/versions/1/offers")
+                .then().statusCode(200)
+                .body("revision", equalTo(2))
+                .body("items[0].selectable", equalTo(false))
+                .body("items[0].unavailabilityReason", equalTo("VERSION_SUPERSEDED"));
+        given().header("Authorization", "Bearer " + writerToken)
+                .when().get("/v1/quotes/" + quoteId + "/versions/2")
+                .then().statusCode(200)
+                .body("supersededAt", nullValue())
+                .body("allowedActions", contains("CREATE_VERSION"));
+    }
+
+    @Test
+    void t17_newVersionIsIdempotentAndSerializedByTheExpectedVersion() {
+        String quoteId = create(writerToken, UUID.randomUUID().toString(), BODY).path("quoteId");
+        String key = UUID.randomUUID().toString();
+        String path = "/v1/quotes/" + quoteId + "/versions";
+        postVersion(key, path, QuoteApiContractTest.VERSION_BODY).statusCode(202).body("version", equalTo(2));
+
+        postVersion(key, path, QuoteApiContractTest.VERSION_BODY).statusCode(202).body("version", equalTo(2));
+        assertThat(outboxOf(quoteId)).as("the replay adds no execution").hasSize(4);
+        postVersion(key, path, QuoteApiContractTest.VERSION_BODY.replace("vehicle-sedan-2019", "vehicle-hatch-2021"))
+                .statusCode(409).body("code", equalTo("IDEMPOTENCY_CONFLICT"));
+        postVersion(UUID.randomUUID().toString(), path, QuoteApiContractTest.VERSION_BODY)
+                .statusCode(409).body("code", equalTo("VERSION_CONFLICT"));
+        postVersion(UUID.randomUUID().toString(), path,
+                QuoteApiContractTest.VERSION_BODY.replace("\"expectedVersion\":1,", "\"expectedVersion\":2,"))
+                .statusCode(202).body("version", equalTo(3));
+
+        dynamoDb.updateItem(builder -> builder.tableName(FlociResource.TABLE)
+                .key(Map.of("pk", AttributeValue.fromS("QUOTE#" + quoteId), "sk", AttributeValue.fromS("META")))
+                .updateExpression("SET selectionId = :selection")
+                .expressionAttributeValues(Map.of(":selection", AttributeValue.fromS("sel-it"))));
+        postVersion(UUID.randomUUID().toString(), path,
+                QuoteApiContractTest.VERSION_BODY.replace("\"expectedVersion\":1,", "\"expectedVersion\":3,"))
+                .statusCode(409).body("code", equalTo("QUOTE_ALREADY_SELECTED"));
+        assertThat(item("QUOTE#" + quoteId, "META").get("currentVersion").n()).isEqualTo("3");
+        assertThat(item("QUOTE#" + quoteId, "V#0004")).isNullOrEmpty();
+    }
+
+    @Test
+    void newVersionOfAnotherOrganizationIsNotFoundAndAReaderCannotCreateOne() {
+        String quoteId = create(writerToken, UUID.randomUUID().toString(), BODY).path("quoteId");
+
+        given().header("Authorization", "Bearer " + globexToken).header("Idempotency-Key", UUID.randomUUID().toString())
+                .contentType(ContentType.JSON).body(QuoteApiContractTest.VERSION_BODY)
+                .when().post("/v1/quotes/" + quoteId + "/versions")
+                .then().statusCode(404);
+        given().header("Authorization", "Bearer " + readerToken).header("Idempotency-Key", UUID.randomUUID().toString())
+                .contentType(ContentType.JSON).body(QuoteApiContractTest.VERSION_BODY)
+                .when().post("/v1/quotes/" + quoteId + "/versions")
+                .then().statusCode(403);
+        assertThat(item("QUOTE#" + quoteId, "META").get("currentVersion").n()).isEqualTo("1");
+    }
+
+    private io.restassured.response.ValidatableResponse postVersion(String key, String path, String body) {
+        return given().header("Authorization", "Bearer " + writerToken).header("Idempotency-Key", key)
+                .contentType(ContentType.JSON).body(body)
+                .when().post(path)
+                .then();
     }
 
     private io.restassured.response.ExtractableResponse<io.restassured.response.Response> create(String token,

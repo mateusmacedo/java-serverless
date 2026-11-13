@@ -10,9 +10,11 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.security.GeneralSecurityException;
+import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -27,6 +29,7 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
@@ -52,6 +55,7 @@ import software.amazon.awssdk.services.cognitoidentityprovider.model.UserPoolCli
 import software.amazon.awssdk.services.cognitoidentityprovider.model.UserPoolDescriptionType;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.ConditionalCheckFailedException;
 import software.amazon.awssdk.services.eventbridge.EventBridgeClient;
 import software.amazon.awssdk.services.eventbridge.model.PutEventsResponse;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -61,13 +65,13 @@ import software.amazon.awssdk.services.sfn.model.ExecutionListItem;
 import software.amazon.awssdk.services.sfn.model.ExecutionStatus;
 import software.amazon.awssdk.services.sfn.model.StateMachineListItem;
 import software.amazon.awssdk.services.sqs.SqsClient;
+import software.amazon.awssdk.services.cloudwatchlogs.model.FilteredLogEvent;
 import software.amazon.awssdk.services.sqs.model.QueueAttributeName;
 
 /**
- * Ponta a ponta do M1, do M2 e do M3 (§14) no Floci, com as três stacks implantadas e as esperas no orçamento do
- * stage (§9), sem supor funções aquecidas. A {@code queryKey} depende só de organização, veículo e condutor (§5):
- * os casos de reuso apagam antes o {@code REUSE#} e o {@code INFLIGHT#} do próprio par (§10). Os casos da beta
- * escolhem o cenário pelo veículo, com uso {@code PERSONAL}, que cota na alpha e na beta.
+ * Ponta a ponta do M1 ao M4 (§14) no Floci, com as esperas no orçamento do stage (§9). Cada caso usa um par
+ * veículo/condutor próprio, porque a {@code queryKey} só depende dele (§5), e apaga o reuso do par (§10); os do M4
+ * apagam também, no {@code finally}, o estado que fabricaram e esperam os reconcilers pelo agendamento real.
  */
 class QuoteFlowE2E {
 
@@ -80,7 +84,9 @@ class QuoteFlowE2E {
 
     private static final String USERNAME = "e2e-acme-writer";
     private static final String PASSWORD = "E2e-Quote-Passw0rd!";
-    private static final List<String> GROUPS = List.of("org_org-acme", "perm_quotes_read", "perm_quotes_write");
+    /** {@code perm_offers_select} desde o M4: o T17 confere que só a versão atual oferece {@code SELECT_OFFER}. */
+    private static final List<String> GROUPS =
+            List.of("org_org-acme", "perm_quotes_read", "perm_quotes_write", "perm_offers_select");
 
     private static final String APPLICANT = "customer-acme-frota";
     private static final String DRIVER = "driver-acme-bruno";
@@ -97,6 +103,9 @@ class QuoteFlowE2E {
     private static final String BETA_SILENT = "vehicle-beta-silent";
     private static final String BETA_DUPLICATE = "vehicle-beta-duplicate";
     private static final String BETA_EARLY = "vehicle-beta-early";
+    private static final String BETA_LATE = "vehicle-beta-late";
+    private static final String ALPHA_DECLINES = "vehicle-alpha-declines";
+    private static final String ALPHA_DOWN = "vehicle-alpha-down";
     private static final String ALPHA = "alpha";
     private static final String BETA = "beta";
     private static final String CALLBACK_SECRET = "provider-solution/" + STAGE + "/callback-secret";
@@ -104,6 +113,20 @@ class QuoteFlowE2E {
     private static final String EVENT_BUS = "platform-" + STAGE + "-events";
     private static final String RESULTS_QUEUE = QUOTE_PREFIX + "-results";
     private static final String SIM_CALLBACKS_QUEUE = PROVIDER_PREFIX + "-sim-callbacks";
+    private static final String RESULTS_DLQ = QUOTE_PREFIX + "-results-dlq";
+    private static final String INSURER_REQUESTS_QUEUE = PROVIDER_PREFIX + "-insurer-requests";
+    private static final String RECONCILE_REQUESTS_QUEUE = PROVIDER_PREFIX + "-reconcile-requests";
+    private static final String QUOTE_RECONCILER_LOG = "/aws/lambda/" + QUOTE_PREFIX + "-reconciler";
+    private static final String PROVIDER_RECONCILER_LOG = "/aws/lambda/" + PROVIDER_PREFIX + "-reconciler";
+    private static final String RESUME_LOG = "/aws/lambda/" + QUOTE_PREFIX + "-resume";
+    private static final Path QUOTE_SERVERLESS = Path.of("../serverless.yml");
+    /** Namespace dos UUIDv5 das duas soluções, o URL da RFC 9562 (§3). */
+    private static final UUID EVENT_ID_NAMESPACE = UUID.fromString("6ba7b811-9dad-11d1-80b4-00c04fd430c8");
+    /** Token que a decifração da quote recusa: só serve para fazer a retomada cair depois de gravar (T13). */
+    private static final String UNREADABLE_TOKEN = "e2e-t13-unreadable-token";
+    /** T20: o dispatch da beta logo antes do ciclo seguinte do reconciler, que vem 60 ou 70 s depois (§13). */
+    private static final Duration T20_DISPATCH_AFTER_CYCLE = Duration.ofSeconds(51);
+    private static final int T20_ATTEMPTS = 3;
     /** Credencial padrão da provider ({@code PROVIDER_CREDENTIAL_REF}), parte da chave {@code QUOTA#} (§5). */
     private static final String CREDENTIAL_REF = "default";
     private static final DateTimeFormatter QUOTA_WINDOW =
@@ -730,6 +753,467 @@ class QuoteFlowE2E {
         assertNoInsurerConsulted(accepted.quoteId());
     }
 
+    /**
+     * T09: com uso {@code COMMERCIAL} só a alpha é aplicável, e ela recusa ({@code vehicle-alpha-declines}):
+     * {@code NO_OFFER} com {@code ALL_INSURERS_DECLINED}, depois de uma única chamada, sem retry comercial.
+     */
+    @Test
+    void t09_everyApplicableInsurerDeclinesEndsWithNoOfferAfterOneCall() throws Exception {
+        // NOTE: nenhum veículo faz a alpha e a beta recusarem juntas (§10); a recusa da beta ao lado da oferta da
+        // alpha é o T07
+        forgetEnrichmentReuse(ALPHA_DECLINES, DRIVER);
+        try {
+            Accepted accepted = create(newKey(),
+                    JSON.writeValueAsString(request(ALPHA_DECLINES, "COMMERCIAL", DRIVER)));
+
+            JsonNode version = awaitTerminal(accepted, stage.withInsurers(1));
+
+            assertThat(version.path("outcome").asText()).isEqualTo("NO_OFFER");
+            assertThat(version.path("outcomeReason").asText()).isEqualTo("ALL_INSURERS_DECLINED");
+            assertThat(statusByInsurer(version)).containsExactly(Map.entry(ALPHA, "DECLINED"));
+            assertThat(insurerResult(version, ALPHA).path("reasonCode").asText()).isEqualTo("RISK_NOT_ACCEPTED");
+            assertThat(getOk(accepted.statusUrl() + "/offers").path("items")).isEmpty();
+            String queryId = string(insurerQuery(accepted.quoteId(), ALPHA), "queryId");
+            assertThat(string(providerQuery(queryId), "state")).isEqualTo("COMPLETED");
+            assertThat(providerItems(queryId, "ATTEMPT#")).as("a decline is final: no commercial retry").hasSize(1);
+            assertThat(string(single(providerItems(queryId, "EVIDENCE#")), "resultType")).isEqualTo("DECLINED");
+        } finally {
+            forgetEnrichmentReuse(ALPHA_DECLINES, DRIVER);
+        }
+    }
+
+    /**
+     * T10: a única seguradora aplicável está fora do ar ({@code vehicle-alpha-down}, 503): {@code TECHNICAL_FAILURE}
+     * com {@code INSURER_TECHNICAL_FAILURE}, nunca {@code NO_OFFER}, depois da chamada e dos {@code workerRetries}.
+     */
+    @Test
+    void t10_everyApplicableInsurerUnavailableIsTechnicalFailureAndNotNoOffer() throws Exception {
+        int workerRetries = StageParameters.number(PROVIDER_SERVERLESS, STAGE, "workerRetries");
+        forgetEnrichmentReuse(ALPHA_DOWN, DRIVER);
+        try {
+            Accepted accepted = create(newKey(), JSON.writeValueAsString(request(ALPHA_DOWN, "COMMERCIAL", DRIVER)));
+
+            JsonNode version = awaitTerminal(accepted, stage.withInsurers(1));
+
+            assertThat(version.path("outcome").asText()).isEqualTo("TECHNICAL_FAILURE");
+            assertThat(version.path("outcomeReason").asText()).isEqualTo("INSURER_TECHNICAL_FAILURE");
+            assertThat(statusByInsurer(version)).containsExactly(Map.entry(ALPHA, "UNAVAILABLE"));
+            assertThat(getOk(accepted.statusUrl() + "/offers").path("items")).isEmpty();
+            String queryId = string(insurerQuery(accepted.quoteId(), ALPHA), "queryId");
+            assertThat(string(providerQuery(queryId), "state")).isEqualTo("FAILED");
+            assertThat(providerItems(queryId, "ATTEMPT#")).as("the call and the technical retries of the worker (§9)")
+                    .hasSize(1 + workerRetries);
+            assertThat(string(single(providerItems(queryId, "EVIDENCE#")), "resultType")).isEqualTo("UNAVAILABLE");
+        } finally {
+            forgetEnrichmentReuse(ALPHA_DOWN, DRIVER);
+        }
+    }
+
+    /**
+     * T13: o {@code resume} grava o resultado da beta e cai antes do {@code SendTaskSuccess}; a versão termina com o
+     * resultado gravado, o {@code reconciler} retoma o waiter parado em {@code RESUMING} e nenhuma chamada se repete.
+     */
+    @Test
+    void t13_savedResultWhoseResumeFailedIsRecoveredWithoutCallingTheInsurerAgain() throws Exception {
+        // NOTE: estado fabricado, como o QUOTA# do T21: o token do waiter da beta fica ilegível enquanto ele espera,
+        // então o resume grava RESUMING, resumePayload, RESULT, OFFER e CONSUMED e cai na decifração. No local, a
+        // espera da beta (20 s) acaba antes do resumingRetryAfterSeconds (30 s): a consolidação usa o resultado
+        // gravado, e a retomada do reconciler termina EXPIRED com o resultado entregue, sem TASK_EXPIRED (§8)
+        forgetEnrichmentReuse(HATCH, DRIVER);
+        Map<String, AttributeValue> waiterKey = null;
+        String originalToken = null;
+        try {
+            Accepted accepted = create(newKey(), JSON.writeValueAsString(request(HATCH, "PERSONAL", DRIVER)));
+            String workRef = workRef(accepted.quoteId(), 1, "INSURER", BETA);
+            Map<String, AttributeValue> key = metaKey("WAITER#" + workRef);
+            waiterKey = key;
+            Map<String, AttributeValue> waiting = await().atMost(stage.withInsurers(2))
+                    .pollInterval(Duration.ofMillis(200))
+                    .until(() -> item(QUOTES_TABLE, key), found -> "WAITING".equals(stringOrNull(found, "status")));
+            originalToken = string(waiting, "tokenCiphertext");
+            replaceToken(key, originalToken, UNREADABLE_TOKEN);
+            Map<String, AttributeValue> resuming = await().atMost(stage.withInsurers(2))
+                    .pollInterval(Duration.ofMillis(200))
+                    .until(() -> item(QUOTES_TABLE, key), found -> "RESUMING".equals(stringOrNull(found, "status")));
+            Instant resumingAt = Instant.parse(string(resuming, "updatedAt"));
+            String eventId = string(resuming, "resultEventId");
+            Map<String, AttributeValue> savedResult = single(quoteItems(accepted.quoteId(), "V#0001#RESULT#" + BETA));
+            List<Map<String, AttributeValue>> savedOffers = quoteItems(accepted.quoteId(), "V#0001#OFFER#");
+            // NOTE: a reentrega da fila results só vem depois do expiresAt do waiter e é descartada pelo CONSUMED,
+            // sem SendTaskSuccess; quem retoma o RESUMING é o reconciler
+            awaitLogEvent(RESUME_LOG, "failed and will be redelivered", resumingAt.minusSeconds(1),
+                    Duration.ofSeconds(60));
+            replaceToken(key, UNREADABLE_TOKEN, originalToken);
+            originalToken = null;
+            Instant restoredAt = Instant.now();
+
+            JsonNode version = awaitTerminal(accepted, stage.withInsurers(2));
+            awaitLog(QUOTE_RECONCILER_LOG, "reconciler resumed workRef=" + workRef, restoredAt, RECONCILER_BUDGET);
+            Map<String, AttributeValue> waiter = await().atMost(RECONCILER_BUDGET).pollInterval(Duration.ofSeconds(5))
+                    .until(() -> item(QUOTES_TABLE, key), found -> !found.containsKey("gsi2pk"));
+
+            assertThat(string(resuming, "resumePayload")).contains("QUOTED");
+            assertThat(string(savedResult, "status")).isEqualTo("QUOTED");
+            assertThat(string(savedResult, "resultEventId")).isEqualTo(eventId);
+            assertThat(queryByPrefix(QUOTES_TABLE, "CONSUMED#" + eventId, "META")).hasSize(1);
+            assertThat(version.path("outcome").asText()).isEqualTo("COMPLETED");
+            assertThat(statusByInsurer(version)).containsExactly(Map.entry(ALPHA, "QUOTED"), Map.entry(BETA, "QUOTED"));
+            assertThat(offersByInsurer(accepted)).containsOnlyKeys(ALPHA, BETA);
+            assertThat(quoteItems(accepted.quoteId(), "V#0001#OFFER#")).as("the offers saved before the failure")
+                    .containsExactlyInAnyOrderElementsOf(savedOffers);
+            assertThat(single(quoteItems(accepted.quoteId(), "V#0001#RESULT#" + BETA))).isEqualTo(savedResult);
+            assertThat(quoteItems(accepted.quoteId(), "V#0001#LATE#")).isEmpty();
+            assertThat(string(waiter, "status")).as("left RESUMING with the stored result").isIn("DONE", "EXPIRED");
+            assertThat(string(waiter, "resultEventId")).isEqualTo(eventId);
+            assertThat(quoteIssue("TASK_EXPIRED", workRef)).as("the result was delivered").isEmpty();
+            for (String insurerId : List.of(ALPHA, BETA)) {
+                String queryId = string(insurerQuery(accepted.quoteId(), insurerId), "queryId");
+                assertThat(providerItems(queryId, "ATTEMPT#")).as("one call to %s", insurerId).hasSize(1);
+            }
+        } finally {
+            if (originalToken != null) {
+                restoreToken(waiterKey, originalToken);
+            }
+            forgetEnrichmentReuse(HATCH, DRIVER);
+        }
+    }
+
+    /**
+     * T14: a beta aceita e nunca responde ({@code vehicle-beta-silent}). Depois do prazo, o {@code reconciler} da
+     * provider deixa a consulta {@code UNKNOWN} e a conclui pelo GET de situação, sem nova chamada; o resultado chega
+     * à quote como evidência tardia, e a cotação terminal não reabre.
+     */
+    @Test
+    void t14_silentInsurerIsReconciledByTheStatusApiWithoutRepeatingTheCall() throws Exception {
+        forgetEnrichmentReuse(BETA_SILENT, DRIVER_ANA);
+        try {
+            Accepted accepted = create(newKey(), JSON.writeValueAsString(request(BETA_SILENT, "PERSONAL", DRIVER_ANA)));
+            JsonNode version = awaitTerminal(accepted, stage.withInsurers(2));
+            Instant terminalAt = Instant.now();
+            Map<String, JsonNode> offers = offersByInsurer(accepted);
+            List<Map<String, AttributeValue>> versionBefore = quoteItems(accepted.quoteId(), "V#0001");
+            String betaQuery = string(insurerQuery(accepted.quoteId(), BETA), "queryId");
+
+            Map<String, AttributeValue> late = awaitLate(accepted.quoteId(), BETA, betaQuery);
+
+            assertThat(version.path("outcome").asText()).isEqualTo("PARTIAL");
+            assertThat(statusByInsurer(version)).containsExactly(Map.entry(ALPHA, "QUOTED"), Map.entry(BETA, "TIMED_OUT"));
+            assertLog(PROVIDER_RECONCILER_LOG, "left UNKNOWN: queryId=" + betaQuery, terminalAt.minusSeconds(60));
+            assertLog(PROVIDER_RECONCILER_LOG, "concluded by the status API, without a new call: queryId=" + betaQuery,
+                    terminalAt.minusSeconds(60));
+            assertThat(string(providerQuery(betaQuery), "state")).isEqualTo("COMPLETED");
+            assertThat(providerItems(betaQuery, "ATTEMPT#")).as("the quote request is never repeated").hasSize(1);
+            assertThat(inboxOf(betaQuery)).as("the beta never called back").isEmpty();
+            Map<String, AttributeValue> evidence = single(providerItems(betaQuery, "EVIDENCE#"));
+            assertThat(string(evidence, "resultType")).isEqualTo("QUOTED");
+            String rawResponseRef = string(evidence, "rawResponseRef");
+            assertThat(rawResponseRef).isEqualTo("raw/" + betaQuery + "/status-0001.json");
+            assertThat(S3.headObject(builder -> builder.bucket(PAYLOADS_BUCKET).key(rawResponseRef)).contentLength())
+                    .isPositive();
+            assertThat(string(late, "reason")).isEqualTo("LATE");
+            assertThat(string(late, "status")).isEqualTo("QUOTED");
+            assertThat(string(late, "queryRef")).isEqualTo(betaQuery);
+            assertTerminalUnchanged(accepted, version, offers, versionBefore);
+            providerIssue("UNKNOWN_QUERY", betaQuery).ifPresent(issue -> assertThat(string(issue, "status"))
+                    .as("an UNKNOWN_QUERY raised before the status API answered is resolved").isEqualTo("RESOLVED"));
+        } finally {
+            forgetEnrichmentReuse(BETA_SILENT, DRIVER_ANA);
+        }
+    }
+
+    /**
+     * T16: o callback da beta chega depois do prazo final da espera ({@code vehicle-beta-late}): a versão termina
+     * {@code PARTIAL}, o resultado entra como evidência tardia ({@code LATE}), e a versão, o resumo e as ofertas não
+     * mudam.
+     */
+    @Test
+    void t16_callbackAfterTheFinalDeadlineIsKeptAsLateEvidenceAndTheQuoteDoesNotReopen() throws Exception {
+        forgetEnrichmentReuse(BETA_LATE, DRIVER);
+        try {
+            Accepted accepted = create(newKey(), JSON.writeValueAsString(request(BETA_LATE, "PERSONAL", DRIVER)));
+            JsonNode version = awaitTerminal(accepted, stage.withInsurers(2));
+            Map<String, JsonNode> offers = offersByInsurer(accepted);
+            List<Map<String, AttributeValue>> versionBefore = quoteItems(accepted.quoteId(), "V#0001");
+            String betaQuery = string(insurerQuery(accepted.quoteId(), BETA), "queryId");
+
+            Map<String, AttributeValue> late = awaitLate(accepted.quoteId(), BETA, betaQuery);
+
+            assertThat(version.path("outcome").asText()).isEqualTo("PARTIAL");
+            assertThat(statusByInsurer(version)).containsExactly(Map.entry(ALPHA, "QUOTED"), Map.entry(BETA, "TIMED_OUT"));
+            assertThat(insurerResult(version, BETA).path("reasonCode").asText()).isEqualTo("STEP_TIMEOUT");
+            assertThat(string(late, "reason")).isEqualTo("LATE");
+            assertThat(string(late, "status")).isEqualTo("QUOTED");
+            assertThat(string(late, "rawResponseRef")).startsWith("raw/" + betaQuery + "/");
+            assertThat(string(providerQuery(betaQuery), "state")).isEqualTo("COMPLETED");
+            assertThat(providerItems(betaQuery, "ATTEMPT#")).hasSize(1);
+            assertThat(providerItems(betaQuery, "EVIDENCE#")).as("the late callback is the only evidence").hasSize(1);
+            assertTerminalUnchanged(accepted, version, offers, versionBefore);
+            LOG.info(() -> "T16 quoteId=%s late evidence from %s".formatted(accepted.quoteId(),
+                    string(late, "rawResponseRef").contains("/status-") ? "the status API" : "the callback"));
+        } finally {
+            forgetEnrichmentReuse(BETA_LATE, DRIVER);
+        }
+    }
+
+    /**
+     * T17: a versão 2 é criada enquanto a versão 1 ainda consulta. Os resultados da versão 1 chegam depois da troca e
+     * ficam nela; a versão substituída fica sem ações e com as ofertas não selecionáveis, e só a atual oferece
+     * {@code SELECT_OFFER}. O reenvio da chave devolve a mesma versão e a versão lida antiga recebe 409.
+     */
+    @Test
+    void t17_newVersionDuringTheOldQueryKeepsResultsApartAndBlocksSelectionOnTheOldVersion() throws Exception {
+        forgetEnrichmentReuse(SEDAN, DRIVER);
+        forgetEnrichmentReuse(BETA_DECLINES, DRIVER_ANA);
+        try {
+            Accepted first = create(newKey(), JSON.writeValueAsString(request(SEDAN, "PERSONAL", DRIVER)));
+            String versionKey = newKey();
+            String versionBody = JSON.writeValueAsString(versionRequest(1, BETA_DECLINES, "PERSONAL", DRIVER_ANA));
+            HttpResponse<String> created = postVersion(first.quoteId(), versionKey, versionBody);
+            JsonNode firstWhenReplaced = getOk(first.statusUrl());
+            HttpResponse<String> replayed = postVersion(first.quoteId(), versionKey, versionBody);
+            HttpResponse<String> stale = postVersion(first.quoteId(), newKey(), versionBody);
+
+            assertThat(created.statusCode()).as(created.body()).isEqualTo(202);
+            Accepted second = accepted(created);
+            JsonNode oldVersion = awaitTerminal(first, stage.withInsurers(2));
+            JsonNode newVersion = awaitTerminal(second, stage.withInsurers(2));
+
+            assertThat(second.quoteId()).isEqualTo(first.quoteId());
+            assertThat(second.version()).isEqualTo(2);
+            assertThat(second.statusUrl()).isEqualTo("/v1/quotes/" + first.quoteId() + "/versions/2");
+            assertThat(replayed.statusCode()).as(replayed.body()).isEqualTo(202);
+            assertThat(accepted(replayed).identity()).isEqualTo(second.identity());
+            assertThat(stale.statusCode()).as(stale.body()).isEqualTo(409);
+            assertThat(JSON.readTree(stale.body()).path("code").asText()).isEqualTo("VERSION_CONFLICT");
+            assertThat(firstWhenReplaced.path("phase").asText()).as("the version 1 was still running")
+                    .isNotEqualTo("TERMINAL");
+            assertThat(firstWhenReplaced.path("supersededAt").asText()).isNotBlank();
+
+            assertThat(oldVersion.path("outcome").asText()).isEqualTo("COMPLETED");
+            assertThat(oldVersion.path("currentVersion").asInt()).isEqualTo(2);
+            assertThat(oldVersion.path("supersededAt").asText()).isNotBlank();
+            assertThat(oldVersion.path("allowedActions")).as("no SELECT_OFFER on the superseded version").isEmpty();
+            assertThat(oldVersion.at("/snapshot/risk/vehicleRef").asText()).isEqualTo(SEDAN);
+            assertThat(statusByInsurer(oldVersion)).containsExactly(Map.entry(ALPHA, "QUOTED"), Map.entry(BETA, "QUOTED"));
+            Map<String, JsonNode> oldOffers = offersByInsurer(first);
+            assertThat(oldOffers).containsOnlyKeys(ALPHA, BETA);
+            assertThat(oldOffers.values()).allSatisfy(offer -> {
+                assertThat(offer.path("selectable").asBoolean()).isFalse();
+                assertThat(offer.path("unavailabilityReason").asText()).isEqualTo("VERSION_SUPERSEDED");
+            });
+
+            assertThat(newVersion.path("outcome").asText()).isEqualTo("COMPLETED");
+            assertThat(newVersion.path("supersededAt").isNull()).isTrue();
+            assertThat(newVersion.at("/snapshot/risk/vehicleRef").asText()).isEqualTo(BETA_DECLINES);
+            assertThat(texts(newVersion.path("allowedActions"))).containsExactlyInAnyOrder("CREATE_VERSION", "SELECT_OFFER");
+            assertThat(statusByInsurer(newVersion)).containsExactly(Map.entry(ALPHA, "QUOTED"),
+                    Map.entry(BETA, "DECLINED"));
+            Map<String, JsonNode> newOffers = offersByInsurer(second);
+            assertThat(newOffers).containsOnlyKeys(ALPHA);
+            assertThat(newOffers.get(ALPHA).path("selectable").asBoolean()).isTrue();
+
+            Instant replacedAt = Instant.parse(string(versionItem(first.quoteId(), 2), "createdAt"));
+            for (int version : List.of(1, 2)) {
+                assertThat(quoteItems(first.quoteId(), "V#%04d#LATE#".formatted(version))).isEmpty();
+                for (Map<String, AttributeValue> result : quoteItems(first.quoteId(), "V#%04d#RESULT#".formatted(version))) {
+                    Map<String, AttributeValue> query = providerQuery(string(result, "queryRef"));
+                    assertThat(number(query, "version")).as("the query of %s", string(result, "sk")).isEqualTo(version);
+                    if (version == 1) {
+                        assertThat(Instant.parse(string(result, "updatedAt"))).as("arrived after the new version")
+                                .isAfter(replacedAt);
+                    }
+                }
+            }
+            assertThat(providerQueriesOf(first.quoteId(), "QUOTE")).as("two insurer queries per version").hasSize(4);
+            List<ExecutionListItem> executions = await().atMost(Duration.ofSeconds(stage.stepsMarginSeconds()))
+                    .pollInterval(Duration.ofSeconds(1))
+                    .until(() -> executionsOf(first.quoteId()), found -> found.size() == 2
+                            && found.stream().noneMatch(execution -> execution.status() == ExecutionStatus.RUNNING));
+            assertThat(executions).as("the old execution was not cancelled")
+                    .allSatisfy(execution -> assertThat(execution.status()).isEqualTo(ExecutionStatus.SUCCEEDED));
+        } finally {
+            forgetEnrichmentReuse(SEDAN, DRIVER);
+            forgetEnrichmentReuse(BETA_DECLINES, DRIVER_ANA);
+        }
+    }
+
+    /**
+     * T20: a execução é interrompida ({@code StopExecution}) com a oferta da alpha gravada e a beta em processamento.
+     * O {@code reconciler} da quote encontra a execução {@code ABORTED}, finaliza a versão com os resultados
+     * existentes, mantém a oferta e grava a ocorrência {@code WORKFLOW_FAILED}.
+     */
+    @Test
+    void t20_abortedExecutionIsFinalizedByTheReconcilerKeepingTheOffers() throws Exception {
+        // NOTE: no Floci, o StopExecution marca ABORTED, mas o interpretador segue os estados sem registrá-los no
+        // histórico: a espera da beta acaba e o ConsolidateQuote consolida cerca de 21 s depois do dispatch. O
+        // reconciler só finaliza se um ciclo dele cair entre o StopExecution e essa consolidação, então o caso põe o
+        // dispatch T20_DISPATCH_AFTER_CYCLE depois de um ciclo (o seguinte vem 60 ou 70 s depois dele) e repete com
+        // outra cotação quando a continuação do Floci consolida antes
+        forgetEnrichmentReuse(BETA_LATE, DRIVER_ANA);
+        try {
+            Duration dispatchLatency = Duration.ofSeconds(5);
+            for (int attempt = 1; ; attempt++) {
+                // NOTE: cada tentativa é um MISS, no mesmo regime da latência medida na anterior
+                forgetEnrichmentReuse(BETA_LATE, DRIVER_ANA);
+                Instant cycle = awaitReconcilerCycle();
+                Instant postAt = cycle.plus(T20_DISPATCH_AFTER_CYCLE).minus(dispatchLatency);
+                await().atMost(RECONCILER_BUDGET).pollInterval(Duration.ofMillis(250))
+                        .until(() -> !Instant.now().isBefore(postAt));
+                Instant posted = Instant.now();
+                Accepted accepted = create(newKey(),
+                        JSON.writeValueAsString(request(BETA_LATE, "PERSONAL", DRIVER_ANA)));
+                String quoteId = accepted.quoteId();
+                Map<String, AttributeValue> betaWaiter = await().atMost(stage.withInsurers(2))
+                        .pollInterval(Duration.ofMillis(250))
+                        .until(() -> item(QUOTES_TABLE, metaKey("WAITER#" + workRef(quoteId, 1, "INSURER", BETA))),
+                                found -> !found.isEmpty());
+                Instant dispatched = Instant.parse(string(betaWaiter, "createdAt"));
+                dispatchLatency = Duration.between(posted, dispatched);
+                List<ExecutionListItem> running = executionsOf(quoteId);
+                assertThat(running).hasSize(1);
+                String executionArn = running.getFirst().executionArn();
+                await().atMost(stage.withInsurers(2)).pollInterval(Duration.ofMillis(250))
+                        .until(() -> stringOrNull(single(quoteItems(quoteId, "V#0001#RESULT#" + ALPHA)), "status"),
+                                "QUOTED"::equals);
+                String phaseWhenStopped = string(versionItem(quoteId, 1), "phase");
+                Map<String, AttributeValue> betaWhenStopped = single(quoteItems(quoteId, "V#0001#RESULT#" + BETA));
+                List<Map<String, AttributeValue>> offersWhenStopped = quoteItems(quoteId, "V#0001#OFFER#");
+                SFN.stopExecution(builder -> builder.executionArn(executionArn).error("E2E.FatalFailure")
+                        .cause("T20: falha fatal provocada pelo e2e"));
+                Instant stopped = Instant.now();
+
+                JsonNode version = awaitTerminal(accepted, RECONCILER_BUDGET);
+
+                String betaReason = insurerResult(version, BETA).path("reasonCode").asText();
+                int tried = attempt;
+                LOG.info(() -> "T20 attempt=%d quoteId=%s dispatch=cycle+%d ms stop=cycle+%d ms beta=%s".formatted(
+                        tried, quoteId, Duration.between(cycle, dispatched).toMillis(),
+                        Duration.between(cycle, stopped).toMillis(), betaReason));
+                if (!"WORKFLOW_ABORTED".equals(betaReason)) {
+                    // INVARIANT: a consolidação que ganhou a corrida mantém as ofertas e é a única transição a
+                    // TERMINAL; sem a finalização do reconciler, não há WORKFLOW_FAILED
+                    assertThat(quoteItems(quoteId, "V#0001#OFFER#")).as("the Floci continuation keeps the offers")
+                            .containsExactlyInAnyOrderElementsOf(offersWhenStopped);
+                    assertThat(quoteIssue("WORKFLOW_FAILED", quoteId + "|1")).as("consolidated before the reconciler")
+                            .isEmpty();
+                    assertThat(JSON.readTree(string(outbox(QUOTES_TABLE, uuidV5(quoteId + "|1|COMPLETED")), "detail"))
+                            .path("outcome").asText()).isEqualTo(version.path("outcome").asText());
+                    assertThat(attempt).as("the Floci continuation of the stopped execution consolidated it (%s) "
+                            + "before a reconciler cycle in every attempt", betaReason).isLessThan(T20_ATTEMPTS);
+                    continue;
+                }
+                assertThat(phaseWhenStopped).isEqualTo("QUOTING");
+                assertThat(string(betaWhenStopped, "status")).isEqualTo("PROCESSING");
+                assertThat(offersWhenStopped).hasSize(1);
+                assertThat(SFN.describeExecution(builder -> builder.executionArn(executionArn)).status())
+                        .isEqualTo(ExecutionStatus.ABORTED);
+                assertThat(version.path("outcome").asText()).isEqualTo("PARTIAL");
+                assertThat(statusByInsurer(version)).containsExactly(Map.entry(ALPHA, "QUOTED"),
+                        Map.entry(BETA, "TIMED_OUT"));
+                assertThat(quoteItems(quoteId, "V#0001#OFFER#")).as("the finalization keeps the offers")
+                        .containsExactlyInAnyOrderElementsOf(offersWhenStopped);
+                assertThat(offersByInsurer(accepted)).containsOnlyKeys(ALPHA);
+                assertThat(versionItem(quoteId, 1)).as("out of the ACTIVE_VERSION index").doesNotContainKey("gsi2pk");
+                Map<String, AttributeValue> issue = quoteIssue("WORKFLOW_FAILED", quoteId + "|1").orElseThrow();
+                assertThat(string(issue, "type")).as("the item type (ADR 0015)").isEqualTo("ISSUE");
+                assertThat(string(issue, "issueType")).isEqualTo("WORKFLOW_FAILED");
+                assertThat(string(issue, "status")).isEqualTo("OPEN");
+                assertThat(string(issue, "source")).isEqualTo("quote");
+                assertThat(string(issue, "organizationId")).isEqualTo(ORGANIZATION);
+                assertThat(string(issue, "quoteId")).isEqualTo(quoteId);
+                assertThat(number(issue, "version")).isEqualTo(1);
+                JsonNode completed = JSON.readTree(string(outbox(QUOTES_TABLE, uuidV5(quoteId + "|1|COMPLETED")),
+                        "detail"));
+                assertThat(completed.path("outcome").asText()).isEqualTo("PARTIAL");
+                assertThat(completed.path("offerCount").asInt()).isEqualTo(1);
+                return;
+            }
+        } finally {
+            forgetEnrichmentReuse(BETA_LATE, DRIVER_ANA);
+        }
+    }
+
+    /**
+     * T31 nas DLQs implantadas: entregas de uma cotação concluída, postas na DLQ como se tivessem esgotado o
+     * {@code maxReceiveCount}, são reenviadas como a tentativa 2, sem duplicar resultado, oferta ou chamada
+     * (ADR 0007). O resultado volta à retomada mesmo com a versão fora do prazo; o pedido com chamada externa
+     * fora do prazo é descartado com {@code DEAD_LETTER}.
+     */
+    @Test
+    void t31_deadLettersAreReprocessedWithoutDuplicatingResultsOrCalls() throws Exception {
+        // NOTE: a passagem pela RedrivePolicy com as visibilidades do stage (90 s × 5 na results, 150 s × 3 na
+        // provider) passa de 7 min por mensagem; ela está no QuoteFunctionsFlociIT e no DeadLetterReprocessingIT,
+        // com visibilidade de 1 s, e aqui o harness confere a RedrivePolicy implantada
+        assertRedrivePolicy(RESULTS_QUEUE, RESULTS_DLQ, StageParameters.number(QUOTE_SERVERLESS, STAGE,
+                "resultsMaxReceiveCount"));
+        int requestsMaxReceiveCount = StageParameters.number(PROVIDER_SERVERLESS, STAGE, "requestQueueMaxReceiveCount");
+        assertRedrivePolicy(INSURER_REQUESTS_QUEUE, INSURER_REQUESTS_QUEUE + "-dlq", requestsMaxReceiveCount);
+        assertRedrivePolicy(RECONCILE_REQUESTS_QUEUE, RECONCILE_REQUESTS_QUEUE + "-dlq", requestsMaxReceiveCount);
+        forgetEnrichmentReuse(VAN, DRIVER_ANA);
+        try {
+            Accepted accepted = create(newKey(), JSON.writeValueAsString(request(VAN, "COMMERCIAL", DRIVER_ANA)));
+            JsonNode version = awaitTerminal(accepted, stage.withInsurers(1));
+            Map<String, AttributeValue> query = insurerQuery(accepted.quoteId(), ALPHA);
+            String queryId = string(query, "queryId");
+            // NOTE: com a versão fora do prazo, o resultado da results-dlq volta à retomada mesmo assim (§9)
+            DYNAMO_DB.updateItem(builder -> builder.tableName(QUOTES_TABLE)
+                    .key(Map.of("pk", AttributeValue.fromS("QUOTE#" + accepted.quoteId()),
+                            "sk", AttributeValue.fromS("V#0001")))
+                    .updateExpression("SET deadlineAt = :past")
+                    .expressionAttributeValues(Map.of(":past",
+                            AttributeValue.fromS(Instant.now().minusSeconds(1).toString()))));
+            List<Map<String, AttributeValue>> versionBefore = quoteItems(accepted.quoteId(), "V#0001");
+            List<Map<String, AttributeValue>> queryBefore = providerHistory(queryId);
+            String resultEventId = string(waiterOf(accepted.quoteId(), ALPHA), "resultEventId");
+            Map<String, AttributeValue> request = outbox(QUOTES_TABLE, string(query, "requestEventId"));
+            Instant requestDeadline =
+                    Instant.parse(JSON.readTree(string(request, "detail")).path("deadlineAt").asText());
+            String operationId = "op_" + UUID.randomUUID().toString().replace("-", "");
+            Instant since = Instant.now();
+
+            sendToDeadLetterQueue(RESULTS_DLQ, envelope("mmda.provider", outbox(QUERIES_TABLE, resultEventId)));
+            sendToDeadLetterQueue(RECONCILE_REQUESTS_QUEUE + "-dlq", reconcileRequested(operationId, queryId));
+            await().atMost(stage.withInsurers(1)).pollInterval(Duration.ofSeconds(1))
+                    .until(() -> Instant.now().isAfter(requestDeadline));
+            sendToDeadLetterQueue(INSURER_REQUESTS_QUEUE + "-dlq", envelope("mmda.quote", request));
+
+            awaitLog(QUOTE_RECONCILER_LOG, "dead letter " + resultEventId + " (InsurerResultRecorded) redriven as attempt 2",
+                    since, RECONCILER_BUDGET);
+            awaitLog(RESUME_LOG, "result " + resultEventId + " already consumed, discarded", since, RECONCILER_BUDGET);
+            awaitLog(PROVIDER_RECONCILER_LOG, "queue=reconcile-requests attempt=2 target=" + operationId, since,
+                    RECONCILER_BUDGET);
+            Map<String, AttributeValue> operation = await().atMost(RECONCILER_BUDGET).pollInterval(Duration.ofSeconds(5))
+                    .until(() -> item(QUERIES_TABLE, metaKey("OPERATION#" + operationId)),
+                            found -> found.containsKey("status") && !"RUNNING".equals(string(found, "status")));
+            String deadLetterTarget = "insurer-requests|" + queryId;
+            Map<String, AttributeValue> deadLetter = await().atMost(RECONCILER_BUDGET).pollInterval(Duration.ofSeconds(5))
+                    .until(() -> providerIssue("DEAD_LETTER", deadLetterTarget), Optional::isPresent)
+                    .orElseThrow();
+
+            assertThat(version.path("outcome").asText()).isEqualTo("COMPLETED");
+            assertThat(quoteItems(accepted.quoteId(), "V#0001")).as("no result, offer or late evidence duplicated")
+                    .containsExactlyInAnyOrderElementsOf(versionBefore);
+            assertThat(queryByPrefix(QUOTES_TABLE, "CONSUMED#" + resultEventId, "META")).hasSize(1);
+            assertThat(providerHistory(queryId)).as("no call, attempt or evidence repeated")
+                    .containsExactlyInAnyOrderElementsOf(queryBefore);
+            assertThat(string(operation, "status")).isEqualTo("SUCCEEDED");
+            JsonNode reconciled = JSON.readTree(string(outbox(QUERIES_TABLE, uuidV5(operationId + "|2")), "detail"));
+            assertThat(reconciled.path("status").asText()).isEqualTo("SUCCEEDED");
+            assertThat(reconciled.path("queryId").asText()).isEqualTo(queryId);
+            assertThat(reconciled.path("organizationId").asText()).isEqualTo(ORGANIZATION);
+            assertThat(reconciled.path("revision").asInt()).isEqualTo(2);
+            assertThat(string(deadLetter, "issueType")).isEqualTo("DEAD_LETTER");
+            assertThat(string(deadLetter, "status")).isEqualTo("OPEN");
+            assertThat(string(deadLetter, "queryId")).isEqualTo(queryId);
+            assertThat(string(deadLetter, "quoteId")).isEqualTo(accepted.quoteId());
+            Map<String, AttributeValue> raised =
+                    outbox(QUERIES_TABLE, uuidV5(string(deadLetter, "issueId") + "|" + number(deadLetter, "revision")));
+            assertThat(string(raised, "detailType")).isIn("OperationIssueRaised", "OperationIssueUpdated");
+        } finally {
+            forgetEnrichmentReuse(VAN, DRIVER_ANA);
+        }
+    }
+
     /** Evidência usada do enriquecimento na quote, com a consulta e a evidência correspondentes na provider. */
     private static void assertEnrichmentEvidence(String quoteId) {
         Map<String, AttributeValue> used = single(quoteItems(quoteId, "V#0001#EVIDENCE#"));
@@ -895,9 +1379,12 @@ class QuoteFlowE2E {
     }
 
     private static Map<String, AttributeValue> versionItem(String quoteId) {
-        return DYNAMO_DB.getItem(builder -> builder.tableName(QUOTES_TABLE).consistentRead(true)
-                .key(Map.of("pk", AttributeValue.fromS("QUOTE#" + quoteId), "sk", AttributeValue.fromS("V#0001"))))
-                .item();
+        return versionItem(quoteId, 1);
+    }
+
+    private static Map<String, AttributeValue> versionItem(String quoteId, int version) {
+        return item(QUOTES_TABLE, Map.of("pk", AttributeValue.fromS("QUOTE#" + quoteId),
+                "sk", AttributeValue.fromS("V#%04d".formatted(version))));
     }
 
     private static void logChain(String label, String quoteId) {
@@ -1117,6 +1604,197 @@ class QuoteFlowE2E {
         DYNAMO_DB.deleteItem(builder -> builder.tableName(QUERIES_TABLE).key(quotaKey(provider, window)));
     }
 
+    /**
+     * Espera um ciclo novo do {@code reconciler} da quote, pela linha {@code reconciler report} que ele registra em
+     * todo ciclo, e devolve o instante dela.
+     */
+    private static Instant awaitReconcilerCycle() {
+        return awaitLogEvent(QUOTE_RECONCILER_LOG, "reconciler report", Instant.now(), RECONCILER_BUDGET).at();
+    }
+
+    private record LogEvent(String message, Instant at) {
+    }
+
+    /** Primeira linha do grupo com o texto, registrada depois de {@code after}. */
+    private static LogEvent awaitLogEvent(String logGroup, String text, Instant after, Duration budget) {
+        FilteredLogEvent event = await().atMost(budget).pollInterval(Duration.ofSeconds(2))
+                .until(() -> logEvents(logGroup, text, after).stream()
+                        .filter(found -> found.timestamp() > after.toEpochMilli())
+                        .min(Comparator.comparing(FilteredLogEvent::timestamp)), Optional::isPresent)
+                .orElseThrow();
+        return new LogEvent(event.message(), Instant.ofEpochMilli(event.timestamp()));
+    }
+
+    private static void awaitLog(String logGroup, String text, Instant since, Duration budget) {
+        await().atMost(budget).pollInterval(Duration.ofSeconds(2)).untilAsserted(() -> assertLog(logGroup, text, since));
+    }
+
+    private static void assertLog(String logGroup, String text, Instant since) {
+        assertThat(logEvents(logGroup, text, since)).as("%s logged '%s' since %s", logGroup, text, since).isNotEmpty();
+    }
+
+    private static List<FilteredLogEvent> logEvents(String logGroup, String text, Instant since) {
+        return LOGS.filterLogEventsPaginator(builder -> builder.logGroupName(logGroup)
+                        .startTime(since.minusSeconds(5).toEpochMilli()))
+                .events().stream()
+                .filter(event -> event.message().contains(text))
+                .toList();
+    }
+
+    /** {@code workRef} da quote (§3): {@code wr_} e 32 hexadecimais do SHA-256 de {@code quoteId|version|kind|insurerId}. */
+    private static String workRef(String quoteId, int version, String kind, String insurerId) {
+        return "wr_" + sha256Hex(String.join("|", quoteId, Integer.toString(version), kind, insurerId)).substring(0, 32);
+    }
+
+    /** Ocorrência própria da quote (§3), pelo {@code issueId} do {@code QuoteIssues}: {@code quote|tipo|alvo}. */
+    private static Optional<Map<String, AttributeValue>> quoteIssue(String type, String target) {
+        String issueId = "iss_" + sha256Hex("quote|" + type + "|" + target).substring(0, 32);
+        return queryByPrefix(QUOTES_TABLE, "ISSUE#" + issueId, "META").stream().findFirst();
+    }
+
+    /** Ocorrência da provider (§5), pelo {@code issueId} {@code is_} e o SHA-256 de {@code tipo|alvo}. */
+    private static Optional<Map<String, AttributeValue>> providerIssue(String type, String target) {
+        String issueId = "is_" + sha256Hex(type + "|" + target).substring(0, 32);
+        return queryByPrefix(QUERIES_TABLE, "ISSUE#" + issueId, "META").stream().findFirst();
+    }
+
+    private static String sha256Hex(String value) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (GeneralSecurityException exception) {
+            throw new IllegalStateException("SHA-256 is not available", exception);
+        }
+    }
+
+    /** {@code eventId} determinístico das duas soluções (§3): UUIDv5 do nome no namespace URL da RFC 9562. */
+    private static String uuidV5(String name) {
+        try {
+            MessageDigest sha1 = MessageDigest.getInstance("SHA-1");
+            sha1.update(ByteBuffer.allocate(16).putLong(EVENT_ID_NAMESPACE.getMostSignificantBits())
+                    .putLong(EVENT_ID_NAMESPACE.getLeastSignificantBits()).array());
+            byte[] hash = sha1.digest(name.getBytes(StandardCharsets.UTF_8));
+            hash[6] = (byte) ((hash[6] & 0x0f) | 0x50);
+            hash[8] = (byte) ((hash[8] & 0x3f) | 0x80);
+            ByteBuffer bytes = ByteBuffer.wrap(hash, 0, 16);
+            return new UUID(bytes.getLong(), bytes.getLong()).toString();
+        } catch (GeneralSecurityException exception) {
+            throw new IllegalStateException("SHA-1 is not available", exception);
+        }
+    }
+
+    private static Map<String, AttributeValue> metaKey(String pk) {
+        return Map.of("pk", AttributeValue.fromS(pk), "sk", AttributeValue.fromS("META"));
+    }
+
+    /** Item pela chave, com leitura consistente; vazio quando não existe. */
+    private static Map<String, AttributeValue> item(String table, Map<String, AttributeValue> key) {
+        return DYNAMO_DB.getItem(builder -> builder.tableName(table).consistentRead(true).key(key)).item();
+    }
+
+    /** T13: troca o token cifrado do waiter só se ele ainda é o esperado. */
+    private static void replaceToken(Map<String, AttributeValue> waiterKey, String expected, String replacement) {
+        DYNAMO_DB.updateItem(builder -> builder.tableName(QUOTES_TABLE).key(waiterKey)
+                .updateExpression("SET tokenCiphertext = :replacement")
+                .conditionExpression("tokenCiphertext = :expected")
+                .expressionAttributeValues(Map.of(":replacement", AttributeValue.fromS(replacement),
+                        ":expected", AttributeValue.fromS(expected))));
+    }
+
+    /** T13: devolve o token original se o caso parou com o token fabricado no waiter. */
+    private static void restoreToken(Map<String, AttributeValue> waiterKey, String originalToken) {
+        if (waiterKey == null) {
+            return;
+        }
+        try {
+            replaceToken(waiterKey, UNREADABLE_TOKEN, originalToken);
+        } catch (ConditionalCheckFailedException alreadyRestored) {
+            LOG.fine(() -> "T13 token already restored: " + alreadyRestored.getMessage());
+        }
+    }
+
+    /** Espera o resultado tardio da seguradora na versão 1 ({@code V#0001#LATE#<insurerId>#<queryId>}, §4). */
+    private static Map<String, AttributeValue> awaitLate(String quoteId, String insurerId, String queryId) {
+        return await().atMost(RECONCILER_BUDGET).pollInterval(Duration.ofSeconds(5))
+                .until(() -> quoteItems(quoteId, "V#0001#LATE#" + insurerId + "#" + queryId), items -> items.size() == 1)
+                .getFirst();
+    }
+
+    /** A cotação terminal não reabre: versão, resultados, ofertas e resumo como antes do resultado tardio (T14, T16). */
+    private static void assertTerminalUnchanged(Accepted accepted, JsonNode version, Map<String, JsonNode> offers,
+            List<Map<String, AttributeValue>> versionBefore) throws Exception {
+        assertThat(quoteItems(accepted.quoteId(), "V#0001").stream()
+                .filter(item -> !string(item, "sk").startsWith("V#0001#LATE#"))
+                .toList()).containsExactlyInAnyOrderElementsOf(versionBefore);
+        JsonNode after = getOk(accepted.statusUrl());
+        for (String field : List.of("phase", "outcome", "outcomeReason", "currentVersion")) {
+            assertThat(after.path(field)).as(field).isEqualTo(version.path(field));
+        }
+        assertThat(statusByInsurer(after)).isEqualTo(statusByInsurer(version));
+        assertThat(offersByInsurer(accepted).keySet()).isEqualTo(offers.keySet());
+    }
+
+    /** {@code RedrivePolicy} implantada: a fila leva à sua DLQ depois de {@code maxReceiveCount} recebimentos. */
+    private static void assertRedrivePolicy(String queueName, String deadLetterQueueName, int maxReceiveCount)
+            throws Exception {
+        String queueUrl = SQS.getQueueUrl(builder -> builder.queueName(queueName)).queueUrl();
+        JsonNode redrive = JSON.readTree(SQS.getQueueAttributes(builder -> builder.queueUrl(queueUrl)
+                .attributeNames(QueueAttributeName.REDRIVE_POLICY)).attributes().get(QueueAttributeName.REDRIVE_POLICY));
+        assertThat(redrive.path("deadLetterTargetArn").asText()).endsWith(":" + deadLetterQueueName);
+        assertThat(redrive.path("maxReceiveCount").asText()).isEqualTo(Integer.toString(maxReceiveCount));
+    }
+
+    /** Põe o corpo na DLQ como a {@code RedrivePolicy} o deixaria: a entrega original, sem {@code dlqAttempt}. */
+    private static void sendToDeadLetterQueue(String deadLetterQueueName, String body) {
+        String queueUrl = SQS.getQueueUrl(builder -> builder.queueName(deadLetterQueueName)).queueUrl();
+        SQS.sendMessage(builder -> builder.queueUrl(queueUrl).messageBody(body));
+    }
+
+    /** Envelope que a regra do barramento entrega na fila, com o {@code detail} gravado no outbox. */
+    private static String envelope(String source, Map<String, AttributeValue> outbox) throws Exception {
+        Map<String, Object> envelope = new LinkedHashMap<>();
+        envelope.put("version", "0");
+        envelope.put("id", UUID.randomUUID().toString());
+        envelope.put("detail-type", string(outbox, "detailType"));
+        envelope.put("source", source);
+        envelope.put("account", "000000000000");
+        envelope.put("time", SECONDS.format(Instant.now()) + "Z");
+        envelope.put("region", "us-east-1");
+        envelope.put("resources", List.of());
+        envelope.put("detail", JSON.readTree(string(outbox, "detail")));
+        return JSON.writeValueAsString(envelope);
+    }
+
+    /** {@code QueryReconcileRequested} no contrato da quote (AsyncAPI), como a regra o entrega na provider. */
+    private static String reconcileRequested(String operationId, String queryId) throws Exception {
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("eventId", UUID.randomUUID().toString());
+        detail.put("occurredAt", Instant.now().toString());
+        detail.put("schemaVersion", "1");
+        detail.put("operationId", operationId);
+        detail.put("organizationId", ORGANIZATION);
+        detail.put("queryId", queryId);
+        detail.put("reason", "T31_DEAD_LETTER_REPROCESSING");
+        detail.put("requestedBy", USERNAME);
+        Map<String, Object> envelope = new LinkedHashMap<>();
+        envelope.put("version", "0");
+        envelope.put("id", UUID.randomUUID().toString());
+        envelope.put("detail-type", "QueryReconcileRequested");
+        envelope.put("source", "mmda.quote");
+        envelope.put("account", "000000000000");
+        envelope.put("time", SECONDS.format(Instant.now()) + "Z");
+        envelope.put("region", "us-east-1");
+        envelope.put("resources", List.of());
+        envelope.put("detail", detail);
+        return JSON.writeValueAsString(envelope);
+    }
+
+    private static List<String> texts(JsonNode array) {
+        List<String> texts = new ArrayList<>();
+        array.forEach(element -> texts.add(element.asText()));
+        return texts;
+    }
+
     private static String stringOrNull(Map<String, AttributeValue> item, String attribute) {
         AttributeValue value = item.get(attribute);
         return value == null ? null : value.s();
@@ -1250,9 +1928,35 @@ class QuoteFlowE2E {
         return JSON.copy().enable(SerializationFeature.INDENT_OUTPUT).writeValueAsString(reordered);
     }
 
+    /** Pedido completo da nova versão ({@code CreateVersionRequest} do OpenAPI), com a versão atual lida. */
+    private static Map<String, Object> versionRequest(int expectedVersion, String vehicleRef, String usage,
+            String driverRef) {
+        Map<String, Object> request = new LinkedHashMap<>();
+        request.put("expectedVersion", expectedVersion);
+        request.putAll(request(vehicleRef, usage, driverRef));
+        return request;
+    }
+
+    private static HttpResponse<String> postVersion(String quoteId, String idempotencyKey, String body)
+            throws Exception {
+        return HTTP.send(HttpRequest.newBuilder(URI.create(apiBase + "/v1/quotes/" + quoteId + "/versions"))
+                        .header("Authorization", "Bearer " + accessToken)
+                        .header("Content-Type", "application/json")
+                        .header("Idempotency-Key", idempotencyKey)
+                        .POST(HttpRequest.BodyPublishers.ofString(body))
+                        .timeout(Duration.ofMinutes(1))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+    }
+
     private static Accepted create(String idempotencyKey, String body) throws Exception {
         HttpResponse<String> response = post(idempotencyKey, body);
         assertThat(response.statusCode()).as(response.body()).isEqualTo(202);
+        return accepted(response);
+    }
+
+    /** {@code QuoteAccepted} de um {@code 202}, com o {@code Location} igual ao {@code statusUrl}. */
+    private static Accepted accepted(HttpResponse<String> response) throws Exception {
         JsonNode accepted = JSON.readTree(response.body());
         assertThat(response.headers().firstValue("Location")).contains(accepted.path("statusUrl").asText());
         return new Accepted(accepted.path("quoteId").asText(), accepted.path("version").asInt(),

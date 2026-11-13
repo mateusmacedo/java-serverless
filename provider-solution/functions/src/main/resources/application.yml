@@ -36,6 +36,29 @@ provider:
     lease-seconds: ${ENRICHMENT_LEASE_SECONDS:30}
     tombstone-seconds: ${INFLIGHT_TOMBSTONE_SECONDS:3600}
     policy-version: ${REUSE_POLICY_VERSION:reuse-v1}
+  operations:
+    unmatched-callback-after-seconds: ${UNMATCHED_CALLBACK_AFTER_SECONDS:60}
+    inbox-stuck-after-seconds: ${INBOX_STUCK_AFTER_SECONDS:30}
+    stale-outbox-after-seconds: ${STALE_OUTBOX_AFTER_SECONDS:120}
+    dlq-max-attempts: ${DLQ_MAX_ATTEMPTS:3}
+    status-read-budget-seconds: ${STATUS_READ_BUDGET_SECONDS:30}
+    status-insurers: beta
+    metrics-namespace: ${METRICS_NAMESPACE:mmda/provider-solution}
+    stage: ${STAGE:local}
+    # Cada DLQ volta à própria fila de origem (ADR 0007); uma rota sem as duas URLs fica desligada
+    dead-letter-queues:
+      - name: enrichment-requests
+        queue-url: ${ENRICHMENT_REQUESTS_QUEUE_URL:}
+        dead-letter-queue-url: ${ENRICHMENT_REQUESTS_DLQ_URL:}
+      - name: insurer-requests
+        queue-url: ${INSURER_REQUESTS_QUEUE_URL:}
+        dead-letter-queue-url: ${INSURER_REQUESTS_DLQ_URL:}
+      - name: reconcile-requests
+        queue-url: ${RECONCILE_REQUESTS_QUEUE_URL:}
+        dead-letter-queue-url: ${RECONCILE_REQUESTS_DLQ_URL:}
+      - name: sim-callbacks
+        queue-url: ${SIM_CALLBACKS_QUEUE_URL:}
+        dead-letter-queue-url: ${SIM_CALLBACKS_DLQ_URL:}
 
 mmda:
   aws:

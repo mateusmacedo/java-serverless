@@ -84,19 +84,47 @@ class OutboxStore {
                         ":now", s(Timestamps.format(now)))));
     }
 
-    /** Pendentes criados antes de {@code cutoff}, pelo índice esparso {@code gsi2}, mais antigos primeiro. */
-    List<OutboxEntry> pendingOlderThan(Instant cutoff, int limit) {
+    /**
+     * Todos os pendentes, pela ordem do {@code gsi2sk}, com o {@code createdAt}. WHY: a idade de um item vem do
+     * {@code createdAt}, e um item com falha permanente recente tem o {@code gsi2sk} novo, mas pode ser antigo (§7).
+     */
+    List<PendingOutbox> pending(int limit) {
         return dynamoDb.query(builder -> builder
                         .tableName(properties.tableName())
                         .indexName(GSI2)
-                        .keyConditionExpression("gsi2pk = :pending AND gsi2sk < :cutoff")
-                        .expressionAttributeValues(Map.of(
-                                ":pending", s(OUTBOX_PENDING),
-                                ":cutoff", s(Timestamps.format(cutoff))))
+                        .keyConditionExpression("gsi2pk = :pending")
+                        .expressionAttributeValues(Map.of(":pending", s(OUTBOX_PENDING)))
                         .limit(limit))
                 .items().stream()
-                .map(OutboxEntry::from)
+                .map(PendingOutbox::from)
                 .flatMap(Optional::stream)
                 .toList();
+    }
+
+    /**
+     * Item pendente com o necessário para republicar e medir a idade; {@code entry} é nulo quando o conteúdo não
+     * pôde ser lido, e o item só pode virar {@code STALE_OUTBOX}.
+     */
+    record PendingOutbox(String eventId, OutboxEntry entry, Instant createdAt, String gsi2sk) {
+
+        static Optional<PendingOutbox> from(Map<String, AttributeValue> item) {
+            Optional<String> eventId = OutboxEntry.eventIdOf(item);
+            Optional<String> createdAt = Items.string(item, "createdAt");
+            Optional<String> gsi2sk = Items.string(item, GSI2SK);
+            if (eventId.isEmpty() || createdAt.isEmpty() || gsi2sk.isEmpty()) {
+                return Optional.empty();
+            }
+            return Optional.of(new PendingOutbox(eventId.get(), OutboxEntry.from(item).orElse(null),
+                    Timestamps.parse(createdAt.get()), gsi2sk.get()));
+        }
+    }
+
+    /** {@code true} quando o item existe e continua {@code OUTBOX_PENDING}. */
+    boolean isPending(String eventId) {
+        return Items.string(dynamoDb.getItem(builder -> builder
+                        .tableName(properties.tableName())
+                        .consistentRead(true)
+                        .key(Items.key(Items.outboxPk(eventId), META)))
+                .item(), GSI2PK).isPresent();
     }
 }

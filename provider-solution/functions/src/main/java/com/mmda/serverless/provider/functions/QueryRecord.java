@@ -14,11 +14,13 @@ import java.util.stream.Stream;
 /**
  * Consulta lida com {@code ConsistentRead}, com as tentativas, para decidir a reentrega (§8).
  * {@code queryKey} só existe no enriquecimento e {@code fencingVersion}, só na consulta de um líder. Os campos
- * do pedido de origem ({@code workRef} a {@code requestEventId}) permitem gravar o resultado de um callback.
+ * do pedido de origem ({@code workRef} a {@code requestEventId}) permitem gravar o resultado de um callback, e
+ * {@code operation}, {@code organizationId} e {@code deadlineAt}, reconciliar a consulta sem o pedido (M4).
  */
 record QueryRecord(String queryId, QueryState state, String providerRequestId, String queryKey, Long fencingVersion,
                    List<Attempt> attempts, String provider, String workRef, String quoteId, Integer version,
-                   String insurerId, String requestEventId) {
+                   String insurerId, String requestEventId, String operation, String organizationId,
+                   Instant deadlineAt) {
 
     /** Folga para diferença de relógio entre as instâncias que gravaram e leram as tentativas. */
     static final Duration CLOCK_SKEW = Duration.ofSeconds(5);
@@ -67,6 +69,15 @@ record QueryRecord(String queryId, QueryState state, String providerRequestId, S
                 .findFirst()
                 .or(() -> attempts.stream().filter(attempt -> attempt.finishedAt() == null).reduce((first, last) -> last))
                 .or(() -> attempts.stream().reduce((first, last) -> last));
+    }
+
+    boolean isInsurer() {
+        return QueryDraft.QUOTE.equals(operation);
+    }
+
+    /** O prazo do pedido passou: o resultado que chegar agora é evidência tardia para a quote. */
+    boolean pastDeadline(Instant now) {
+        return deadlineAt != null && !now.isBefore(deadlineAt);
     }
 
     InsurerResultRecorded.Origin origin() {

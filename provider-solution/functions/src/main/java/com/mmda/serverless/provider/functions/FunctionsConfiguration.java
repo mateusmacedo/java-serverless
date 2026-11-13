@@ -1,6 +1,7 @@
 package com.mmda.serverless.provider.functions;
 
 import com.mmda.serverless.provider.domain.RetryPolicy;
+import com.mmda.serverless.provider.domain.operations.DeadLetterPolicy;
 import java.net.http.HttpClient;
 import java.time.Clock;
 import java.time.Duration;
@@ -35,6 +36,18 @@ class FunctionsConfiguration {
     @ConditionalOnMissingBean
     RandomGenerator jitter() {
         return RandomGenerator.getDefault();
+    }
+
+    /** WHY: o EMF é lido da saída padrão da Lambda, uma linha JSON por registro, fora do formato do log. */
+    @Bean
+    @ConditionalOnMissingBean
+    Metrics.MetricsSink metricsSink() {
+        return System.out::println;
+    }
+
+    @Bean
+    DeadLetterPolicy deadLetterPolicy(OperationsProperties operations) {
+        return new DeadLetterPolicy(operations.dlqMaxAttempts());
     }
 
     @Bean

@@ -88,7 +88,8 @@ class QuoteEventsContractTest {
                 "QuoteAccepted", "QuoteAcceptedDetail",
                 "EnrichmentRequested", "EnrichmentRequestedDetail",
                 "InsurerQuoteRequested", "InsurerQuoteRequestedDetail",
-                "QuoteCompleted", "QuoteCompletedDetail");
+                "QuoteCompleted", "QuoteCompletedDetail",
+                "QueryReconcileRequested", "QueryReconcileRequestedDetail");
         int examples = 0;
         for (Map.Entry<String, String> entry : schemaByMessage.entrySet()) {
             for (JsonNode example : asyncApi.at("/components/messages/" + entry.getKey() + "/examples")) {
@@ -99,7 +100,7 @@ class QuoteEventsContractTest {
                 examples++;
             }
         }
-        assertThat(examples).isEqualTo(4);
+        assertThat(examples).isEqualTo(5);
     }
 
     @Test

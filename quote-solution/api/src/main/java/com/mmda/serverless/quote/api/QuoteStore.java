@@ -32,6 +32,7 @@ import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItem;
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsRequest;
 import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledException;
+import software.amazon.awssdk.services.dynamodb.model.Update;
 
 /** Acesso da API à tabela da quote-solution (§4 e §8 do desenho). */
 @ApplicationScoped
@@ -148,40 +149,162 @@ public class QuoteStore {
         meta.put(QuoteKeys.GSI1_PK, s(QuoteKeys.organizationIndexPk(quote.organizationId())));
         meta.put(QuoteKeys.GSI1_SK, s(now + "#" + quote.quoteId()));
 
-        Map<String, AttributeValue> version = new HashMap<>();
-        version.put(QuoteKeys.PK, s(pk));
-        version.put(QuoteKeys.SK, s(QuoteKeys.versionSk(1)));
-        version.put(QuoteKeys.TYPE, s(QuoteKeys.TYPE_VERSION));
-        version.put("quoteId", s(quote.quoteId()));
-        version.put("version", n(1));
-        version.put("snapshot", s(quote.snapshotJson()));
-        version.put("inputHash", s(quote.inputHash()));
-        version.put("phase", s(Phase.RECEIVED.name()));
-        version.put("revision", n(1));
-        version.put("workflowVersion", s(config.workflowVersion()));
-        version.put("executionName", s(QuoteKeys.executionName(quote.quoteId(), 1)));
-        version.put("deadlineAt", s(quote.deadlineAt().toString()));
-        version.put("createdAt", s(now));
-        version.put("updatedAt", s(now));
-        version.put(QuoteKeys.GSI2_PK, s(QuoteKeys.ACTIVE_VERSION));
-        version.put(QuoteKeys.GSI2_SK, s(quote.deadlineAt().toString()));
-
-        String startEventId = UUID.randomUUID().toString();
-        String acceptedEventId = UUID.randomUUID().toString();
         List<TransactWriteItem> writes = new ArrayList<>();
         writes.add(put(idempotency));
         writes.add(put(meta));
-        writes.add(put(version));
-        writes.add(put(outbox(startEventId, QuoteEvents.START_QUOTE_REQUESTED, quote, QuoteEvents.startQuoteRequested(
-                startEventId, quote.acceptedAt(), quote.quoteId(), 1, quote.organizationId()))));
-        writes.add(put(outbox(acceptedEventId, QuoteEvents.QUOTE_ACCEPTED, quote, QuoteEvents.quoteAccepted(
-                acceptedEventId, quote.acceptedAt(), quote.quoteId(), 1, quote.organizationId()))));
+        writes.add(put(versionItem(quote.quoteId(), 1, quote.snapshotJson(), quote.inputHash(), quote.acceptedAt(),
+                quote.deadlineAt())));
+        writes.addAll(startOutbox(quote.quoteId(), 1, quote.organizationId(), quote.acceptedAt()));
         return writes;
     }
 
-    private Map<String, AttributeValue> outbox(String eventId, String detailType, NewQuote quote,
-            Map<String, Object> detail) {
-        String now = quote.acceptedAt().toString();
+    /** Dados da nova versão; o {@code snapshot} já foi resolvido no catálogo da organização. */
+    public record NewVersion(
+            Idempotency.Key idempotencyKey,
+            String requestHash,
+            String quoteId,
+            int expectedVersion,
+            String organizationId,
+            String snapshotJson,
+            String inputHash,
+            Instant acceptedAt,
+            Instant deadlineAt) {
+
+        int version() {
+            return expectedVersion + 1;
+        }
+    }
+
+    /**
+     * Nova versão (§8 do desenho, T17): uma transação grava a idempotência, troca o {@code currentVersion} do
+     * {@code META}, marca {@code supersededAt} na versão substituída e grava {@code V#n} com o outbox de início.
+     * A condição do {@code META} serializa a nova versão com a seleção (T29); a versão antiga segue até o fim.
+     */
+    public CreatedQuote createVersion(NewVersion version) {
+        try {
+            return createVersionOrReplay(version);
+        } catch (SdkClientException | AwsServiceException failure) {
+            if (failure instanceof AwsServiceException service && !service.isThrottlingException()
+                    && service.statusCode() < 500) {
+                throw failure;
+            }
+            throw unavailable();
+        }
+    }
+
+    private CreatedQuote createVersionOrReplay(NewVersion version) {
+        TransactWriteItemsRequest request = TransactWriteItemsRequest.builder()
+                .transactItems(versionWrites(version)).build();
+        try {
+            retries.run(() -> dynamoDb.transactWriteItems(request), QuoteStore::isTransactionConflict);
+            return new CreatedQuote(version.quoteId(), version.version(), Phase.RECEIVED.name());
+        } catch (TransactionCanceledException canceled) {
+            Optional<Map<String, AttributeValue>> existing = idempotencyRecord(version.idempotencyKey());
+            if (existing.isPresent()) {
+                return replay(existing.get(), version.requestHash());
+            }
+            if (!metaConditionFailed(canceled)) {
+                throw unavailable();
+            }
+            Map<String, AttributeValue> meta = meta(version.quoteId()).orElseThrow(ApiException::notFound);
+            if (Items.string(meta, "selectionId") != null) {
+                throw new ApiException(409, "QUOTE_ALREADY_SELECTED",
+                        "A cotação já tem uma oferta selecionada e não aceita nova versão.");
+            }
+            throw new ApiException(409, "VERSION_CONFLICT",
+                    "A versão informada em expectedVersion não é mais a atual; leia a cotação e tente de novo.");
+        }
+    }
+
+    /** Mesmo hash devolve a identidade gravada; hash diferente é 409 {@code IDEMPOTENCY_CONFLICT} (§8). */
+    private CreatedQuote replay(Map<String, AttributeValue> existing, String requestHash) {
+        if (Idempotency.compare(Items.string(existing, "requestHash"), requestHash) == Idempotency.Decision.CONFLICT) {
+            throw new ApiException(409, "IDEMPOTENCY_CONFLICT", "A Idempotency-Key já foi usada com outro conteúdo.");
+        }
+        String quoteId = Items.string(existing, "quoteId");
+        int number = (int) Items.number(existing, "version", 1);
+        String phase = versionItem(quoteId, number)
+                .map(item -> Items.string(item, "phase"))
+                .orElse(Phase.RECEIVED.name());
+        return new CreatedQuote(quoteId, number, phase);
+    }
+
+    /** A condição do {@code META} é a segunda ação da transação da nova versão. */
+    private static boolean metaConditionFailed(TransactionCanceledException canceled) {
+        List<CancellationReason> reasons = canceled.hasCancellationReasons() ? canceled.cancellationReasons() : List.of();
+        return reasons.size() > 1 && "ConditionalCheckFailed".equals(reasons.get(1).code());
+    }
+
+    private List<TransactWriteItem> versionWrites(NewVersion version) {
+        String now = version.acceptedAt().toString();
+        String pk = QuoteKeys.quotePk(version.quoteId());
+        Map<String, AttributeValue> idempotency = new HashMap<>();
+        idempotency.put(QuoteKeys.PK, s(version.idempotencyKey().pk()));
+        idempotency.put(QuoteKeys.SK, s(QuoteKeys.META));
+        idempotency.put(QuoteKeys.TYPE, s(QuoteKeys.TYPE_IDEMPOTENCY));
+        idempotency.put("organizationId", s(version.organizationId()));
+        idempotency.put("operation", s(version.idempotencyKey().operation().name()));
+        idempotency.put("scope", s(version.idempotencyKey().scope()));
+        idempotency.put("requestHash", s(version.requestHash()));
+        idempotency.put("resourceRef", s(QuoteKeys.statusUrl(version.quoteId(), version.version())));
+        idempotency.put("quoteId", s(version.quoteId()));
+        idempotency.put("version", n(version.version()));
+        idempotency.put("createdAt", s(now));
+        List<TransactWriteItem> writes = new ArrayList<>();
+        writes.add(put(idempotency));
+        writes.add(update(pk, QuoteKeys.META,
+                "SET currentVersion = :next, phase = :received, offerCount = :zero, updatedAt = :now REMOVE outcome",
+                "currentVersion = :expected AND attribute_not_exists(selectionId) AND organizationId = :org",
+                Map.of(":next", n(version.version()), ":received", s(Phase.RECEIVED.name()), ":zero", n(0),
+                        ":now", s(now), ":expected", n(version.expectedVersion()),
+                        ":org", s(version.organizationId()))));
+        writes.add(update(pk, QuoteKeys.versionSk(version.expectedVersion()),
+                "SET supersededAt = :now, revision = revision + :one, updatedAt = :now",
+                "attribute_exists(" + QuoteKeys.PK + ")",
+                Map.of(":now", s(now), ":one", n(1))));
+        writes.add(put(versionItem(version.quoteId(), version.version(), version.snapshotJson(), version.inputHash(),
+                version.acceptedAt(), version.deadlineAt())));
+        writes.addAll(startOutbox(version.quoteId(), version.version(), version.organizationId(), version.acceptedAt()));
+        return writes;
+    }
+
+    private Map<String, AttributeValue> versionItem(String quoteId, int number, String snapshotJson, String inputHash,
+            Instant acceptedAt, Instant deadlineAt) {
+        String now = acceptedAt.toString();
+        Map<String, AttributeValue> version = new HashMap<>();
+        version.put(QuoteKeys.PK, s(QuoteKeys.quotePk(quoteId)));
+        version.put(QuoteKeys.SK, s(QuoteKeys.versionSk(number)));
+        version.put(QuoteKeys.TYPE, s(QuoteKeys.TYPE_VERSION));
+        version.put("quoteId", s(quoteId));
+        version.put("version", n(number));
+        version.put("snapshot", s(snapshotJson));
+        version.put("inputHash", s(inputHash));
+        version.put("phase", s(Phase.RECEIVED.name()));
+        version.put("revision", n(1));
+        version.put("workflowVersion", s(config.workflowVersion()));
+        version.put("executionName", s(QuoteKeys.executionName(quoteId, number)));
+        version.put("deadlineAt", s(deadlineAt.toString()));
+        version.put("createdAt", s(now));
+        version.put("updatedAt", s(now));
+        version.put(QuoteKeys.GSI2_PK, s(QuoteKeys.ACTIVE_VERSION));
+        version.put(QuoteKeys.GSI2_SK, s(deadlineAt.toString()));
+        return version;
+    }
+
+    /** Outbox {@code StartQuoteRequested}, que inicia a execução, e {@code QuoteAccepted} da versão. */
+    private List<TransactWriteItem> startOutbox(String quoteId, int version, String organizationId, Instant acceptedAt) {
+        String startEventId = UUID.randomUUID().toString();
+        String acceptedEventId = UUID.randomUUID().toString();
+        return List.of(
+                put(outbox(startEventId, QuoteEvents.START_QUOTE_REQUESTED, quoteId, version, acceptedAt,
+                        QuoteEvents.startQuoteRequested(startEventId, acceptedAt, quoteId, version, organizationId))),
+                put(outbox(acceptedEventId, QuoteEvents.QUOTE_ACCEPTED, quoteId, version, acceptedAt,
+                        QuoteEvents.quoteAccepted(acceptedEventId, acceptedAt, quoteId, version, organizationId))));
+    }
+
+    private Map<String, AttributeValue> outbox(String eventId, String detailType, String quoteId, int version,
+            Instant acceptedAt, Map<String, Object> detail) {
+        String now = acceptedAt.toString();
         Map<String, AttributeValue> item = new HashMap<>();
         item.put(QuoteKeys.PK, s(QuoteKeys.outboxPk(eventId)));
         item.put(QuoteKeys.SK, s(QuoteKeys.META));
@@ -189,13 +312,26 @@ public class QuoteStore {
         item.put("eventId", s(eventId));
         item.put("detailType", s(detailType));
         item.put("detail", s(toJson(detail)));
-        item.put("quoteId", s(quote.quoteId()));
-        item.put("version", n(1));
+        item.put("quoteId", s(quoteId));
+        item.put("version", n(version));
         item.put("createdAt", s(now));
         item.put("attempts", n(0));
         item.put(QuoteKeys.GSI2_PK, s(QuoteKeys.OUTBOX_PENDING));
         item.put(QuoteKeys.GSI2_SK, s(now));
         return item;
+    }
+
+    private TransactWriteItem update(String pk, String sk, String expression, String condition,
+            Map<String, AttributeValue> values) {
+        return TransactWriteItem.builder()
+                .update(Update.builder()
+                        .tableName(config.tableName())
+                        .key(Map.of(QuoteKeys.PK, s(pk), QuoteKeys.SK, s(sk)))
+                        .updateExpression(expression)
+                        .conditionExpression(condition)
+                        .expressionAttributeValues(values)
+                        .build())
+                .build();
     }
 
     private TransactWriteItem put(Map<String, AttributeValue> item) {

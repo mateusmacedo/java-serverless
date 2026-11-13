@@ -5,6 +5,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.mmda.serverless.provider.domain.ErrorClasses;
 import com.mmda.serverless.provider.domain.Identities;
+import com.mmda.serverless.provider.domain.operations.IssueStatus;
+import com.mmda.serverless.provider.domain.operations.IssueType;
+import com.mmda.serverless.provider.domain.operations.OperationIssue;
+import com.mmda.serverless.provider.domain.operations.QueryReconcileRequest;
+import com.mmda.serverless.provider.domain.operations.QueryReconciled;
+import com.mmda.serverless.provider.domain.operations.ReconcileStatus;
 import com.mmda.serverless.provider.domain.Timestamps;
 import com.mmda.serverless.provider.domain.enrichment.EnrichmentProfile;
 import com.mmda.serverless.provider.domain.enrichment.EnrichmentRequest;
@@ -153,6 +159,39 @@ class ProducedEventSchemaTest {
 
             assertThat(validate(schema("InsurerResultRecordedDetail"), objectMapper.valueToTree(event), "detail"))
                     .as("%s %s", insurerCase.outcome().status(), insurerCase.outcome().reasonCode())
+                    .isEmpty();
+        }
+    }
+
+    /** Toda ocorrência, aberta ou resolvida, com e sem organização (callback sem correlação), segue o schema (M4). */
+    @Test
+    void operationIssueOfEveryTypeAndStatusFollowsTheSchema() {
+        for (IssueType type : IssueType.values()) {
+            for (IssueStatus status : IssueStatus.values()) {
+                for (String organizationId : java.util.Arrays.asList("org-acme", null)) {
+                    OperationIssue.State state = new OperationIssue.State(Identities.issueId(type, "q_1"),
+                            organizationId, type, status, organizationId == null ? null : "q_1",
+                            organizationId == null ? null : QUOTE_ID, occurredAt, occurredAt, "Resumo seguro", 2);
+
+                    assertThat(validate(schema("OperationIssueDetail"),
+                            objectMapper.valueToTree(state.event(occurredAt)), "detail"))
+                            .as("%s %s %s", type, status, organizationId)
+                            .isEmpty();
+                }
+            }
+        }
+    }
+
+    @Test
+    void queryReconciledOfEveryResultFollowsTheSchema() {
+        QueryReconcileRequest request = new QueryReconcileRequest(UUID.randomUUID().toString(), "op-1", "org-acme",
+                "q_1", "UNKNOWN_QUERY", "ana");
+        for (ReconcileStatus status : List.of(ReconcileStatus.SUCCEEDED, ReconcileStatus.FAILED)) {
+            QueryReconciled event = QueryReconciled.of(request, status, "Resumo seguro",
+                    OperationLedger.RESULT_REVISION, occurredAt);
+
+            assertThat(validate(schema("QueryReconciledDetail"), objectMapper.valueToTree(event), "detail"))
+                    .as("%s", status)
                     .isEmpty();
         }
     }

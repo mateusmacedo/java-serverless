@@ -21,6 +21,6 @@ class EnrichmentWorkerFunction implements Function<SQSEvent, SQSBatchResponse> {
 
     @Override
     public SQSBatchResponse apply(SQSEvent event) {
-        return SqsBatches.process(event, handler::handle, LOGGER);
+        return SqsBatches.processMessages(event, handler::handle, LOGGER);
     }
 }

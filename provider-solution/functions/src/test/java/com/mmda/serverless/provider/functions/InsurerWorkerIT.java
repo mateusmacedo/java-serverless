@@ -1,6 +1,8 @@
 package com.mmda.serverless.provider.functions;
 
+import static com.mmda.serverless.provider.functions.EnrichmentWorkerIT.receiveDelayed;
 import static com.mmda.serverless.provider.functions.EnrichmentWorkerIT.sqsEvent;
+import static com.mmda.serverless.provider.functions.EnrichmentWorkerIT.startedSoThatTheDeliveryEndsInASecond;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.amazonaws.services.lambda.runtime.events.SQSBatchResponse;
@@ -14,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.sqs.model.Message;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -30,6 +33,9 @@ class InsurerWorkerIT extends FlociIntegrationTest {
 
     @Autowired
     private S3Client s3;
+
+    @Autowired
+    private ProviderProperties properties;
 
     @Test
     void t01_singleInsurerOfferIsRecordedWithEvidence() {
@@ -169,6 +175,24 @@ class InsurerWorkerIT extends FlociIntegrationTest {
         assertThat(queryItems(request.queryId(), "ATTEMPT#")).hasSize(1);
         assertThat(item("OUTBOX#" + EventIds.insurerResultRecorded(request.queryId()), "META")).isEmpty();
         assertThat(EnrichmentWorkerIT.queuedMessages(INSURER_QUEUE_URL)).isEqualTo(1);
+        SQS.purgeQueue(builder -> builder.queueUrl(INSURER_QUEUE_URL));
+    }
+
+    @Test
+    void delayedRedeliveryKeepsTheDeadLetterAttemptOfTheMessage() {
+        TestRequests.Request request = TestRequests.insurer("vehicle-hatch-2019", Instant.now().plus(DEADLINE));
+        EnrichmentWorkerIT.givenInFlightQuery(request, startedSoThatTheDeliveryEndsInASecond(properties), false);
+        SQS.purgeQueue(builder -> builder.queueUrl(INSURER_QUEUE_URL));
+
+        assertThat(worker.apply(sqsEvent(request.body(), "2")).getBatchItemFailures()).isEmpty();
+
+        Message delayed = receiveDelayed(INSURER_QUEUE_URL);
+        assertThat(delayed.body()).isEqualTo(request.body());
+        assertThat(delayed.messageAttributes()).as("the count of the dead-letter attempts does not restart")
+                .containsKey(DeadLetterReprocessor.ATTEMPT_ATTRIBUTE);
+        assertThat(delayed.messageAttributes().get(DeadLetterReprocessor.ATTEMPT_ATTRIBUTE).stringValue())
+                .isEqualTo("2");
+        assertThat(PROVIDERS.calls(request.queryId())).isZero();
         SQS.purgeQueue(builder -> builder.queueUrl(INSURER_QUEUE_URL));
     }
 

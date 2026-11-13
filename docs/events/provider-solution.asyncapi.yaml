@@ -1,7 +1,7 @@
 asyncapi: 3.1.0
 info:
   title: provider-solution eventos
-  version: 0.3.0
+  version: 0.4.0
   description: |
     Eventos que a `provider-solution`, em Spring, publica no barramento da plataforma
     `platform-{stage}-events` ([ADR 0013](../decisions/0013-barramento-da-plataforma.md)), com
@@ -39,7 +39,15 @@ info:
     para processado e grava o registro de consumo do pedido; o formato e o `eventId` são os da seguradora
     síncrona.
 
-    Os exemplos foram capturados no Floci, stage `local`, com pedidos publicados à mão no barramento. Os
+    A partir do M4, a provider consome também o `QueryReconcileRequested` da quote, pela regra `source`
+    `mmda.quote` com alvo na fila `provider-solution-{stage}-reconcile-requests`, e publica o `QueryReconciled` e as
+    ocorrências operacionais (`OperationIssueRaised` e `OperationIssueUpdated`). Os três têm `eventId`
+    determinístico e `revision` monotônico, mantido no item de origem da provider (`OPERATION#` e `ISSUE#`); a quote
+    descarta revisões antigas. O `safeSummary` é um resumo em português, sem dado do risco, token ou resposta bruta.
+
+    Os exemplos foram capturados no Floci, stage `local`, com pedidos publicados à mão no barramento. Nos do M4, a
+    consulta `UNKNOWN` da alpha foi gravada à mão na tabela, para uma cotação inexistente, porque o simulador da alpha
+    sempre responde; o `reconciler` e o `reconcileWorker` implantados produziram os eventos. Os
     exemplos `hit` e `join` do `EnrichmentResolved` reutilizam a evidência do exemplo `found`, com os
     identificadores calculados pelas regras acima. Nos exemplos da beta, o callback foi capturado no Floci
     (simulador, `simCallbackSender` e API de callbacks) para uma cotação calculada pelas regras acima, e o evento
@@ -70,6 +78,8 @@ channels:
         $ref: './quote-solution.asyncapi.yaml#/components/messages/EnrichmentRequested'
       insurerQuoteRequested:
         $ref: './quote-solution.asyncapi.yaml#/components/messages/InsurerQuoteRequested'
+      queryReconcileRequested:
+        $ref: './quote-solution.asyncapi.yaml#/components/messages/QueryReconcileRequested'
 operations:
   receiveEnrichmentRequested:
     action: receive
@@ -105,6 +115,22 @@ operations:
       $ref: '#/channels/platformEvents'
     messages:
       - $ref: '#/channels/platformEvents/messages/insurerQuoteRequested'
+  receiveQueryReconcileRequested:
+    action: receive
+    title: O reconcileWorker reconcilia uma consulta a pedido de um operador (M4)
+    description: |
+      A regra entrega o envelope na fila `reconcile-requests` (lote 1, falha parcial, DLQ depois de 3 recebimentos).
+      O pedido é deduplicado pelo `operationId`: o `reconcileWorker` grava o `OPERATION#` em `RUNNING`, confere que a
+      consulta é da organização do pedido (a de outra organização é tratada como inexistente), reconcilia pelo mesmo
+      caminho do `reconciler` e grava o resultado com o `QueryReconciled`, numa transação. A reconciliação nunca
+      repete a chamada ao fornecedor: a consulta em voo além do prazo fica `UNKNOWN`, e a `UNKNOWN` de seguradora com
+      API de situação (a `beta`) é concluída pelo `GET /sim/insurers/beta/quotes/{ref}`, com o
+      `InsurerResultRecorded` de sempre. A reentrega depois do resultado não faz nada. A API da quote publica o pedido
+      a partir do M5.
+    channel:
+      $ref: '#/channels/platformEvents'
+    messages:
+      - $ref: '#/channels/platformEvents/messages/queryReconcileRequested'
   emitEnrichmentResolved:
     action: send
     title: Resultado do enriquecimento, um por pedido
@@ -122,6 +148,10 @@ operations:
   emitQueryReconciled:
     action: send
     title: Resultado de uma reconciliação manual (M4)
+    description: |
+      `SUCCEEDED` quando a consulta termina concluída, inclusive a que já estava; `FAILED` quando ela não existe para
+      a organização, ainda está em voo dentro do prazo ou continua `UNKNOWN`. O `revision` é o do `OPERATION#`, em
+      que o `RUNNING` é a revisão 1, então o resultado sai com a revisão 2.
     channel:
       $ref: '#/channels/platformEvents'
     messages:
@@ -129,6 +159,16 @@ operations:
   emitOperationIssue:
     action: send
     title: Ocorrência operacional aberta ou atualizada (M4)
+    description: |
+      O `reconciler` abre a ocorrência na primeira revisão (`OperationIssueRaised`) e a atualiza nas seguintes
+      (`OperationIssueUpdated`): ao resolvê-la, quando o problema some, ao reabri-la e, no `DEAD_LETTER`, a cada nova
+      mensagem descartada do mesmo pedido. Observar de novo um problema aberto não publica nada. `UNKNOWN_QUERY`:
+      consulta sem resposta que a API de situação não concluiu, ou sem API de situação (a única ocorrência
+      `reconcilable`); `UNMATCHED_CALLBACK`: callback sem correlação depois do prazo, sem organização; `DEAD_LETTER`:
+      mensagem descartada de uma DLQ depois de `dlqMaxAttempts` ou do prazo do pedido, ou já na primeira chegada
+      quando é ilegível; `STALE_OUTBOX`: evento pendente de publicação além do limiar, pela idade do `createdAt`,
+      exceto os próprios eventos de ocorrência. O `issueId` é `is_` + os 32 primeiros hexadecimais do SHA-256 de
+      `type|alvo`.
     channel:
       $ref: '#/channels/platformEvents'
     messages:
@@ -395,6 +435,49 @@ components:
               missingFields:
                 - path: risk.principalDriver.licenseDate
                   reasonCode: MISSING_LICENSE_DATE
+        - name: quoted-by-status-api
+          summary: |
+            Oferta da beta sem callback (`vehicle-beta-silent`), lida pelo `reconciler` na API de situação depois do
+            prazo (M4); a quote a grava como resultado tardio.
+          payload:
+            source: mmda.provider
+            detail-type: InsurerResultRecorded
+            detail:
+              eventId: ef49dab1-b515-53d8-a0e3-585162732974
+              occurredAt: '2026-11-12T04:43:57.917Z'
+              schemaVersion: '1'
+              workRef: wr_43f32977796545f4ec4ccb08bc6d4880
+              quoteId: 0c35d5e0-44c7-4d98-9bd1-5fc069c0aac7
+              version: 1
+              insurerId: beta
+              queryId: q_e4e62febe1fc95b943f89ddaa90339e6
+              attemptRef: q_e4e62febe1fc95b943f89ddaa90339e6#0001
+              status: QUOTED
+              offer:
+                externalOfferId: BETA-F243F270
+                insurerName: Beta Seguros
+                premiumTotal: '3376.10'
+                currency: BRL
+                installments:
+                  - count: 1
+                    amount: '3376.10'
+                  - count: 12
+                    amount: '281.34'
+                coverages:
+                  - code: COLLISION
+                    label: Colisão, incêndio e roubo
+                    insuredAmount: '84000.00'
+                  - code: THIRD_PARTY_PROPERTY
+                    label: Danos materiais a terceiros
+                    insuredAmount: '150000.00'
+                  - code: THIRD_PARTY_BODILY
+                    label: Danos corporais a terceiros
+                    insuredAmount: '300000.00'
+                deductibles:
+                  - coverageCode: COLLISION
+                    amount: '3360.00'
+                validUntil: '2026-11-12T05:12:53.749Z'
+                rawResponseRef: raw/q_e4e62febe1fc95b943f89ddaa90339e6/status-0001.json
     QueryReconciled:
       name: QueryReconciled
       title: Evento QueryReconciled (M4)
@@ -402,6 +485,37 @@ components:
       contentType: application/json
       payload:
         $ref: '#/components/schemas/QueryReconciledEvent'
+      examples:
+        - name: succeeded
+          summary: A consulta já estava concluída, pela API de situação da beta.
+          payload:
+            source: mmda.provider
+            detail-type: QueryReconciled
+            detail:
+              eventId: 1f385083-676b-599e-ae58-5ebf63ade1d5
+              occurredAt: '2026-11-12T04:13:18.636Z'
+              schemaVersion: '1'
+              operationId: op_m4_example_settled
+              organizationId: org-acme
+              queryId: q_e78b22964de2335f75590ba01585c58b
+              status: SUCCEEDED
+              safeSummary: A consulta já estava concluída
+              revision: 2
+        - name: failed
+          summary: Consulta `UNKNOWN` de seguradora sem API de situação.
+          payload:
+            source: mmda.provider
+            detail-type: QueryReconciled
+            detail:
+              eventId: 5d8e3ae7-4a73-5d1d-9f03-dec15c6dcab0
+              occurredAt: '2026-11-12T04:13:18.155Z'
+              schemaVersion: '1'
+              operationId: op_m4_example_unknown
+              organizationId: org-acme
+              queryId: q_099d4987d3e2f2e6656e9285ac76a83e
+              status: FAILED
+              safeSummary: O fornecedor não tem API de situação; a consulta continua UNKNOWN
+              revision: 2
     OperationIssueRaised:
       name: OperationIssueRaised
       title: Evento OperationIssueRaised (M4)
@@ -409,6 +523,27 @@ components:
       contentType: application/json
       payload:
         $ref: '#/components/schemas/OperationIssueEvent'
+      examples:
+        - name: unknown-query
+          summary: Consulta da alpha sem resposta depois do envio; a alpha não tem API de situação.
+          payload:
+            source: mmda.provider
+            detail-type: OperationIssueRaised
+            detail:
+              eventId: bbaa1658-764c-5af4-8200-6516b07797cd
+              occurredAt: '2026-11-12T04:12:57.575Z'
+              schemaVersion: '1'
+              issueId: is_377e241dcf78da8d2801824b0048a237
+              organizationId: org-acme
+              type: UNKNOWN_QUERY
+              status: OPEN
+              queryId: q_099d4987d3e2f2e6656e9285ac76a83e
+              quoteId: m4-example-5fa40e44
+              firstSeenAt: '2026-11-12T04:12:57.575Z'
+              lastSeenAt: '2026-11-12T04:12:57.575Z'
+              safeSummary: Consulta sem resposta do fornecedor, que não tem API de situação
+              reconcilable: true
+              revision: 1
     OperationIssueUpdated:
       name: OperationIssueUpdated
       title: Evento OperationIssueUpdated (M4)
@@ -416,6 +551,27 @@ components:
       contentType: application/json
       payload:
         $ref: '#/components/schemas/OperationIssueEvent'
+      examples:
+        - name: resolved
+          summary: A ocorrência do exemplo de abertura, resolvida quando a consulta deixou de ser `UNKNOWN`.
+          payload:
+            source: mmda.provider
+            detail-type: OperationIssueUpdated
+            detail:
+              eventId: ca86d06c-dc9b-5abe-9adb-e65cb9d79493
+              occurredAt: '2026-11-12T04:14:07.584Z'
+              schemaVersion: '1'
+              issueId: is_377e241dcf78da8d2801824b0048a237
+              organizationId: org-acme
+              type: UNKNOWN_QUERY
+              status: RESOLVED
+              queryId: q_099d4987d3e2f2e6656e9285ac76a83e
+              quoteId: m4-example-5fa40e44
+              firstSeenAt: '2026-11-12T04:12:57.575Z'
+              lastSeenAt: '2026-11-12T04:14:07.584Z'
+              safeSummary: A consulta foi concluída
+              reconcilable: true
+              revision: 2
   schemas:
     Envelope:
       type: object
@@ -795,8 +951,10 @@ components:
         - $ref: '#/components/schemas/DetailHeader'
         - type: object
           description: |
-            Publicado pelo `reconciler` (M4). `organizationId` falta em callback sem correlação. `revision` é
-            monotônico por `issueId`; a quote descarta versões antigas.
+            Publicado pelo `reconciler` (M4). `organizationId` falta quando a ocorrência não tem organização
+            conhecida: no `UNMATCHED_CALLBACK`, no `DEAD_LETTER` de mensagem ilegível ou sem organização no
+            payload (como o callback agendado da `sim-callbacks`) e no `STALE_OUTBOX` de evento sem consulta.
+            `revision` é monotônico por `issueId`; a quote descarta versões antigas.
           required:
             - issueId
             - type
@@ -809,6 +967,7 @@ components:
           properties:
             issueId:
               type: string
+              pattern: '^is_[0-9a-f]{32}$'
             organizationId:
               type: string
             type:

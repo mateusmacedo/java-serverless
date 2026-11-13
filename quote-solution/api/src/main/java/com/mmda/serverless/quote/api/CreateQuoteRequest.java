@@ -6,6 +6,7 @@ import com.mmda.serverless.quote.domain.Usage;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
@@ -32,11 +33,29 @@ record CreateQuoteRequest(
     private static final int MAX_REF_LENGTH = 128;
 
     static CreateQuoteRequest parse(JsonNode body) {
+        requireObject(body);
         List<ErrorResponse.FieldError> errors = new ArrayList<>();
+        CreateQuoteRequest request = parseFields(body, Set.of(), errors);
+        if (!errors.isEmpty()) {
+            throw ApiException.validation(errors);
+        }
+        return request;
+    }
+
+    static void requireObject(JsonNode body) {
         if (body == null || !body.isObject()) {
             throw ApiException.validation(List.of(new ErrorResponse.FieldError("$", "O corpo deve ser um objeto JSON.")));
         }
-        rejectUnknown(body, FIELDS, "", errors);
+    }
+
+    /**
+     * Campos do pedido, acumulando os erros em {@code errors}; {@code extraFields} são os campos que outro corpo
+     * acrescenta, como o {@code expectedVersion} da nova versão, e que esta leitura não rejeita.
+     */
+    static CreateQuoteRequest parseFields(JsonNode body, Set<String> extraFields, List<ErrorResponse.FieldError> errors) {
+        Set<String> known = new HashSet<>(FIELDS);
+        known.addAll(extraFields);
+        rejectUnknown(body, known, "", errors);
         String product = text(body, "product", "product", errors);
         if (product != null && !PRODUCT.equals(product)) {
             errors.add(new ErrorResponse.FieldError("product", "Produto não suportado; use AUTO."));
@@ -65,9 +84,6 @@ record CreateQuoteRequest(
         String desiredStartDate = text(body, "desiredStartDate", "desiredStartDate", errors);
         if (desiredStartDate != null && !isCivilDate(desiredStartDate)) {
             errors.add(new ErrorResponse.FieldError("desiredStartDate", "Use uma data válida no formato YYYY-MM-DD."));
-        }
-        if (!errors.isEmpty()) {
-            throw ApiException.validation(errors);
         }
         return new CreateQuoteRequest(applicantRef, vehicleRef, usage, principalDriverRef, coverageProfile,
                 desiredStartDate);

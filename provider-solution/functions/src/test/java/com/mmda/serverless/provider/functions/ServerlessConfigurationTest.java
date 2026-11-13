@@ -33,7 +33,20 @@ class ServerlessConfigurationTest {
 
     private static final Pattern PARAM = Pattern.compile("\\$\\{param:([A-Za-z]+)}");
     private static final List<String> WORKERS = List.of("enrichmentWorker", "insurerWorker");
-    private static final List<String> QUEUE_CONSUMERS = List.of("enrichmentWorker", "insurerWorker", "simCallbackSender");
+    private static final List<String> QUEUE_CONSUMERS =
+            List.of("enrichmentWorker", "insurerWorker", "reconcileWorker", "simCallbackSender");
+    /** Fila de trabalho, a DLQ dela e as variáveis com que o reconciler reprocessa a DLQ (ADR 0007). */
+    private static final List<List<String>> DEAD_LETTER_ROUTES = List.of(
+            List.of("EnrichmentRequestsQueue", "EnrichmentRequestsDeadLetterQueue", "ENRICHMENT_REQUESTS_QUEUE_URL",
+                    "ENRICHMENT_REQUESTS_DLQ_URL"),
+            List.of("InsurerRequestsQueue", "InsurerRequestsDeadLetterQueue", "INSURER_REQUESTS_QUEUE_URL",
+                    "INSURER_REQUESTS_DLQ_URL"),
+            List.of("ReconcileRequestsQueue", "ReconcileRequestsDeadLetterQueue", "RECONCILE_REQUESTS_QUEUE_URL",
+                    "RECONCILE_REQUESTS_DLQ_URL"),
+            List.of("SimCallbacksQueue", "SimCallbacksDeadLetterQueue", "SIM_CALLBACKS_QUEUE_URL",
+                    "SIM_CALLBACKS_DLQ_URL"));
+    private static final List<String> PROVIDERS = List.of("enrichment-sim", "alpha", "beta");
+    private static final int RECONCILER_PERIOD_SECONDS = 60;
 
     private static Map<String, Object> serverless;
     private static Map<String, Object> quoteServerless;
@@ -253,6 +266,151 @@ class ServerlessConfigurationTest {
                 "dynamodb", Map.of("NewImage", Map.of("type", Map.of("S", List.of("OUTBOX")))))));
     }
 
+    /** §2 e §12: a {@code reconcile-requests} tem o orçamento das filas de pedidos, DLQ e a regra da quote. */
+    @ParameterizedTest
+    @ValueSource(strings = {"local", "dev"})
+    void reconcileRequestsQueueHasTheBudgetOfTheRequestQueuesItsDeadLetterQueueAndTheQuoteRule(String stage) {
+        Map<String, Object> params = params(stage);
+        Map<String, Object> sqs = sqsEvent("reconcileWorker");
+        Map<String, Object> queue = properties(logicalId(sqs.get("arn")));
+        Map<String, Object> redrive = map(queue.get("RedrivePolicy"));
+
+        assertThat(logicalId(sqs.get("arn"))).isEqualTo("ReconcileRequestsQueue");
+        assertThat(timeout("reconcileWorker", params)).isEqualTo(integer(params, "workerTimeoutSeconds"));
+        assertThat(resolveInt(queue.get("VisibilityTimeout"), params))
+                .as("six times the timeout of the reconcileWorker")
+                .isGreaterThanOrEqualTo(6 * timeout("reconcileWorker", params));
+        assertThat(resolveInt(redrive.get("maxReceiveCount"), params)).isEqualTo(3);
+        assertThat(logicalId(redrive.get("deadLetterTargetArn"))).isEqualTo("ReconcileRequestsDeadLetterQueue");
+        Map<String, Object> rule = properties("QueryReconcileRequestedRule");
+        assertThat(rule.get("EventBusName")).isEqualTo("${self:custom.platformEventBus}");
+        assertThat(rule.get("EventPattern")).isEqualTo(Map.of(
+                "source", List.of("mmda.quote"), "detail-type", List.of("QueryReconcileRequested")));
+        assertThat(logicalId(map(((List<?>) rule.get("Targets")).getFirst()).get("Arn")))
+                .isEqualTo("ReconcileRequestsQueue");
+        assertThat(String.valueOf(properties("ReconcileRequestsQueuePolicy").get("PolicyDocument")))
+                .contains("QueryReconcileRequestedRule.Arn", "events.amazonaws.com", "sqs:SendMessage");
+        assertThat(functionEnvironment("reconcileWorker")).containsKey("PROVIDERS_BASE_URL");
+    }
+
+    /**
+     * §9: toda fila de trabalho tem DLQ com retenção de 14 dias, e o reconciler conhece as duas URLs e pode ler a
+     * DLQ e devolver a mensagem à fila de origem.
+     */
+    @Test
+    void everyWorkQueueHasADeadLetterQueueThatTheReconcilerRedrivesToItsOrigin() {
+        Map<String, Object> reconciler = functionEnvironment("reconciler");
+        Map<String, Object> environment = new HashMap<>(environment());
+        environment.putAll(reconciler);
+        String role = String.valueOf(map(map(serverless.get("provider")).get("iam")).get("role"));
+
+        for (List<String> route : DEAD_LETTER_ROUTES) {
+            String origin = route.get(0);
+            String deadLetter = route.get(1);
+            assertThat(logicalId(map(properties(origin).get("RedrivePolicy")).get("deadLetterTargetArn")))
+                    .isEqualTo(deadLetter);
+            assertThat(properties(deadLetter).get("MessageRetentionPeriod")).isEqualTo(1209600);
+            assertThat(environment.get(route.get(2))).as("%s seen by the reconciler", route.get(2)).isEqualTo(origin);
+            assertThat(reconciler.get(route.get(3))).as("%s seen by the reconciler", route.get(3)).isEqualTo(deadLetter);
+            assertThat(role).as("the reconciler sends back to %s and reads %s", origin, deadLetter)
+                    .contains(origin + ".Arn", deadLetter + ".Arn");
+        }
+        assertThat(role).contains("sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes");
+    }
+
+    /** §9 e §12: as idades do reconciler respeitam o timeout da api, o ciclo de 1 min e a lápide da liderança. */
+    @ParameterizedTest
+    @ValueSource(strings = {"local", "dev"})
+    void reconcilerWaitsLongerThanEveryLiveInvocationBeforeActingAndBeforeOpeningIssues(String stage) {
+        Map<String, Object> params = params(stage);
+        Map<String, Object> reconciler = functionEnvironment("reconciler");
+        int stuck = resolveInt(reconciler.get("INBOX_STUCK_AFTER_SECONDS"), params);
+        int unmatched = resolveInt(reconciler.get("UNMATCHED_CALLBACK_AFTER_SECONDS"), params);
+        int stale = resolveInt(reconciler.get("STALE_OUTBOX_AFTER_SECONDS"), params);
+
+        assertThat(stuck).as("a stuck RECEIVED callback is older than any invocation of the api")
+                .isGreaterThan(timeout("api", params));
+        assertThat(unmatched).as("the encounter is retried before UNMATCHED").isGreaterThan(stuck);
+        assertThat(stale).as("a healthy republication never opens STALE_OUTBOX")
+                .isGreaterThanOrEqualTo(integer(params, "outboxRepublishAfterSeconds") + RECONCILER_PERIOD_SECONDS);
+        assertThat(params.get("reconcilerRate")).isEqualTo("rate(1 minute)");
+        assertThat(integer(params, "inflightTombstoneSeconds"))
+                .as("a pending fan-out is resumed while the followers of its chain still exist")
+                .isGreaterThan(timeout("enrichmentWorker", params) + 5 + RECONCILER_PERIOD_SECONDS);
+        assertThat(resolveInt(reconciler.get("DLQ_MAX_ATTEMPTS"), params)).isEqualTo(integer(params, "dlqMaxAttempts"))
+                .isPositive();
+        assertThat(resolveInt(reconciler.get("STATUS_READ_BUDGET_SECONDS"), params)
+                + integer(params, "providerHttpTimeoutSeconds"))
+                .as("the status reads stop in time for the inbox, the DLQs and the metrics of the cycle")
+                .isLessThan(timeout("reconciler", params));
+        assertThat(environment().get("STAGE")).isEqualTo("${sls:stage}");
+        assertThat(environment().get("METRICS_NAMESPACE")).isEqualTo("${self:custom.metricsNamespace}");
+    }
+
+    /** §9 e §12: idade e volume de cada DLQ e da {@code stream-failures}, com os limiares do stage. */
+    @ParameterizedTest
+    @ValueSource(strings = {"local", "dev"})
+    void everyDeadLetterQueueAndTheStreamFailuresQueueHaveAgeAndVolumeAlarms(String stage) {
+        Map<String, Object> params = params(stage);
+        List<String> queues = new java.util.ArrayList<>(DEAD_LETTER_ROUTES.stream().map(route -> route.get(1)).toList());
+        queues.add("StreamFailuresQueue");
+
+        for (String queue : queues) {
+            Object queueName = properties(queue).get("QueueName");
+            Map<String, Object> age = alarm(queue + "AgeAlarm");
+            Map<String, Object> volume = alarm(queue + "VolumeAlarm");
+            assertThat(age.get("Namespace")).isEqualTo("AWS/SQS");
+            assertThat(age.get("MetricName")).isEqualTo("ApproximateAgeOfOldestMessage");
+            assertThat(resolveInt(age.get("Threshold"), params)).isEqualTo(300);
+            assertThat(volume.get("MetricName")).isEqualTo("ApproximateNumberOfMessagesVisible");
+            assertThat(resolveInt(volume.get("Threshold"), params)).isEqualTo(1);
+            for (Map<String, Object> alarm : List.of(age, volume)) {
+                assertThat(alarm.get("Dimensions")).as("alarm of %s", queue)
+                        .isEqualTo(List.of(Map.of("Name", "QueueName", "Value", queueName)));
+                assertThat(alarm.get("ComparisonOperator")).isEqualTo("GreaterThanOrEqualToThreshold");
+                assertThat(String.valueOf(alarm.get("AlarmName"))).startsWith("${self:service}-${sls:stage}-");
+            }
+        }
+    }
+
+    /** §9: as métricas EMF da outbox, dos callbacks {@code UNMATCHED}, das {@code UNKNOWN} e das falhas por provedor. */
+    @ParameterizedTest
+    @ValueSource(strings = {"local", "dev"})
+    void ownMetricsHaveAlarmsInTheNamespaceTheFunctionsWriteWithTheStageThresholds(String stage) {
+        Map<String, Object> params = params(stage);
+        Object namespace = map(serverless.get("custom")).get("metricsNamespace");
+        Map<String, Integer> thresholds = Map.of(
+                "OutboxPendingAgeAlarm", 120, "UnmatchedCallbacksAlarm", 1, "UnknownQueriesAlarm", 1);
+        Map<String, String> metrics = Map.of("OutboxPendingAgeAlarm", Metrics.OUTBOX_PENDING_AGE_SECONDS,
+                "UnmatchedCallbacksAlarm", Metrics.UNMATCHED_CALLBACKS, "UnknownQueriesAlarm", Metrics.UNKNOWN_QUERIES);
+
+        assertThat(namespace).isEqualTo("mmda/provider-solution");
+        for (Map.Entry<String, String> entry : metrics.entrySet()) {
+            Map<String, Object> alarm = alarm(entry.getKey());
+            assertThat(alarm.get("Namespace")).isEqualTo("${self:custom.metricsNamespace}");
+            assertThat(alarm.get("MetricName")).isEqualTo(entry.getValue());
+            assertThat(alarm.get("Dimensions")).isEqualTo(List.of(Map.of("Name", "Stage", "Value", "${sls:stage}")));
+            assertThat(resolveInt(alarm.get("Threshold"), params)).isEqualTo(thresholds.get(entry.getKey()));
+        }
+        assertThat(integer(params, "staleOutboxAfterSeconds")).as("the outbox alarm and STALE_OUTBOX share the threshold")
+                .isEqualTo(120);
+        for (String provider : PROVIDERS) {
+            Map<String, Object> alarm = map(resources().values().stream()
+                    .map(ServerlessConfigurationTest::map)
+                    .filter(resource -> "AWS::CloudWatch::Alarm".equals(resource.get("Type")))
+                    .map(resource -> map(resource.get("Properties")))
+                    .filter(properties -> String.valueOf(properties.get("AlarmName"))
+                            .endsWith("-" + provider + "-provider-failures"))
+                    .findFirst()
+                    .orElseThrow(() -> new AssertionError("no failure alarm for " + provider)));
+            String metricsText = String.valueOf(alarm.get("Metrics"));
+            assertThat(metricsText).contains(Metrics.PROVIDER_FAILURES, Metrics.PROVIDER_CALLS, "Value=" + provider,
+                    "IF(calls > 0, 100 * failures / calls, 0)");
+            assertThat(resolveInt(alarm.get("Threshold"), params)).isEqualTo(50);
+            assertThat(integer(params, "providerFailureAlarmPeriodSeconds")).isEqualTo(300);
+        }
+    }
+
     private static Map<String, Object> params(String stage) {
         Map<String, Object> all = map(serverless.get("params"));
         Map<String, Object> merged = new HashMap<>(map(all.get("default")));
@@ -260,6 +418,16 @@ class ServerlessConfigurationTest {
             merged.putAll(map(all.get(stage)));
         }
         return merged;
+    }
+
+    private static Map<String, Object> resources() {
+        return map(map(serverless.get("resources")).get("Resources"));
+    }
+
+    private static Map<String, Object> alarm(String logicalId) {
+        Map<String, Object> resource = map(resources().get(logicalId));
+        assertThat(resource.get("Type")).as(logicalId).isEqualTo("AWS::CloudWatch::Alarm");
+        return map(resource.get("Properties"));
     }
 
     private static Map<String, Object> environment() {
