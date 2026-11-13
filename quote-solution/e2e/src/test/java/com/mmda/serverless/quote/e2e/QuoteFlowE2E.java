@@ -184,7 +184,8 @@ class QuoteFlowE2E {
     private static final HttpClient HTTP = HttpClient.newHttpClient();
     private static final DynamoDbClient DYNAMO_DB = DynamoDbClient.create();
     private static final SfnClient SFN = SfnClient.create();
-    private static final S3Client S3 = S3Client.builder().forcePathStyle(true).build();
+    private static final S3Client S3 = S3Client.builder()
+            .forcePathStyle(System.getProperty("aws.endpointUrl") != null).build();
     private static final SqsClient SQS = SqsClient.create();
     private static final EventBridgeClient EVENT_BRIDGE = EventBridgeClient.create();
     private static final CloudWatchLogsClient LOGS = CloudWatchLogsClient.create();
@@ -2758,12 +2759,16 @@ class QuoteFlowE2E {
     }
 
     private static String baseUrlOf(ApiGatewayClient apiGateway, String apiName) {
-        String endpoint = System.getProperty("aws.endpointUrl", "http://localhost:4566");
         String apiId = apiGateway.getRestApis(builder -> builder.limit(500)).items().stream()
                 .filter(api -> api.name().equals(apiName))
                 .map(RestApi::id)
                 .findFirst()
                 .orElseThrow(() -> new IllegalStateException("API " + apiName + " not found; deploy quote-solution first"));
+        String endpoint = System.getProperty("aws.endpointUrl");
+        if (endpoint == null) {
+            String region = apiGateway.serviceClientConfiguration().region().id();
+            return "https://" + apiId + ".execute-api." + region + ".amazonaws.com/" + STAGE;
+        }
         return endpoint + "/restapis/" + apiId + "/" + STAGE + "/_user_request_";
     }
 
