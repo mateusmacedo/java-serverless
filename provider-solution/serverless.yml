@@ -26,7 +26,9 @@ params:
     reusePolicyVersion: "reuse-v1"
     enrichmentValiditySeconds: 900
     offerValiditySeconds: 1800
-    # Quota por provedor e credencial, numa janela de 1 min comum a todos os workflows (T21)
+    # Quota por provedor e credencial, numa janela de 1 min comum a todos os workflows (T21); a credencial
+    # compõe a chave do QUOTA# e é a mesma para todos os provedores no MVP
+    providerCredentialRef: default
     enrichmentSimQuotaPerMinute: 30
     alphaQuotaPerMinute: 30
     betaQuotaPerMinute: 30
@@ -124,6 +126,7 @@ provider:
     INFLIGHT_TOMBSTONE_SECONDS: "${param:inflightTombstoneSeconds}"
     REUSE_POLICY_VERSION: "${param:reusePolicyVersion}"
     OUTBOX_REPUBLISH_AFTER_SECONDS: "${param:outboxRepublishAfterSeconds}"
+    PROVIDER_CREDENTIAL_REF: ${param:providerCredentialRef}
     ENRICHMENT_SIM_QUOTA_PER_MINUTE: "${param:enrichmentSimQuotaPerMinute}"
     ALPHA_QUOTA_PER_MINUTE: "${param:alphaQuotaPerMinute}"
     BETA_QUOTA_PER_MINUTE: "${param:betaQuotaPerMinute}"

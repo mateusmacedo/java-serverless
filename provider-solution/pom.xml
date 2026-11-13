@@ -53,13 +53,4 @@
             </dependency>
         </dependencies>
     </dependencyManagement>
-
-    <!-- WHY: o e2e exige as stacks da plataforma e da provider-solution implantadas no Floci -->
-    <profiles>
-        <profile>
-            <id>e2e</id>
-            <modules>
-            </modules>
-        </profile>
-    </profiles>
 </project>

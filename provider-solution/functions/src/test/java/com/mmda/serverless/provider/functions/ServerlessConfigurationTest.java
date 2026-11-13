@@ -256,6 +256,17 @@ class ServerlessConfigurationTest {
         }
     }
 
+    /** A credencial compõe a chave do {@code QUOTA#}; fora da stack, a quota seria sempre a da credencial padrão. */
+    @ParameterizedTest
+    @ValueSource(strings = {"local", "dev"})
+    void quotaCredentialIsAStageParameterSeenByTheWorkers(String stage) {
+        Matcher matcher = PARAM.matcher(String.valueOf(environment().get("PROVIDER_CREDENTIAL_REF")));
+
+        assertThat(matcher.matches()).as("PROVIDER_CREDENTIAL_REF comes from a param").isTrue();
+        assertThat(params(stage).get(matcher.group(1))).as("credential of %s", stage)
+                .isInstanceOfSatisfying(String.class, credential -> assertThat(credential).isNotBlank());
+    }
+
     @Test
     void relayReadsOnlyOutboxInsertsWithBoundedRetriesAndPartialFailures() {
         Map<String, Object> stream = event("outboxRelay", "stream");
