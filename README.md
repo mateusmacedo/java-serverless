@@ -35,12 +35,13 @@ acionam por eventos: a `receipt-solution` (Quarkus) reage ao que a `sample-solut
 | Testcontainers / testcontainers-floci-aws | 2.0.5 / 2.17.0 |
 | Serverless Framework | 4.46.0 |
 | serverless-step-functions / serverless-localstack / serverless-offline | 3.31.2 / 1.4.0 / 14.8.4 |
-| Floci | 2.4.0 |
+| Floci / Floci UI | 2.4.0 / 0.7.0 |
 
 ## Estrutura
 
 ```text
-compose.yaml            Floci na porta 4566, com acesso ao Docker para executar as Lambdas
+compose.yaml            Floci na porta 4566, com acesso ao Docker para executar as Lambdas, e a
+                        console floci-ui na porta 4500
 package.json            Serverless Framework e plugins (pnpm)
 pom.xml                 POM raiz neutro: Java 21, versões de plugins e testcontainers-floci-aws
 platform/
@@ -77,6 +78,9 @@ docker compose up -d
 pnpm install
 mvn -B package
 ```
+
+O `docker compose up -d` também sobe a console web do Floci em http://localhost:4500, para ver as
+tabelas, filas, funções, execuções e logs implantados.
 
 O `mvn package` gera os zips das Lambdas. Os módulos Spring têm as classes na raiz e as dependências
 em `lib/`: `sample-solution/api/target/api-lambda.zip` e

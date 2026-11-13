@@ -21,6 +21,24 @@ services:
     networks:
       - floci
 
+  floci-ui:
+    image: floci/floci-ui:0.7.0
+    # Console web em http://localhost:4500; a API da console fala com o Floci pela rede interna
+    ports:
+      - "4500:4500"
+    environment:
+      # Só o emulador AWS sobe aqui; sem isso a console oferece Azure, GCP e OCI, que não existem
+      FLOCI_CLOUD: aws
+      # Dentro do container, localhost é o próprio container: o Floci é alcançado pelo nome do serviço
+      FLOCI_ENDPOINT: http://floci:4566
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+    depends_on:
+      - floci
+    networks:
+      - floci
+
 volumes:
   floci-data:
 
