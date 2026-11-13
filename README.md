@@ -5,7 +5,8 @@ ou Quarkus conforme o propósito de cada solução, implantação pelo Serverles
 AWS pelo [Floci](https://github.com/floci-io/floci). As soluções compartilham o ambiente AWS e se
 acionam por eventos: a `receipt-solution` (Quarkus) reage ao que a `sample-solution` (Spring) conclui, e a
 plataforma de cotação de seguros é formada pela `quote-solution` (Quarkus) e pela `provider-solution`
-(Spring), que conversam pelo barramento de `platform/events`.
+(Spring), que conversam pelo barramento de `platform/events`, e pelo `backoffice` (Angular), o painel do
+corretor e do operador.
 
 ## Documentação
 
@@ -13,8 +14,8 @@ O índice de toda a documentação, com o desenho de cada solução, os testes, 
 os contratos, está em [docs/README.md](docs/README.md). Cada solução tem um documento principal, com os
 diagramas dela: [sample-solution](sample-solution/docs/README.md),
 [receipt-solution](receipt-solution/docs/README.md), [quote-solution](quote-solution/docs/README.md),
-[provider-solution](provider-solution/docs/README.md) e [plataforma](platform/docs/README.md); a entrada da
-plataforma de cotação é [docs/cotacao.md](docs/cotacao.md).
+[provider-solution](provider-solution/docs/README.md), [backoffice](backoffice/README.md) e
+[plataforma](platform/docs/README.md); a entrada da plataforma de cotação é [docs/cotacao.md](docs/cotacao.md).
 
 ## Tecnologias
 
@@ -32,6 +33,7 @@ plataforma de cotação é [docs/cotacao.md](docs/cotacao.md).
 | Serverless Framework | 4.46.0 |
 | serverless-step-functions / serverless-localstack / serverless-offline | 3.31.2 / 1.4.0 / 14.8.4 |
 | Floci / Floci UI | 2.4.0 / 0.7.0 |
+| Backoffice: Node.js / Angular / CoreUI for Angular ([detalhes](backoffice/README.md#stack)) | 24 / 22.2 / 5.7.42 |
 
 ## Estrutura
 
@@ -49,6 +51,7 @@ sample-solution/        Spring: api, functions e e2e
 receipt-solution/       Quarkus, acionada pelo RequestCompleted da sample-solution: api, functions e e2e
 quote-solution/         Quarkus, API de produto e workflow da cotação: domain, api, functions e e2e
 provider-solution/      Spring, fornecedores da cotação: domain, api (callbacks), functions e simulators
+backoffice/             Angular, painel da cotação: cotações, ofertas, seleção e ocorrências (pnpm workspace)
 contracts/              API de produto (openapi.yaml e fixtures/) e uma pasta de contratos por solução
 docs/                   Documentação, ADRs, PRDs e o tema dos diagramas
 ```
@@ -62,7 +65,7 @@ escolhe o parent do framework em `platform/` e ganha o próprio `serverless.yml`
 
 - JDK 21 e Maven 3.9
 - Docker com o daemon rodando
-- Node.js e pnpm
+- Node.js 24 e pnpm
 - AWS CLI v2
 - Login no Serverless Framework v4: `pnpm sls login`
 
@@ -83,7 +86,8 @@ nomes estão em [Empacotamento](docs/arquitetura.md#empacotamento).
 ## Testes
 
 Níveis, comandos (`mvn test`, `mvn verify` e `pnpm test:e2e`) e o que cada teste cobre estão em
-[Testes](docs/testes.md).
+[Testes](docs/testes.md). Os do backoffice (`pnpm --filter backoffice test` e `pnpm --filter backoffice e2e`)
+estão no [README dele](backoffice/README.md#testes).
 
 ## Implantação no Floci
 
@@ -113,6 +117,11 @@ Ao final, o Serverless mostra o endpoint da API, no formato
 
 Para implantar a plataforma de cotação no stage `dev` de uma conta AWS e verificar o que o Floci não
 reproduz, siga o [guia de implantação na AWS](docs/implantacao-aws-dev.md).
+
+## Backoffice
+
+O painel roda no dev server do Angular, contra a `quote-solution` implantada no Floci ou no stage `dev`. O
+passo a passo, com a criação dos usuários de exemplo, está em [Rodar no Floci](backoffice/README.md#rodar-no-floci).
 
 ## Fluxo de exemplo
 

@@ -26,6 +26,7 @@ persistência, IAM, configuração, execução no Floci, divergências conhecida
 | [Cotação](cotacao.md) | Entrada da plataforma de cotação: módulos, capacidades, contrato com os clientes, C4 de contexto e ADRs |
 | [quote-solution](../quote-solution/docs/README.md) | API de produto, workflow da versão, consolidação, seleção, reconciliação e operações da cotação |
 | [provider-solution](../provider-solution/docs/README.md) | Enriquecimento, chamadas às seguradoras, callbacks, outbox, reconciliação, DLQs e simuladores |
+| [backoffice](../backoffice/README.md) | Painel Angular da cotação: execução no Floci e no `dev`, telas, comportamentos do contrato, testes e cobertura do PRD de frontend |
 | [sample-solution](../sample-solution/docs/README.md) | Solução de referência em Spring: requisição, `request-flow`, DLQ e reprocessamento |
 | [receipt-solution](../receipt-solution/docs/README.md) | Emissão idempotente de comprovantes em Quarkus, acionada pelo `RequestCompleted` |
 | [Plataforma](../platform/docs/README.md) | Barramento `platform/events`, parents Maven, `spring-aws` e ordem de implantação |
@@ -55,7 +56,7 @@ quem produz, quem consome e como os testes o conferem. A API de produto da cota�
 | [`receipt-solution`](../contracts/receipt-solution/README.md) | [OpenAPI 3.1](../contracts/receipt-solution/openapi.yaml) do `GET /receipts/{requestId}` e do `POST /receipts` e [AsyncAPI 3.1](../contracts/receipt-solution/asyncapi.yaml) do `RequestCompleted` consumido e do `ReceiptIssued` publicado |
 | [`provider-solution`](../contracts/provider-solution/README.md) | [OpenAPI 3.1](../contracts/provider-solution/openapi.yaml) do `POST /v1/providers/{provider}/callbacks` e [AsyncAPI 3.1](../contracts/provider-solution/asyncapi.yaml) dos eventos publicados no barramento da plataforma |
 | [`quote-solution`](../contracts/quote-solution/README.md) | [AsyncAPI 3.1](../contracts/quote-solution/asyncapi.yaml) dos eventos publicados e consumidos no barramento da plataforma |
-| API de produto | [`contracts/openapi.yaml`](../contracts/openapi.yaml) (OpenAPI 3.1, compartilhado com o frontend) e [`contracts/fixtures/`](../contracts/fixtures) |
+| API de produto | [`contracts/openapi.yaml`](../contracts/openapi.yaml) (OpenAPI 3.1, compartilhado com o [backoffice](../backoffice/README.md), que gera o cliente a partir dele) e [`contracts/fixtures/`](../contracts/fixtures), usadas também nos testes do backoffice |
 
 ## Decisões
 
@@ -76,6 +77,7 @@ quem produz, quem consome e como os testes o conferem. A API de produto da cota�
 | [0013](decisoes/0013-barramento-da-plataforma.md) | Barramento de eventos da plataforma, em stack própria |
 | [0014](decisoes/0014-cotacao-em-duas-solucoes-e-task-token.md) | Cotação em duas soluções, com o task token restrito à `quote-solution` |
 | [0015](decisoes/0015-modelo-dynamodb-e-outbox-da-cotacao.md) | Uma tabela por solução, outbox publicada por DynamoDB Streams |
+| [0016](decisoes/0016-backoffice-angular-e-login-cognito.md) | Backoffice em Angular com o template do marketplace e login no user pool da stack |
 
 Um novo ADR recebe o próximo número, com as seções Status, Data, Contexto, Decisão, Consequências e
 Alternativas consideradas. Uma decisão substituída continua no histórico, com o status apontando
