@@ -11,12 +11,12 @@ do Spring Cloud e do AWS SDK. Um módulo Quarkus abaixo dele herdaria as versõe
 
 Os dois frameworks também fixam versões diferentes do que têm em comum. Em 10/11/2026:
 
-| Peça | Spring Boot 4.0.9 | Quarkus 3.40.1.2 (LTS) |
-|---|---|---|
+| Peça                | Spring Boot 4.0.9            | Quarkus 3.40.1.2 (LTS)                   |
+| ------------------- | ---------------------------- | ---------------------------------------- |
 | AWS SDK for Java v2 | 2.57.12 (escolha do projeto) | 2.54.13 (BOM do Quarkus Amazon Services) |
-| Jackson | 3.1.7 | 2.21.8 |
-| JUnit Jupiter | 6.0.3 | 6.1.3 |
-| Testcontainers | 2.0.5 | 2.0.5 |
+| Jackson             | 3.1.7                        | 2.21.8                                   |
+| JUnit Jupiter       | 6.0.3                        | 6.1.3                                    |
+| Testcontainers      | 2.0.5                        | 2.0.5                                    |
 
 ## Decisão
 

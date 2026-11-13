@@ -4,9 +4,9 @@ Contratos escritos à mão, na versão `0.1.0`, da solução de referência em S
 [Arquitetura](../../docs/arquitetura.md) e em [Fluxos](../../docs/fluxos.md); a sintaxe é conferida com os
 comandos de [Como validar](../../docs/README.md#como-validar).
 
-| Arquivo | Descreve | Quem produz | Quem consome |
-|---|---|---|---|
-| [`openapi.yaml`](openapi.yaml) | `POST /requests` (OpenAPI 3.1) | Lambda `api` (Spring MVC) | Clientes HTTP e o `RequestFlowE2E` |
+| Arquivo                          | Descreve                                                                                                                                                                           | Quem produz                                                                                              | Quem consome                                                                       |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| [`openapi.yaml`](openapi.yaml)   | `POST /requests` (OpenAPI 3.1)                                                                                                                                                     | Lambda `api` (Spring MVC)                                                                                | Clientes HTTP e o `RequestFlowE2E`                                                 |
 | [`asyncapi.yaml`](asyncapi.yaml) | Estado que atravessa a `request-flow`, notificação no SNS, `RequestCompleted` no EventBridge, mensagens das filas `audit` e `dlq` e comando agendado do `reprocess` (AsyncAPI 3.1) | Lambda `notify` (SNS e `RequestCompleted`), Step Functions (`dlq`) e EventBridge Scheduler (`reprocess`) | `receipt-solution` (`RequestCompleted`), fila `audit` e Lambda `reprocess` (`dlq`) |
 
 Como os testes conferem:

@@ -4,9 +4,9 @@ Contratos escritos à mão, na versão `0.1.0`, da solução de comprovantes em 
 [Arquitetura](../../docs/arquitetura.md) e em [Fluxos](../../docs/fluxos.md#integração-com-a-receipt-solution);
 a sintaxe é conferida com os comandos de [Como validar](../../docs/README.md#como-validar).
 
-| Arquivo | Descreve | Quem produz | Quem consome |
-|---|---|---|---|
-| [`openapi.yaml`](openapi.yaml) | `GET /receipts/{requestId}` e `POST /receipts` (OpenAPI 3.1) | Lambda `api` (Quarkus REST) | Clientes HTTP e o `ReceiptFlowE2E` |
+| Arquivo                          | Descreve                                                                                                                         | Quem produz                                                                                                                                                                      | Quem consome                                                                              |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| [`openapi.yaml`](openapi.yaml)   | `GET /receipts/{requestId}` e `POST /receipts` (OpenAPI 3.1)                                                                     | Lambda `api` (Quarkus REST)                                                                                                                                                      | Clientes HTTP e o `ReceiptFlowE2E`                                                        |
 | [`asyncapi.yaml`](asyncapi.yaml) | `RequestCompleted` consumido do barramento da `sample-solution` e `ReceiptIssued` publicado no barramento próprio (AsyncAPI 3.1) | `RequestCompleted`: `sample-solution`, descrito no [AsyncAPI dela](../sample-solution/asyncapi.yaml), que este arquivo referencia sem copiar; `ReceiptIssued`: Lambda `announce` | `RequestCompleted`: máquina `receipt-flow`; `ReceiptIssued`: nenhuma regra no laboratório |
 
 Como os testes conferem:

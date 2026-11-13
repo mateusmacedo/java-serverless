@@ -100,21 +100,21 @@ cursor.
 Valores de `gsi2pk` depois do M5, todos com `gsi2sk` = instante ISO-8601 e removidos quando o item sai do
 estado:
 
-| Solução | Valor | Item | Registrado em |
-|---|---|---|---|
-| quote | `ACTIVE_VERSION` | Versão não terminal | Decisão |
-| quote | `OUTBOX_PENDING` | Outbox ainda não publicado | Decisão |
-| quote | `WAITER_RESUMING` | Waiter em retomada | Decisão |
-| quote | `WAITER_EXPIRED` | Waiter expirado à espera da conferência da entrega | Emenda (M4) |
-| quote | `SUMMARY_PENDING` | Versão consolidada cujo resumo do `META` ainda não foi conferido | Emenda (M4) |
-| quote | `ISSUE_OPEN` | Ocorrência da quote que se resolve sozinha, ainda aberta: só a `STUCK_VERSION` | Esta emenda |
-| provider | `QUERY_IN_FLIGHT` | Consulta em voo | Decisão |
-| provider | `QUERY_UNKNOWN` | Consulta sem resposta depois do envio | Decisão |
-| provider | `INBOX_RECEIVED` | Callback recebido ainda não processado | Decisão |
-| provider | `INBOX_UNMATCHED` | Callback sem correlação | Decisão |
-| provider | `OUTBOX_PENDING` | Outbox ainda não publicado | Decisão |
-| provider | `FANOUT_PENDING` | Fan-out do líder ainda não concluído | Emenda (M4) |
-| provider | `ISSUE_OPEN` | Ocorrência que se resolve sozinha, ainda aberta (`UNKNOWN_QUERY`, `UNMATCHED_CALLBACK`, `STALE_OUTBOX`) | Emenda (M4) |
+| Solução  | Valor             | Item                                                                                                    | Registrado em |
+| -------- | ----------------- | ------------------------------------------------------------------------------------------------------- | ------------- |
+| quote    | `ACTIVE_VERSION`  | Versão não terminal                                                                                     | Decisão       |
+| quote    | `OUTBOX_PENDING`  | Outbox ainda não publicado                                                                              | Decisão       |
+| quote    | `WAITER_RESUMING` | Waiter em retomada                                                                                      | Decisão       |
+| quote    | `WAITER_EXPIRED`  | Waiter expirado à espera da conferência da entrega                                                      | Emenda (M4)   |
+| quote    | `SUMMARY_PENDING` | Versão consolidada cujo resumo do `META` ainda não foi conferido                                        | Emenda (M4)   |
+| quote    | `ISSUE_OPEN`      | Ocorrência da quote que se resolve sozinha, ainda aberta: só a `STUCK_VERSION`                          | Esta emenda   |
+| provider | `QUERY_IN_FLIGHT` | Consulta em voo                                                                                         | Decisão       |
+| provider | `QUERY_UNKNOWN`   | Consulta sem resposta depois do envio                                                                   | Decisão       |
+| provider | `INBOX_RECEIVED`  | Callback recebido ainda não processado                                                                  | Decisão       |
+| provider | `INBOX_UNMATCHED` | Callback sem correlação                                                                                 | Decisão       |
+| provider | `OUTBOX_PENDING`  | Outbox ainda não publicado                                                                              | Decisão       |
+| provider | `FANOUT_PENDING`  | Fan-out do líder ainda não concluído                                                                    | Emenda (M4)   |
+| provider | `ISSUE_OPEN`      | Ocorrência que se resolve sozinha, ainda aberta (`UNKNOWN_QUERY`, `UNMATCHED_CALLBACK`, `STALE_OUTBOX`) | Emenda (M4)   |
 
 O `ISSUE_OPEN` tem o mesmo nome nas duas soluções, mas cada tabela tem o seu índice: as ocorrências
 projetadas da provider na quote nunca entram no `ISSUE_OPEN` da quote.

@@ -20,11 +20,11 @@ Convenções:
 
 ## 1. Visão geral
 
-| Ordem | Solução | Diretório | Stack do CloudFormation | O que cria |
-|---|---|---|---|---|
-| 1 | Plataforma | `platform/events` | `platform-dev` | Barramento `platform-dev-events` (ADR 0013) |
-| 2 | `provider-solution` | `provider-solution` | `provider-solution-dev` | 8 Lambdas, API `dev-provider-solution`, tabelas `-queries` e `-simulators`, bucket `-payloads`, 4 filas com DLQ, `stream-failures`, 2 segredos, tópico de alarmes e 16 alarmes |
-| 3 | `quote-solution` | `quote-solution` | `quote-solution-dev` | 7 Lambdas, API `dev-quote-solution`, máquina `quote-solution-dev-quote-flow`, tabela `-quotes`, filas `results` e `issues` com DLQ, `stream-failures`, segredo `token-key`, user pool, tópico de alarmes e 8 alarmes |
+| Ordem | Solução             | Diretório           | Stack do CloudFormation | O que cria                                                                                                                                                                                                           |
+| ----- | ------------------- | ------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | Plataforma          | `platform/events`   | `platform-dev`          | Barramento `platform-dev-events` (ADR 0013)                                                                                                                                                                          |
+| 2     | `provider-solution` | `provider-solution` | `provider-solution-dev` | 8 Lambdas, API `dev-provider-solution`, tabelas `-queries` e `-simulators`, bucket `-payloads`, 4 filas com DLQ, `stream-failures`, 2 segredos, tópico de alarmes e 16 alarmes                                       |
+| 3     | `quote-solution`    | `quote-solution`    | `quote-solution-dev`    | 7 Lambdas, API `dev-quote-solution`, máquina `quote-solution-dev-quote-flow`, tabela `-quotes`, filas `results` e `issues` com DLQ, `stream-failures`, segredo `token-key`, user pool, tópico de alarmes e 8 alarmes |
 
 As duas soluções chegam ao barramento pelo nome, sem referência entre stacks. O barramento sobe antes
 delas, e a provider e a quote sobem em qualquer ordem entre si
@@ -80,9 +80,9 @@ mvn -B test -pl quote-solution/functions,provider-solution/functions -am \
   -Dtest='FunctionTimingConfigurationTest,ServerlessConfigurationTest' -Dsurefire.failIfNoSpecifiedTests=false
 ```
 
-| Solução | Zip |
-|---|---|
-| quote | `quote-solution/api/target/quote-api-lambda.zip`, `quote-solution/functions/target/quote-functions-lambda.zip` |
+| Solução  | Zip                                                                                                                                                                                              |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| quote    | `quote-solution/api/target/quote-api-lambda.zip`, `quote-solution/functions/target/quote-functions-lambda.zip`                                                                                   |
 | provider | `provider-solution/api/target/provider-api-lambda.zip`, `provider-solution/simulators/target/provider-simulators-lambda.zip`, `provider-solution/functions/target/provider-functions-lambda.zip` |
 
 ### 2.3 Credenciais
@@ -122,11 +122,11 @@ do bucket de deploy em `/serverless-framework/deployment/s3-bucket`).
 Nenhum segredo é criado à mão: o CloudFormation gera os três com `GenerateSecretString`, e só o código
 os lê.
 
-| Segredo | Stack | Lido por |
-|---|---|---|
-| `quote-solution/dev/token-key` | quote | `dispatch`, `resume` e `reconciler` (cifra dos task tokens) |
+| Segredo                                  | Stack    | Lido por                                                     |
+| ---------------------------------------- | -------- | ------------------------------------------------------------ |
+| `quote-solution/dev/token-key`           | quote    | `dispatch`, `resume` e `reconciler` (cifra dos task tokens)  |
 | `provider-solution/dev/query-key-secret` | provider | Papel compartilhado da provider; só o `enrichmentWorker` usa |
-| `provider-solution/dev/callback-secret` | provider | `api` e `simCallbackSender` (assinatura `X-Signature`) |
+| `provider-solution/dev/callback-secret`  | provider | `api` e `simCallbackSender` (assinatura `X-Signature`)       |
 
 Todos usam a chave gerenciada da AWS; nenhum papel precisa de KMS. Antes do primeiro deploy, confira
 que nenhum segredo com esses nomes existe nem está agendado para exclusão, porque um nome ocupado
@@ -160,14 +160,14 @@ recuperação (`delete_secret` com `ForceDeleteWithoutRecovery=True`) antes do d
 O user pool `quote-solution-dev-users` só aceita criação administrativa. O CloudFormation cria os
 grupos, mas nenhum usuário:
 
-| Grupo | Permissão no `GET /v1/me` |
-|---|---|
+| Grupo                            | Permissão no `GET /v1/me`                       |
+| -------------------------------- | ----------------------------------------------- |
 | `org_org-acme`, `org_org-globex` | Organização do usuário (`org_<organizationId>`) |
-| `perm_quotes_read` | `quotes:read` |
-| `perm_quotes_write` | `quotes:write` |
-| `perm_offers_select` | `offers:select` |
-| `perm_operations_read` | `operations:read` |
-| `perm_operations_reconcile` | `operations:reconcile` |
+| `perm_quotes_read`               | `quotes:read`                                   |
+| `perm_quotes_write`              | `quotes:write`                                  |
+| `perm_offers_select`             | `offers:select`                                 |
+| `perm_operations_read`           | `operations:read`                               |
+| `perm_operations_reconcile`      | `operations:reconcile`                          |
 
 O `quote-e2e` cria e mantém os próprios 4 usuários (`e2e-acme-writer`, `e2e-acme-operator`,
 `e2e-acme-viewer` e `e2e-globex-operator`). Os roteiros manuais deste guia usam um usuário seu, com a
@@ -389,28 +389,28 @@ O esperado é `202` com `quoteId`, `version` e `statusUrl`.
 
 ### 4.2 Itens
 
-| ID | Item | Origem | Como executar | Resultado esperado |
-|---|---|---|---|---|
-| V01 | Parâmetros e variáveis do `dev` | §12; §14 (params do stage `dev`) | Script V01 | Nenhuma função com `AWS_ENDPOINT_URL*`; `JWT_ISSUER` com o issuer da AWS; máquina com 360 s, enriquecimento com 20 s e seguradora com 90 s |
-| V02 | Agendamento e papel do `reconciler` | §2 (permissões do M4 e do M5); §14 (IAM das permissões novas) | Script V02 | Dois agendamentos `ENABLED`; um ciclo por minuto no log de cada `reconciler` |
-| V03 | Task token | §13 (`waitForTaskToken`; IAM do `serverless-step-functions`); §14 | Casos T01 e T04; script V03 | Execuções `SUCCEEDED`; `ResolveEnrichment` e `RequestInsurerQuote` concluídos; nenhum `AccessDenied` no histórico |
-| V04 | Callbacks, inclusive corpo fora do ASCII | §13 (assinatura pelo `AWS_PROXY`); §14 | Casos T07, T08, T11 e T12; sonda V04 | Casos passam; a sonda recebe 400 `INVALID_CALLBACK` com a assinatura certa e 401 `INVALID_SIGNATURE` com a errada |
-| V05 | IAM efetivo e `AccessDenied` | §2; §13 (papéis próprios da provider); §14 (`IssueProjectorRole`, API e `reconciler`) | `quote-e2e` completo; script V05 | Nenhuma ocorrência nos 15 grupos de log; os 8 mapeamentos de evento `Enabled` |
-| V06 | Timeout por estado | §13 (`TimeoutSeconds` por estado); §14 (timeouts) | Caso T08; script V03 | `TaskTimedOut` em `RequestInsurerQuote` depois de 90 s, seguido de `RecordInsurerTimeout`; seguradora `TIMED_OUT` |
-| V07 | Timeout da máquina | §13 (`TimeoutSeconds` da máquina); §14 (timeouts) | Deploy temporário V07 | Execução `TIMED_OUT` sem passar por `Catch`; versão finalizada pelo `reconciler` com `WORKFLOW_FAILED` |
-| V08 | Vazão do ESM de SQS e `JOIN` ponta a ponta | §13; §14 | Caso T06 com 100 cotações | T06 passa com um líder (`MISS=1`); `JOIN` aparece nas decisões |
-| V09 | `TransactionConflict` | §13; §14 (100 pedidos na liderança e corrida do T29) | Durante o V08 e o caso T29; B1 | Conflitos absorvidos pelas repetições; nenhum 503 no T29 |
-| V10 | Vazão do ESM de stream | §13 | Script V10, depois do `quote-e2e` | Atraso entre `createdAt` e `publishedAt` do outbox medido e registrado |
-| V11 | Retry e divisão de lote do stream | §13 (retry padrão; `MaximumRetryAttempts`, `BisectBatchOnFunctionError` e `onFailure`); §14 | Script V11 | Configuração igual à do `serverless.yml`; na indução, falhas na `stream-failures` e o shard seguindo |
-| V12 | Tempos reais de DLQ, inclusive a fila `issues` | §13 (`RedrivePolicy`); §14 | Sonda V12 | Chegada à DLQ cerca de 450 s depois da primeira entrega; dois reenvios e descarte como `DEAD_LETTER` |
-| V13 | Visibilidade × timeout | §13; §14 | Script V13 | Valores da tabela de filas do §12; deploy sem `InvalidParameterValueException` |
-| V14 | Issuer do Cognito | §13 (`iss` do Cognito); §14 | Script V14 | `iss` igual ao `JWT_ISSUER`; 200 no `/v1/me` com access token; 401 com ID token e sem token |
-| V15 | Disparo, `AlarmActions` e recuperação dos alarmes, inclusive os da `issues-dlq` | §13 (CloudFormation de alarmes); §14 | Scripts V15 | 8 e 16 alarmes com o tópico; e-mail na entrada em `ALARM`; volta a `OK` |
-| V16 | Extração das métricas EMF | §13; §14 | Script V16 | Métricas nos namespaces `mmda/quote-solution` e `mmda/provider-solution` com `Stage=dev` |
-| V17 | `StopExecution` | §13; §14 (T20) | Caso T20 | Execução `ABORTED` sem eventos depois; versão `PARTIAL` finalizada pelo `reconciler` na primeira tentativa |
-| V18 | 429 do API Gateway | §11; §14 | Script V18 | 429 com o limite temporário; `Retry-After` e corpo registrados contra o `TooManyRequests` do contrato |
-| V19 | Grupos reais do Cognito | §14 (T18, T29 e T30) | Casos T18, T29 e T30 | Casos passam: 404 pela organização, uma vencedora por rodada e 403 sem a permissão |
-| V20 | `ISSUE#` no formato anterior ao ADR 0015 | §4; §14 | Script V20 | Nenhum item |
+| ID  | Item                                                                            | Origem                                                                                      | Como executar                        | Resultado esperado                                                                                                                         |
+| --- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| V01 | Parâmetros e variáveis do `dev`                                                 | §12; §14 (params do stage `dev`)                                                            | Script V01                           | Nenhuma função com `AWS_ENDPOINT_URL*`; `JWT_ISSUER` com o issuer da AWS; máquina com 360 s, enriquecimento com 20 s e seguradora com 90 s |
+| V02 | Agendamento e papel do `reconciler`                                             | §2 (permissões do M4 e do M5); §14 (IAM das permissões novas)                               | Script V02                           | Dois agendamentos `ENABLED`; um ciclo por minuto no log de cada `reconciler`                                                               |
+| V03 | Task token                                                                      | §13 (`waitForTaskToken`; IAM do `serverless-step-functions`); §14                           | Casos T01 e T04; script V03          | Execuções `SUCCEEDED`; `ResolveEnrichment` e `RequestInsurerQuote` concluídos; nenhum `AccessDenied` no histórico                          |
+| V04 | Callbacks, inclusive corpo fora do ASCII                                        | §13 (assinatura pelo `AWS_PROXY`); §14                                                      | Casos T07, T08, T11 e T12; sonda V04 | Casos passam; a sonda recebe 400 `INVALID_CALLBACK` com a assinatura certa e 401 `INVALID_SIGNATURE` com a errada                          |
+| V05 | IAM efetivo e `AccessDenied`                                                    | §2; §13 (papéis próprios da provider); §14 (`IssueProjectorRole`, API e `reconciler`)       | `quote-e2e` completo; script V05     | Nenhuma ocorrência nos 15 grupos de log; os 8 mapeamentos de evento `Enabled`                                                              |
+| V06 | Timeout por estado                                                              | §13 (`TimeoutSeconds` por estado); §14 (timeouts)                                           | Caso T08; script V03                 | `TaskTimedOut` em `RequestInsurerQuote` depois de 90 s, seguido de `RecordInsurerTimeout`; seguradora `TIMED_OUT`                          |
+| V07 | Timeout da máquina                                                              | §13 (`TimeoutSeconds` da máquina); §14 (timeouts)                                           | Deploy temporário V07                | Execução `TIMED_OUT` sem passar por `Catch`; versão finalizada pelo `reconciler` com `WORKFLOW_FAILED`                                     |
+| V08 | Vazão do ESM de SQS e `JOIN` ponta a ponta                                      | §13; §14                                                                                    | Caso T06 com 100 cotações            | T06 passa com um líder (`MISS=1`); `JOIN` aparece nas decisões                                                                             |
+| V09 | `TransactionConflict`                                                           | §13; §14 (100 pedidos na liderança e corrida do T29)                                        | Durante o V08 e o caso T29; B1       | Conflitos absorvidos pelas repetições; nenhum 503 no T29                                                                                   |
+| V10 | Vazão do ESM de stream                                                          | §13                                                                                         | Script V10, depois do `quote-e2e`    | Atraso entre `createdAt` e `publishedAt` do outbox medido e registrado                                                                     |
+| V11 | Retry e divisão de lote do stream                                               | §13 (retry padrão; `MaximumRetryAttempts`, `BisectBatchOnFunctionError` e `onFailure`); §14 | Script V11                           | Configuração igual à do `serverless.yml`; na indução, falhas na `stream-failures` e o shard seguindo                                       |
+| V12 | Tempos reais de DLQ, inclusive a fila `issues`                                  | §13 (`RedrivePolicy`); §14                                                                  | Sonda V12                            | Chegada à DLQ cerca de 450 s depois da primeira entrega; dois reenvios e descarte como `DEAD_LETTER`                                       |
+| V13 | Visibilidade × timeout                                                          | §13; §14                                                                                    | Script V13                           | Valores da tabela de filas do §12; deploy sem `InvalidParameterValueException`                                                             |
+| V14 | Issuer do Cognito                                                               | §13 (`iss` do Cognito); §14                                                                 | Script V14                           | `iss` igual ao `JWT_ISSUER`; 200 no `/v1/me` com access token; 401 com ID token e sem token                                                |
+| V15 | Disparo, `AlarmActions` e recuperação dos alarmes, inclusive os da `issues-dlq` | §13 (CloudFormation de alarmes); §14                                                        | Scripts V15                          | 8 e 16 alarmes com o tópico; e-mail na entrada em `ALARM`; volta a `OK`                                                                    |
+| V16 | Extração das métricas EMF                                                       | §13; §14                                                                                    | Script V16                           | Métricas nos namespaces `mmda/quote-solution` e `mmda/provider-solution` com `Stage=dev`                                                   |
+| V17 | `StopExecution`                                                                 | §13; §14 (T20)                                                                              | Caso T20                             | Execução `ABORTED` sem eventos depois; versão `PARTIAL` finalizada pelo `reconciler` na primeira tentativa                                 |
+| V18 | 429 do API Gateway                                                              | §11; §14                                                                                    | Script V18                           | 429 com o limite temporário; `Retry-After` e corpo registrados contra o `TooManyRequests` do contrato                                      |
+| V19 | Grupos reais do Cognito                                                         | §14 (T18, T29 e T30)                                                                        | Casos T18, T29 e T30                 | Casos passam: 404 pela organização, uma vencedora por rodada e 403 sem a permissão                                                         |
+| V20 | `ISSUE#` no formato anterior ao ADR 0015                                        | §4; §14                                                                                     | Script V20                           | Nenhum item                                                                                                                                |
 
 ### 4.3 Detalhes
 
@@ -858,13 +858,13 @@ Acompanhe com o B1, numa janela de 40 minutos: `quote-solution-dev-resume` e
 `quote-solution-dev-issueProjector` com `'"failed and will be redelivered"'`, e
 `quote-solution-dev-reconciler` com `'"dead letter"'`.
 
-| Etapa | `results` | `issues` |
-|---|---|---|
-| Recebimentos por passagem | 5, um a cada 90 s mais o polling | 5, um a cada 90 s mais o polling |
-| Chegada à DLQ | Cerca de 450 s depois da primeira entrega | Cerca de 450 s depois da primeira entrega |
-| Reenvio pelo `reconciler` | No ciclo seguinte, `redriven as attempt 2`, depois `attempt 3` | Igual |
-| Descarte | Na terceira chegada, `discarded at attempt 3 as DEAD_LETTER` | Igual |
-| Total | Cerca de 25 min | Cerca de 25 min |
+| Etapa                     | `results`                                                      | `issues`                                  |
+| ------------------------- | -------------------------------------------------------------- | ----------------------------------------- |
+| Recebimentos por passagem | 5, um a cada 90 s mais o polling                               | 5, um a cada 90 s mais o polling          |
+| Chegada à DLQ             | Cerca de 450 s depois da primeira entrega                      | Cerca de 450 s depois da primeira entrega |
+| Reenvio pelo `reconciler` | No ciclo seguinte, `redriven as attempt 2`, depois `attempt 3` | Igual                                     |
+| Descarte                  | Na terceira chegada, `discarded at attempt 3 as DEAD_LETTER`   | Igual                                     |
+| Total                     | Cerca de 25 min                                                | Cerca de 25 min                           |
 
 Registre os intervalos reais entre recebimentos e a hora de cada chegada à DLQ. A ocorrência
 `DEAD_LETTER` fica `OPEN` na tabela da quote, sem organização, e não aparece na listagem da API. Os
@@ -1192,28 +1192,28 @@ resultado é zero por construção; a conferência importa em qualquer stage da 
 
 ### 4.4 Registro dos resultados
 
-| ID | Data | Resultado | Evidência | Pendência |
-|---|---|---|---|---|
-| V01 | | | | |
-| V02 | | | | |
-| V03 | | | | |
-| V04 | | | | |
-| V05 | | | | |
-| V06 | | | | |
-| V07 | | | | |
-| V08 | | | | |
-| V09 | | | | |
-| V10 | | | | |
-| V11 | | | | |
-| V12 | | | | |
-| V13 | | | | |
-| V14 | | | | |
-| V15 | | | | |
-| V16 | | | | |
-| V17 | | | | |
-| V18 | | | | |
-| V19 | | | | |
-| V20 | | | | |
+| ID  | Data | Resultado | Evidência | Pendência |
+| --- | ---- | --------- | --------- | --------- |
+| V01 |      |           |           |           |
+| V02 |      |           |           |           |
+| V03 |      |           |           |           |
+| V04 |      |           |           |           |
+| V05 |      |           |           |           |
+| V06 |      |           |           |           |
+| V07 |      |           |           |           |
+| V08 |      |           |           |           |
+| V09 |      |           |           |           |
+| V10 |      |           |           |           |
+| V11 |      |           |           |           |
+| V12 |      |           |           |           |
+| V13 |      |           |           |           |
+| V14 |      |           |           |           |
+| V15 |      |           |           |           |
+| V16 |      |           |           |           |
+| V17 |      |           |           |           |
+| V18 |      |           |           |           |
+| V19 |      |           |           |           |
+| V20 |      |           |           |           |
 
 ## 5. `quote-e2e` contra o stage `dev`
 
@@ -1229,27 +1229,27 @@ unset AWS_ENDPOINT_URL AWS_ENDPOINT_URL_S3 AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_K
 mvn -B verify -Pe2e,e2e-aws -pl quote-solution/e2e
 ```
 
-| Propriedade | Padrão | Uso |
-|---|---|---|
-| `e2e.stage` | `dev` no perfil `e2e-aws` | Prefixo dos nomes das stacks, tabelas, filas, segredos e grupos de log |
-| `e2e.region` | `us-east-1` | Vai para `aws.region` |
-| `e2e.concurrentQuotes` | 12 | Cotações do T06; 100 no V08 |
-| `it.test` | todos | Um caso ou um grupo, como `QuoteFlowE2E#t06*` |
+| Propriedade            | Padrão                    | Uso                                                                    |
+| ---------------------- | ------------------------- | ---------------------------------------------------------------------- |
+| `e2e.stage`            | `dev` no perfil `e2e-aws` | Prefixo dos nomes das stacks, tabelas, filas, segredos e grupos de log |
+| `e2e.region`           | `us-east-1`               | Vai para `aws.region`                                                  |
+| `e2e.concurrentQuotes` | 12                        | Cotações do T06; 100 no V08                                            |
+| `it.test`              | todos                     | Um caso ou um grupo, como `QuoteFlowE2E#t06*`                          |
 
 Pré-condições: as três stacks implantadas e a credencial do e2e com as permissões abaixo. O próprio
 `quote-e2e` cria os usuários do Cognito.
 
-| Serviço | Ações | Recursos |
-|---|---|---|
-| DynamoDB | `GetItem`, `PutItem`, `UpdateItem`, `DeleteItem`, `Query`, `Scan` | `quote-solution-dev-quotes` (e o índice `gsi1`), `provider-solution-dev-queries` |
-| SQS | `GetQueueUrl`, `GetQueueAttributes`, `SendMessage` | Filas e DLQs `quote-solution-dev-*` e `provider-solution-dev-*` |
-| EventBridge | `PutEvents` | `platform-dev-events` |
-| CloudWatch Logs | `FilterLogEvents` | `/aws/lambda/quote-solution-dev-*` e `/aws/lambda/provider-solution-dev-*` |
-| Step Functions | `ListStateMachines`, `ListExecutions`, `DescribeExecution`, `StopExecution` | `quote-solution-dev-quote-flow` e as execuções dela |
-| Secrets Manager | `GetSecretValue` | `provider-solution/dev/query-key-secret`, `provider-solution/dev/callback-secret` |
-| S3 | `GetObject` (o `HeadObject`), `ListBucket` | `provider-solution-dev-payloads` |
-| API Gateway | `GET` | `/restapis` |
-| Cognito | `ListUserPools`, `ListUserPoolClients`, `ListGroups`, `CreateGroup`, `AdminGetUser`, `AdminCreateUser`, `AdminSetUserPassword`, `AdminListGroupsForUser`, `AdminRemoveUserFromGroup`, `AdminAddUserToGroup` | `quote-solution-dev-users` |
+| Serviço         | Ações                                                                                                                                                                                                       | Recursos                                                                          |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| DynamoDB        | `GetItem`, `PutItem`, `UpdateItem`, `DeleteItem`, `Query`, `Scan`                                                                                                                                           | `quote-solution-dev-quotes` (e o índice `gsi1`), `provider-solution-dev-queries`  |
+| SQS             | `GetQueueUrl`, `GetQueueAttributes`, `SendMessage`                                                                                                                                                          | Filas e DLQs `quote-solution-dev-*` e `provider-solution-dev-*`                   |
+| EventBridge     | `PutEvents`                                                                                                                                                                                                 | `platform-dev-events`                                                             |
+| CloudWatch Logs | `FilterLogEvents`                                                                                                                                                                                           | `/aws/lambda/quote-solution-dev-*` e `/aws/lambda/provider-solution-dev-*`        |
+| Step Functions  | `ListStateMachines`, `ListExecutions`, `DescribeExecution`, `StopExecution`                                                                                                                                 | `quote-solution-dev-quote-flow` e as execuções dela                               |
+| Secrets Manager | `GetSecretValue`                                                                                                                                                                                            | `provider-solution/dev/query-key-secret`, `provider-solution/dev/callback-secret` |
+| S3              | `GetObject` (o `HeadObject`), `ListBucket`                                                                                                                                                                  | `provider-solution-dev-payloads`                                                  |
+| API Gateway     | `GET`                                                                                                                                                                                                       | `/restapis`                                                                       |
+| Cognito         | `ListUserPools`, `ListUserPoolClients`, `ListGroups`, `CreateGroup`, `AdminGetUser`, `AdminCreateUser`, `AdminSetUserPassword`, `AdminListGroupsForUser`, `AdminRemoveUserFromGroup`, `AdminAddUserToGroup` | `quote-solution-dev-users`                                                        |
 
 O que muda em relação ao Floci:
 
@@ -1281,20 +1281,20 @@ então essa é a única tag por stack.
 
 ### 6.2 O que gera custo
 
-| Serviço | O que gera custo neste laboratório | Custo com as stacks ociosas |
-|---|---|---|
-| AWS Lambda | Invocações e GB-s das 15 funções, todas com 1.769 MB | Sim: os dois `reconciler` rodam a cada minuto |
-| Amazon EventBridge Scheduler | Disparos dos dois agendamentos | Sim: um por minuto em cada |
-| Amazon SQS | Mensagens e as chamadas `ReceiveMessage` dos 6 mapeamentos de evento | Sim: os mapeamentos consultam as filas sem parar |
-| AWS Step Functions | Transições de estado das execuções padrão | Não |
-| Amazon DynamoDB | Requisições sob demanda e armazenamento das 3 tabelas | Sim: as consultas dos `reconciler` a cada minuto e o armazenamento |
-| Amazon API Gateway | Requisições às duas APIs REST | Não |
-| Amazon EventBridge | Eventos publicados no barramento `platform-dev-events` | Não |
-| AWS Secrets Manager | 3 segredos por mês e as leituras | Sim |
-| Amazon CloudWatch | 24 alarmes (os de metric math contam por métrica), métricas EMF, ingestão e armazenamento de logs sem retenção definida | Sim: alarmes, métricas dos `reconciler` e logs guardados |
-| Amazon S3 | Bucket `provider-solution-dev-payloads` e o bucket de deploy do Serverless, versionado | Só armazenamento |
-| Amazon SNS | Notificações por e-mail | Não |
-| Amazon Cognito | Usuários ativos no mês | Não |
+| Serviço                      | O que gera custo neste laboratório                                                                                      | Custo com as stacks ociosas                                        |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| AWS Lambda                   | Invocações e GB-s das 15 funções, todas com 1.769 MB                                                                    | Sim: os dois `reconciler` rodam a cada minuto                      |
+| Amazon EventBridge Scheduler | Disparos dos dois agendamentos                                                                                          | Sim: um por minuto em cada                                         |
+| Amazon SQS                   | Mensagens e as chamadas `ReceiveMessage` dos 6 mapeamentos de evento                                                    | Sim: os mapeamentos consultam as filas sem parar                   |
+| AWS Step Functions           | Transições de estado das execuções padrão                                                                               | Não                                                                |
+| Amazon DynamoDB              | Requisições sob demanda e armazenamento das 3 tabelas                                                                   | Sim: as consultas dos `reconciler` a cada minuto e o armazenamento |
+| Amazon API Gateway           | Requisições às duas APIs REST                                                                                           | Não                                                                |
+| Amazon EventBridge           | Eventos publicados no barramento `platform-dev-events`                                                                  | Não                                                                |
+| AWS Secrets Manager          | 3 segredos por mês e as leituras                                                                                        | Sim                                                                |
+| Amazon CloudWatch            | 24 alarmes (os de metric math contam por métrica), métricas EMF, ingestão e armazenamento de logs sem retenção definida | Sim: alarmes, métricas dos `reconciler` e logs guardados           |
+| Amazon S3                    | Bucket `provider-solution-dev-payloads` e o bucket de deploy do Serverless, versionado                                  | Só armazenamento                                                   |
+| Amazon SNS                   | Notificações por e-mail                                                                                                 | Não                                                                |
+| Amazon Cognito               | Usuários ativos no mês                                                                                                  | Não                                                                |
 
 ### 6.3 Onde ver
 
@@ -1333,14 +1333,14 @@ As datas são o início e o fim (exclusivo) do período.
 
 Anote as janelas de cada atividade, para casar com os custos diários:
 
-| Data | Atividade | Início e fim (UTC) | Custo do dia por serviço | Observação |
-|---|---|---|---|---|
-| | Deploy das três stacks | | | |
-| | Stacks ociosas por 24 h | | | |
-| | `quote-e2e` completo | | | |
-| | T06 com 100 cotações | | | |
-| | Sondas V11, V12, V15 e V18 | | | |
-| | Remoção | | | |
+| Data | Atividade                  | Início e fim (UTC) | Custo do dia por serviço | Observação |
+| ---- | -------------------------- | ------------------ | ------------------------ | ---------- |
+|      | Deploy das três stacks     |                    |                          |            |
+|      | Stacks ociosas por 24 h    |                    |                          |            |
+|      | `quote-e2e` completo       |                    |                          |            |
+|      | T06 com 100 cotações       |                    |                          |            |
+|      | Sondas V11, V12, V15 e V18 |                    |                          |            |
+|      | Remoção                    |                    |                          |            |
 
 ## 7. Limpeza do laboratório
 
@@ -1348,16 +1348,16 @@ Anote as janelas de cada atividade, para casar com os custos diários:
 
 Nenhum recurso declara `DeletionPolicy` ou `UpdateReplacePolicy`. O que acontece no `sls remove`:
 
-| Recurso | No `sls remove` |
-|---|---|
-| Tabelas `quote-solution-dev-quotes`, `provider-solution-dev-queries` e `-simulators` | Apagadas com os dados |
-| Bucket `provider-solution-dev-payloads` | A remoção falha se houver objetos; esvazie antes |
-| Filas e DLQs (retenção de 14 dias nas DLQs) | Apagadas com as mensagens |
-| Segredos | Removidos com a stack; confira se ficaram agendados para exclusão |
-| Grupos de log das funções | Criados pelo Serverless na stack e removidos com ela |
-| User pool | Removido com usuários e grupos |
-| Bucket de deploy do Serverless e o parâmetro SSM | Ficam: são compartilhados por todos os serviços da região |
-| Backups sob demanda do DynamoDB | Ficam até serem apagados, com custo de armazenamento |
+| Recurso                                                                              | No `sls remove`                                                   |
+| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| Tabelas `quote-solution-dev-quotes`, `provider-solution-dev-queries` e `-simulators` | Apagadas com os dados                                             |
+| Bucket `provider-solution-dev-payloads`                                              | A remoção falha se houver objetos; esvazie antes                  |
+| Filas e DLQs (retenção de 14 dias nas DLQs)                                          | Apagadas com as mensagens                                         |
+| Segredos                                                                             | Removidos com a stack; confira se ficaram agendados para exclusão |
+| Grupos de log das funções                                                            | Criados pelo Serverless na stack e removidos com ela              |
+| User pool                                                                            | Removido com usuários e grupos                                    |
+| Bucket de deploy do Serverless e o parâmetro SSM                                     | Ficam: são compartilhados por todos os serviços da região         |
+| Backups sob demanda do DynamoDB                                                      | Ficam até serem apagados, com custo de armazenamento              |
 
 Para guardar os dados das tabelas depois da remoção, crie um backup sob demanda antes:
 

@@ -8,41 +8,43 @@ em Quarkus, acionada pelos eventos da primeira; e a plataforma de cotação de s
 
 ## Sumário
 
-- [Soluções](#soluções)
-- [Documentos](#documentos)
-- [Contratos](#contratos)
-- [Decisões](#decisões)
-- [Convenções](#convenções)
-- [Diagramas](#diagramas)
-- [Como validar](#como-validar)
+1. [Documentação](#documentação)
+   1. [Sumário](#sumário)
+   2. [Soluções](#soluções)
+   3. [Documentos](#documentos)
+   4. [Contratos](#contratos)
+   5. [Decisões](#decisões)
+   6. [Convenções](#convenções)
+   7. [Diagramas](#diagramas)
+   8. [Como validar](#como-validar)
 
 ## Soluções
 
 Cada solução tem um documento principal em `<solução>/docs/README.md`, com funções, API, eventos,
 persistência, IAM, configuração, execução no Floci, divergências conhecidas e os diagramas PlantUML dela.
 
-| Documento | Para que serve |
-|---|---|
-| [Cotação](cotacao.md) | Entrada da plataforma de cotação: módulos, capacidades, contrato com os clientes, C4 de contexto e ADRs |
-| [quote-solution](../quote-solution/docs/README.md) | API de produto, workflow da versão, consolidação, seleção, reconciliação e operações da cotação |
-| [provider-solution](../provider-solution/docs/README.md) | Enriquecimento, chamadas às seguradoras, callbacks, outbox, reconciliação, DLQs e simuladores |
-| [backoffice](../backoffice/README.md) | Painel Angular da cotação: execução no Floci e no `dev`, telas, comportamentos do contrato, testes e cobertura do PRD de frontend |
-| [sample-solution](../sample-solution/docs/README.md) | Solução de referência em Spring: requisição, `request-flow`, DLQ e reprocessamento |
-| [receipt-solution](../receipt-solution/docs/README.md) | Emissão idempotente de comprovantes em Quarkus, acionada pelo `RequestCompleted` |
-| [Plataforma](../platform/docs/README.md) | Barramento `platform/events`, parents Maven, `spring-aws` e ordem de implantação |
+| Documento                                                | Para que serve                                                                                                                    |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| [Cotação](cotacao.md)                                    | Entrada da plataforma de cotação: módulos, capacidades, contrato com os clientes, C4 de contexto e ADRs                           |
+| [quote-solution](../quote-solution/docs/README.md)       | API de produto, workflow da versão, consolidação, seleção, reconciliação e operações da cotação                                   |
+| [provider-solution](../provider-solution/docs/README.md) | Enriquecimento, chamadas às seguradoras, callbacks, outbox, reconciliação, DLQs e simuladores                                     |
+| [backoffice](../backoffice/README.md)                    | Painel Angular da cotação: execução no Floci e no `dev`, telas, comportamentos do contrato, testes e cobertura do PRD de frontend |
+| [sample-solution](../sample-solution/docs/README.md)     | Solução de referência em Spring: requisição, `request-flow`, DLQ e reprocessamento                                                |
+| [receipt-solution](../receipt-solution/docs/README.md)   | Emissão idempotente de comprovantes em Quarkus, acionada pelo `RequestCompleted`                                                  |
+| [Plataforma](../platform/docs/README.md)                 | Barramento `platform/events`, parents Maven, `spring-aws` e ordem de implantação                                                  |
 
 ## Documentos
 
-| Documento | Para que serve |
-|---|---|
-| [Guia do código](guia-do-codigo.md) | Como cada Lambda da `sample-solution` e da `receipt-solution` sobe, como os componentes são registrados e por onde a requisição passa |
-| [Arquitetura](arquitetura.md) | Contexto, contêineres, módulos, Lambdas, recursos AWS, configuração e ambiente local da `sample-solution` e da `receipt-solution` |
-| [Fluxos](fluxos.md) | Máquina de estado e sequência dos caminhos de sucesso, falha e reprocessamento da `sample-solution` e da `receipt-solution` |
-| [Plataforma de cotação: desenho técnico](plataforma-de-cotacao.md) | Módulos, recursos, eventos, tabelas, máquina de estado, funções, fluxos, falhas, simuladores, autenticação, parâmetros por stage, limites do Floci e testes por marco da `quote-solution` e da `provider-solution` |
-| [Implantação e verificação no stage `dev` da AWS](implantacao-aws-dev.md) | Implantação da plataforma de cotação numa conta AWS e roteiro de verificação do que o Floci não reproduz |
-| [Testes](testes.md) | Níveis de teste, o que cada classe cobre, como rodar e os números das rodadas de fechamento |
-| [PRD de backend](prds/prd-cotacao-seguros-backend-v2.md) | Requisitos da plataforma de cotação no backend |
-| [PRD de frontend](prds/prd-cotacao-seguros-frontend-v2.md) | Requisitos do frontend da plataforma de cotação |
+| Documento                                                                 | Para que serve                                                                                                                                                                                                     |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [Guia do código](guia-do-codigo.md)                                       | Como cada Lambda da `sample-solution` e da `receipt-solution` sobe, como os componentes são registrados e por onde a requisição passa                                                                              |
+| [Arquitetura](arquitetura.md)                                             | Contexto, contêineres, módulos, Lambdas, recursos AWS, configuração e ambiente local da `sample-solution` e da `receipt-solution`                                                                                  |
+| [Fluxos](fluxos.md)                                                       | Máquina de estado e sequência dos caminhos de sucesso, falha e reprocessamento da `sample-solution` e da `receipt-solution`                                                                                        |
+| [Plataforma de cotação: desenho técnico](plataforma-de-cotacao.md)        | Módulos, recursos, eventos, tabelas, máquina de estado, funções, fluxos, falhas, simuladores, autenticação, parâmetros por stage, limites do Floci e testes por marco da `quote-solution` e da `provider-solution` |
+| [Implantação e verificação no stage `dev` da AWS](implantacao-aws-dev.md) | Implantação da plataforma de cotação numa conta AWS e roteiro de verificação do que o Floci não reproduz                                                                                                           |
+| [Testes](testes.md)                                                       | Níveis de teste, o que cada classe cobre, como rodar e os números das rodadas de fechamento                                                                                                                        |
+| [PRD de backend](prds/prd-cotacao-seguros-backend-v2.md)                  | Requisitos da plataforma de cotação no backend                                                                                                                                                                     |
+| [PRD de frontend](prds/prd-cotacao-seguros-frontend-v2.md)                | Requisitos do frontend da plataforma de cotação                                                                                                                                                                    |
 
 ## Contratos
 
@@ -50,34 +52,34 @@ Cada solução tem a pasta `contracts/<solução>/`, com um `README.md` que diz 
 quem produz, quem consome e como os testes o conferem. A API de produto da cotação fica na raiz de
 `contracts/`, no caminho fixado pelos dois PRDs.
 
-| Contratos | Arquivos |
-|---|---|
-| [`sample-solution`](../contracts/sample-solution/README.md) | [OpenAPI 3.1](../contracts/sample-solution/openapi.yaml) do `POST /requests` e [AsyncAPI 3.1](../contracts/sample-solution/asyncapi.yaml) do estado entre os passos, do SNS, do `RequestCompleted`, das filas `audit` e `dlq` e da invocação do reprocessamento |
-| [`receipt-solution`](../contracts/receipt-solution/README.md) | [OpenAPI 3.1](../contracts/receipt-solution/openapi.yaml) do `GET /receipts/{requestId}` e do `POST /receipts` e [AsyncAPI 3.1](../contracts/receipt-solution/asyncapi.yaml) do `RequestCompleted` consumido e do `ReceiptIssued` publicado |
-| [`provider-solution`](../contracts/provider-solution/README.md) | [OpenAPI 3.1](../contracts/provider-solution/openapi.yaml) do `POST /v1/providers/{provider}/callbacks` e [AsyncAPI 3.1](../contracts/provider-solution/asyncapi.yaml) dos eventos publicados no barramento da plataforma |
-| [`quote-solution`](../contracts/quote-solution/README.md) | [AsyncAPI 3.1](../contracts/quote-solution/asyncapi.yaml) dos eventos publicados e consumidos no barramento da plataforma |
-| API de produto | [`contracts/openapi.yaml`](../contracts/openapi.yaml) (OpenAPI 3.1, compartilhado com o [backoffice](../backoffice/README.md), que gera o cliente a partir dele) e [`contracts/fixtures/`](../contracts/fixtures), usadas também nos testes do backoffice |
+| Contratos                                                       | Arquivos                                                                                                                                                                                                                                                        |
+| --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`sample-solution`](../contracts/sample-solution/README.md)     | [OpenAPI 3.1](../contracts/sample-solution/openapi.yaml) do `POST /requests` e [AsyncAPI 3.1](../contracts/sample-solution/asyncapi.yaml) do estado entre os passos, do SNS, do `RequestCompleted`, das filas `audit` e `dlq` e da invocação do reprocessamento |
+| [`receipt-solution`](../contracts/receipt-solution/README.md)   | [OpenAPI 3.1](../contracts/receipt-solution/openapi.yaml) do `GET /receipts/{requestId}` e do `POST /receipts` e [AsyncAPI 3.1](../contracts/receipt-solution/asyncapi.yaml) do `RequestCompleted` consumido e do `ReceiptIssued` publicado                     |
+| [`provider-solution`](../contracts/provider-solution/README.md) | [OpenAPI 3.1](../contracts/provider-solution/openapi.yaml) do `POST /v1/providers/{provider}/callbacks` e [AsyncAPI 3.1](../contracts/provider-solution/asyncapi.yaml) dos eventos publicados no barramento da plataforma                                       |
+| [`quote-solution`](../contracts/quote-solution/README.md)       | [AsyncAPI 3.1](../contracts/quote-solution/asyncapi.yaml) dos eventos publicados e consumidos no barramento da plataforma                                                                                                                                       |
+| API de produto                                                  | [`contracts/openapi.yaml`](../contracts/openapi.yaml) (OpenAPI 3.1, compartilhado com o [backoffice](../backoffice/README.md), que gera o cliente a partir dele) e [`contracts/fixtures/`](../contracts/fixtures), usadas também nos testes do backoffice       |
 
 ## Decisões
 
-| ADR | Decisão |
-|---|---|
-| [0001](decisoes/0001-serverless-framework-e-floci.md) | Serverless Framework v4 com Floci como emulador local |
-| [0002](decisoes/0002-spring-mvc-e-spring-cloud-function.md) | Spring MVC na API e Spring Cloud Function nos passos |
-| [0003](decisoes/0003-spring-boot-3-5.md) | Spring Boot 3.5 pela adoção de mercado (substituída pelo 0009) |
-| [0004](decisoes/0004-sem-graalvm-native.md) | Sem imagem nativa GraalVM |
-| [0005](decisoes/0005-clients-sincronos-com-crt.md) | Clients síncronos do AWS SDK com CRT e SDKs opcionais (o item do jar do `aws-crt` foi substituído pelo 0012) |
-| [0006](decisoes/0006-payload-no-s3.md) | Payload no S3, com só a chave na máquina de estado |
-| [0007](decisoes/0007-dlq-e-reprocessamento.md) | Falhas para a DLQ e reprocessamento com limite de tentativas |
-| [0008](decisoes/0008-aws-endpoint-url-s3-no-offline.md) | `AWS_ENDPOINT_URL_S3` explícito para o serverless-offline |
-| [0009](decisoes/0009-spring-boot-4-0.md) | Spring Boot 4.0 com Jackson 3 |
-| [0010](decisoes/0010-raiz-neutra-e-parents-por-framework.md) | Raiz neutra e um parent por framework (Spring e Quarkus) |
-| [0011](decisoes/0011-integracao-entre-solucoes-por-eventbridge.md) | Soluções se acionam pelo EventBridge, com a máquina de estado como alvo nativo |
-| [0012](decisoes/0012-aws-crt-com-nativos-linux-no-pacote.md) | Pacote da Lambda com os jars Linux do `aws-crt` (substitui um item do 0005) |
-| [0013](decisoes/0013-barramento-da-plataforma.md) | Barramento de eventos da plataforma, em stack própria |
-| [0014](decisoes/0014-cotacao-em-duas-solucoes-e-task-token.md) | Cotação em duas soluções, com o task token restrito à `quote-solution` |
-| [0015](decisoes/0015-modelo-dynamodb-e-outbox-da-cotacao.md) | Uma tabela por solução, outbox publicada por DynamoDB Streams |
-| [0016](decisoes/0016-backoffice-angular-e-login-cognito.md) | Backoffice em Angular com o template do marketplace e login no user pool da stack |
+| ADR                                                                | Decisão                                                                                                      |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| [0001](decisoes/0001-serverless-framework-e-floci.md)              | Serverless Framework v4 com Floci como emulador local                                                        |
+| [0002](decisoes/0002-spring-mvc-e-spring-cloud-function.md)        | Spring MVC na API e Spring Cloud Function nos passos                                                         |
+| [0003](decisoes/0003-spring-boot-3-5.md)                           | Spring Boot 3.5 pela adoção de mercado (substituída pelo 0009)                                               |
+| [0004](decisoes/0004-sem-graalvm-native.md)                        | Sem imagem nativa GraalVM                                                                                    |
+| [0005](decisoes/0005-clients-sincronos-com-crt.md)                 | Clients síncronos do AWS SDK com CRT e SDKs opcionais (o item do jar do `aws-crt` foi substituído pelo 0012) |
+| [0006](decisoes/0006-payload-no-s3.md)                             | Payload no S3, com só a chave na máquina de estado                                                           |
+| [0007](decisoes/0007-dlq-e-reprocessamento.md)                     | Falhas para a DLQ e reprocessamento com limite de tentativas                                                 |
+| [0008](decisoes/0008-aws-endpoint-url-s3-no-offline.md)            | `AWS_ENDPOINT_URL_S3` explícito para o serverless-offline                                                    |
+| [0009](decisoes/0009-spring-boot-4-0.md)                           | Spring Boot 4.0 com Jackson 3                                                                                |
+| [0010](decisoes/0010-raiz-neutra-e-parents-por-framework.md)       | Raiz neutra e um parent por framework (Spring e Quarkus)                                                     |
+| [0011](decisoes/0011-integracao-entre-solucoes-por-eventbridge.md) | Soluções se acionam pelo EventBridge, com a máquina de estado como alvo nativo                               |
+| [0012](decisoes/0012-aws-crt-com-nativos-linux-no-pacote.md)       | Pacote da Lambda com os jars Linux do `aws-crt` (substitui um item do 0005)                                  |
+| [0013](decisoes/0013-barramento-da-plataforma.md)                  | Barramento de eventos da plataforma, em stack própria                                                        |
+| [0014](decisoes/0014-cotacao-em-duas-solucoes-e-task-token.md)     | Cotação em duas soluções, com o task token restrito à `quote-solution`                                       |
+| [0015](decisoes/0015-modelo-dynamodb-e-outbox-da-cotacao.md)       | Uma tabela por solução, outbox publicada por DynamoDB Streams                                                |
+| [0016](decisoes/0016-backoffice-angular-e-login-cognito.md)        | Backoffice em Angular com o template do marketplace e login no user pool da stack                            |
 
 Um novo ADR recebe o próximo número, com as seções Status, Data, Contexto, Decisão, Consequências e
 Alternativas consideradas. Uma decisão substituída continua no histórico, com o status apontando

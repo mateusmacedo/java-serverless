@@ -12,41 +12,43 @@ Este arquivo é o ponto de entrada do contexto. O detalhe de cada módulo fica n
 
 ## Sumário
 
-- [Módulos](#módulos)
-- [Capacidades](#capacidades)
-- [Contrato com os clientes](#contrato-com-os-clientes)
-- [Diagrama de contexto](#diagrama-de-contexto)
-- [Decisões relacionadas](#decisões-relacionadas)
-- [Diagramas](#diagramas)
-- [Desenho técnico](#desenho-técnico)
+1. [Cotação de seguros](#cotação-de-seguros)
+   1. [Sumário](#sumário)
+   2. [Módulos](#módulos)
+   3. [Capacidades](#capacidades)
+   4. [Contrato com os clientes](#contrato-com-os-clientes)
+   5. [Diagrama de contexto](#diagrama-de-contexto)
+   6. [Decisões relacionadas](#decisões-relacionadas)
+   7. [Diagramas](#diagramas)
+   8. [Desenho técnico](#desenho-técnico)
 
 ## Módulos
 
-| Módulo | Tecnologia | Papel | Documentação |
-|---|---|---|---|
-| `platform/events` | Serverless, sem funções | Barramento `platform-<stage>-events`; sobe antes das duas soluções | [platform/docs](../platform/docs/README.md#barramento-de-eventos) e [ADR 0013](decisoes/0013-barramento-da-plataforma.md) |
-| `quote-solution` | Quarkus, Step Functions, DynamoDB | API de produto, máquina de estado `quote-flow`, regras de elegibilidade e de seleção de seguradoras, consolidação, seleção de oferta, outbox, waiters, operações e reconciliação das cotações | [quote-solution/docs](../quote-solution/docs/README.md) |
-| `provider-solution` | Spring, SQS, DynamoDB, S3 | Workers de enriquecimento e de seguradoras, reuso com liderança, quota por provedor, API de callbacks com inbox, reconciliação de consultas e simuladores de fornecedores | [provider-solution/docs](../provider-solution/docs/README.md) |
-| `backoffice` | Angular, CoreUI | Painel do PRD de frontend: lista, nova cotação, acompanhamento com polling, comparação, complementação, seleção e ocorrências, com login no user pool da `quote-solution` | [backoffice/README](../backoffice/README.md) e [ADR 0016](decisoes/0016-backoffice-angular-e-login-cognito.md) |
+| Módulo              | Tecnologia                        | Papel                                                                                                                                                                                         | Documentação                                                                                                              |
+| ------------------- | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `platform/events`   | Serverless, sem funções           | Barramento `platform-<stage>-events`; sobe antes das duas soluções                                                                                                                            | [platform/docs](../platform/docs/README.md#barramento-de-eventos) e [ADR 0013](decisoes/0013-barramento-da-plataforma.md) |
+| `quote-solution`    | Quarkus, Step Functions, DynamoDB | API de produto, máquina de estado `quote-flow`, regras de elegibilidade e de seleção de seguradoras, consolidação, seleção de oferta, outbox, waiters, operações e reconciliação das cotações | [quote-solution/docs](../quote-solution/docs/README.md)                                                                   |
+| `provider-solution` | Spring, SQS, DynamoDB, S3         | Workers de enriquecimento e de seguradoras, reuso com liderança, quota por provedor, API de callbacks com inbox, reconciliação de consultas e simuladores de fornecedores                     | [provider-solution/docs](../provider-solution/docs/README.md)                                                             |
+| `backoffice`        | Angular, CoreUI                   | Painel do PRD de frontend: lista, nova cotação, acompanhamento com polling, comparação, complementação, seleção e ocorrências, com login no user pool da `quote-solution`                     | [backoffice/README](../backoffice/README.md) e [ADR 0016](decisoes/0016-backoffice-angular-e-login-cognito.md)            |
 
 Os módulos Maven de cada solução e os pacotes Java estão no [§1 do desenho](plataforma-de-cotacao.md#1-módulos);
 os recursos de cada stack, no [§2](plataforma-de-cotacao.md#2-recursos-por-stack).
 
 ## Capacidades
 
-| Capacidade | Onde fica |
-|---|---|
-| Criar cotação e nova versão, com idempotência por `Idempotency-Key` | `quote-solution`: `POST /v1/quotes` e `POST /v1/quotes/{quoteId}/versions` |
-| Acompanhar a versão (fase, outcome, resultados por seguradora, ofertas e ações permitidas) | `quote-solution`: `GET /v1/quotes`, `GET .../versions/{version}` e `GET .../offers` |
-| Elegibilidade (`elig-1`) e seleção de seguradoras (`sel-1`) | `quote-solution`, `quote-domain` |
-| Enriquecimento obrigatório do veículo e do condutor, com reuso (`HIT`, `JOIN`, `MISS`) | Pedido e espera na `quote-solution`; consulta, reuso e quota na `provider-solution` |
-| Cotação em seguradora síncrona (alpha) e assíncrona (beta, com `202` e callback assinado) | Map da `quote-flow` na `quote-solution`; chamada, callbacks e inbox na `provider-solution` |
-| Consolidação do outcome pela precedência do PRD | `quote-solution`, `Consolidation` |
-| Seleção de oferta (intenção de proposta, uma por versão) | `quote-solution`: `POST .../selection` |
-| Catálogo do laboratório (clientes, veículos, condutores e perfis de cobertura) | `contracts/fixtures/catalog.json`, servido pela `quote-solution` em `/v1/catalog/*` e lido pelos simuladores da `provider-solution` |
-| Ocorrências operacionais e reconciliação manual de consultas | Projeção e API na `quote-solution` (`/v1/operations/*`); reconciliação na `provider-solution` |
-| Reconciliação automática, DLQs com limite de tentativas, alarmes e métricas EMF | `reconciler` de cada solução ([ADR 0007](decisoes/0007-dlq-e-reprocessamento.md)) |
-| Autenticação por access token do Cognito, com organização e permissões por grupo | `quote-solution` (user pool da stack) |
+| Capacidade                                                                                 | Onde fica                                                                                                                           |
+| ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Criar cotação e nova versão, com idempotência por `Idempotency-Key`                        | `quote-solution`: `POST /v1/quotes` e `POST /v1/quotes/{quoteId}/versions`                                                          |
+| Acompanhar a versão (fase, outcome, resultados por seguradora, ofertas e ações permitidas) | `quote-solution`: `GET /v1/quotes`, `GET .../versions/{version}` e `GET .../offers`                                                 |
+| Elegibilidade (`elig-1`) e seleção de seguradoras (`sel-1`)                                | `quote-solution`, `quote-domain`                                                                                                    |
+| Enriquecimento obrigatório do veículo e do condutor, com reuso (`HIT`, `JOIN`, `MISS`)     | Pedido e espera na `quote-solution`; consulta, reuso e quota na `provider-solution`                                                 |
+| Cotação em seguradora síncrona (alpha) e assíncrona (beta, com `202` e callback assinado)  | Map da `quote-flow` na `quote-solution`; chamada, callbacks e inbox na `provider-solution`                                          |
+| Consolidação do outcome pela precedência do PRD                                            | `quote-solution`, `Consolidation`                                                                                                   |
+| Seleção de oferta (intenção de proposta, uma por versão)                                   | `quote-solution`: `POST .../selection`                                                                                              |
+| Catálogo do laboratório (clientes, veículos, condutores e perfis de cobertura)             | `contracts/fixtures/catalog.json`, servido pela `quote-solution` em `/v1/catalog/*` e lido pelos simuladores da `provider-solution` |
+| Ocorrências operacionais e reconciliação manual de consultas                               | Projeção e API na `quote-solution` (`/v1/operations/*`); reconciliação na `provider-solution`                                       |
+| Reconciliação automática, DLQs com limite de tentativas, alarmes e métricas EMF            | `reconciler` de cada solução ([ADR 0007](decisoes/0007-dlq-e-reprocessamento.md))                                                   |
+| Autenticação por access token do Cognito, com organização e permissões por grupo           | `quote-solution` (user pool da stack)                                                                                               |
 
 ## Contrato com os clientes
 
@@ -123,20 +125,20 @@ provider; a regra de cada cenário está no [§10 do desenho](plataforma-de-cota
 
 ## Decisões relacionadas
 
-| ADR | Assunto |
-|---|---|
-| [0001](decisoes/0001-serverless-framework-e-floci.md) | Serverless Framework v4 para implantar e Floci como emulador local |
-| [0004](decisoes/0004-sem-graalvm-native.md) | Lambdas na JVM (`java21`), sem imagem nativa |
-| [0005](decisoes/0005-clients-sincronos-com-crt.md) | Clients síncronos do AWS SDK com o client HTTP CRT, nas duas soluções |
-| [0007](decisoes/0007-dlq-e-reprocessamento.md) | DLQ com reprocessamento pelo `reconciler` e limite de tentativas no atributo `dlqAttempt` |
-| [0008](decisoes/0008-aws-endpoint-url-s3-no-offline.md) | `AWS_ENDPOINT_URL_S3` explícito, com a nota de evolução do M6 na provider |
-| [0010](decisoes/0010-raiz-neutra-e-parents-por-framework.md) | `quarkus-parent` para a quote e `spring-parent` para a provider |
-| [0011](decisoes/0011-integracao-entre-solucoes-por-eventbridge.md) | Integração entre soluções por eventos; base que o 0013 adapta à plataforma |
-| [0012](decisoes/0012-aws-crt-com-nativos-linux-no-pacote.md) | Pacote da Lambda com os jars Linux do `aws-crt` |
-| [0013](decisoes/0013-barramento-da-plataforma.md) | Barramento da plataforma em stack própria, regras com filas SQS como alvo |
-| [0014](decisoes/0014-cotacao-em-duas-solucoes-e-task-token.md) | Cotação em duas soluções, com o task token restrito à `quote-solution` |
-| [0015](decisoes/0015-modelo-dynamodb-e-outbox-da-cotacao.md) | Uma tabela por solução e outbox publicada por DynamoDB Streams |
-| [0016](decisoes/0016-backoffice-angular-e-login-cognito.md) | Backoffice em Angular com o template do marketplace e login no user pool da stack |
+| ADR                                                                | Assunto                                                                                   |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| [0001](decisoes/0001-serverless-framework-e-floci.md)              | Serverless Framework v4 para implantar e Floci como emulador local                        |
+| [0004](decisoes/0004-sem-graalvm-native.md)                        | Lambdas na JVM (`java21`), sem imagem nativa                                              |
+| [0005](decisoes/0005-clients-sincronos-com-crt.md)                 | Clients síncronos do AWS SDK com o client HTTP CRT, nas duas soluções                     |
+| [0007](decisoes/0007-dlq-e-reprocessamento.md)                     | DLQ com reprocessamento pelo `reconciler` e limite de tentativas no atributo `dlqAttempt` |
+| [0008](decisoes/0008-aws-endpoint-url-s3-no-offline.md)            | `AWS_ENDPOINT_URL_S3` explícito, com a nota de evolução do M6 na provider                 |
+| [0010](decisoes/0010-raiz-neutra-e-parents-por-framework.md)       | `quarkus-parent` para a quote e `spring-parent` para a provider                           |
+| [0011](decisoes/0011-integracao-entre-solucoes-por-eventbridge.md) | Integração entre soluções por eventos; base que o 0013 adapta à plataforma                |
+| [0012](decisoes/0012-aws-crt-com-nativos-linux-no-pacote.md)       | Pacote da Lambda com os jars Linux do `aws-crt`                                           |
+| [0013](decisoes/0013-barramento-da-plataforma.md)                  | Barramento da plataforma em stack própria, regras com filas SQS como alvo                 |
+| [0014](decisoes/0014-cotacao-em-duas-solucoes-e-task-token.md)     | Cotação em duas soluções, com o task token restrito à `quote-solution`                    |
+| [0015](decisoes/0015-modelo-dynamodb-e-outbox-da-cotacao.md)       | Uma tabela por solução e outbox publicada por DynamoDB Streams                            |
+| [0016](decisoes/0016-backoffice-angular-e-login-cognito.md)        | Backoffice em Angular com o template do marketplace e login no user pool da stack         |
 
 ## Diagramas
 

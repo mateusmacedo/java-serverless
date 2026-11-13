@@ -4,10 +4,10 @@ Contratos escritos à mão da solução de fornecedores da plataforma de cotaç�
 [desenho técnico](../../docs/plataforma-de-cotacao.md) (§3, §5 e §8); a sintaxe é conferida com os comandos
 de [Como validar](../../docs/README.md#como-validar).
 
-| Arquivo | Versão | Descreve | Quem produz | Quem consome |
-|---|---|---|---|---|
-| [`openapi.yaml`](openapi.yaml) | `0.1.0` | `POST /v1/providers/{provider}/callbacks`, com a assinatura `X-Signature` (OpenAPI 3.1) | Seguradoras assíncronas; no laboratório, a beta simulada pelo `simCallbackSender` | Lambda `api` (`provider-api`) |
-| [`asyncapi.yaml`](asyncapi.yaml) | `0.5.0` | Eventos publicados no barramento `platform-{stage}-events` com `source` `mmda.provider`: `EnrichmentResolved`, `InsurerResultRecorded`, `QueryReconciled`, `OperationIssueRaised` e `OperationIssueUpdated` (AsyncAPI 3.1) | `outboxRelay`, `reconciler` e, nos callbacks, a `api` | `quote-solution`: filas `results` (os dois primeiros) e `issues` (os três operacionais) |
+| Arquivo                          | Versão  | Descreve                                                                                                                                                                                                                   | Quem produz                                                                       | Quem consome                                                                            |
+| -------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| [`openapi.yaml`](openapi.yaml)   | `0.1.0` | `POST /v1/providers/{provider}/callbacks`, com a assinatura `X-Signature` (OpenAPI 3.1)                                                                                                                                    | Seguradoras assíncronas; no laboratório, a beta simulada pelo `simCallbackSender` | Lambda `api` (`provider-api`)                                                           |
+| [`asyncapi.yaml`](asyncapi.yaml) | `0.5.0` | Eventos publicados no barramento `platform-{stage}-events` com `source` `mmda.provider`: `EnrichmentResolved`, `InsurerResultRecorded`, `QueryReconciled`, `OperationIssueRaised` e `OperationIssueUpdated` (AsyncAPI 3.1) | `outboxRelay`, `reconciler` e, nos callbacks, a `api`                             | `quote-solution`: filas `results` (os dois primeiros) e `issues` (os três operacionais) |
 
 A provider consome `EnrichmentRequested`, `InsurerQuoteRequested` e `QueryReconcileRequested`, que este
 AsyncAPI referencia no [AsyncAPI da quote-solution](../quote-solution/asyncapi.yaml), sem copiar.
