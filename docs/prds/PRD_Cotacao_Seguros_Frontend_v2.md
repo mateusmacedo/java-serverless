@@ -202,7 +202,7 @@ Esta seção é reproduzida nos dois PRDs e deve permanecer idêntica. O backend
 |---|---|
 | POST /v1/quotes | Header Idempotency-Key; body acima; 202 com quoteId, version, phase, statusUrl. Repetição idêntica retorna mesma identidade. |
 | GET /v1/quotes | cursor, phase, outcome, createdFrom, createdTo; retorna items e nextCursor; resumo com id, currentVersion, phase, outcome, createdAt e offerCount. |
-| GET /v1/quotes/{id}/versions/{v} | Snapshot autorizado, phase, outcome, currentVersion, supersededAt, revision, updatedAt, serverTime, retryAfterSeconds, missingFields, insurerResults, selection, allowedActions. |
+| GET /v1/quotes/{id}/versions/{v} | Snapshot autorizado, phase, outcome, outcomeReason, currentVersion, supersededAt, revision, updatedAt, serverTime, retryAfterSeconds, missingFields, insurerResults, selection, allowedActions. |
 | GET /v1/quotes/{id}/versions/{v}/offers | Lista com revision, serverTime, items e nextCursor; item contém id, insurerId/name, premiumTotal, currency, installments, coverages, deductibles, validUntil, selectable e unavailabilityReason. |
 | POST /v1/quotes/{id}/versions | Idempotency-Key, expectedVersion e novo snapshot; 202 com version/statusUrl; divergência de expectedVersion retorna 409. |
 | POST /v1/quotes/{id}/versions/{v}/selection | Idempotency-Key e offerId; 201 com selectionId, offerId, selectedAt e status=INTENT_RECORDED; repetição idêntica retorna seleção existente. |
