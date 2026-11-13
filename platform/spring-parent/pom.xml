@@ -49,8 +49,9 @@
                 <artifactId>aws-crt</artifactId>
                 <version>${aws-crt.version}</version>
             </dependency>
-            <!-- WHY: cada service do SDK traz apache-client e netty-nio-client por padrão; o spring-aws usa
-                 só o AwsCrtHttpClient (recomendado pela AWS para Lambda), então os outros saem do pacote -->
+            <!-- WHY: cada service do SDK traz apache-client, apache5-client e netty-nio-client por padrão; o
+                 spring-aws usa só o AwsCrtHttpClient (recomendado pela AWS para Lambda), então os outros saem
+                 do pacote -->
             <dependency>
                 <groupId>software.amazon.awssdk</groupId>
                 <artifactId>dynamodb</artifactId>
@@ -58,6 +59,7 @@
                 <exclusions>
                     <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>apache-client</artifactId></exclusion>
                     <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>netty-nio-client</artifactId></exclusion>
+                    <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>apache5-client</artifactId></exclusion>
                 </exclusions>
             </dependency>
             <dependency>
@@ -67,6 +69,7 @@
                 <exclusions>
                     <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>apache-client</artifactId></exclusion>
                     <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>netty-nio-client</artifactId></exclusion>
+                    <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>apache5-client</artifactId></exclusion>
                 </exclusions>
             </dependency>
             <dependency>
@@ -76,6 +79,7 @@
                 <exclusions>
                     <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>apache-client</artifactId></exclusion>
                     <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>netty-nio-client</artifactId></exclusion>
+                    <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>apache5-client</artifactId></exclusion>
                 </exclusions>
             </dependency>
             <dependency>
@@ -85,6 +89,7 @@
                 <exclusions>
                     <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>apache-client</artifactId></exclusion>
                     <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>netty-nio-client</artifactId></exclusion>
+                    <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>apache5-client</artifactId></exclusion>
                 </exclusions>
             </dependency>
             <dependency>
@@ -94,6 +99,7 @@
                 <exclusions>
                     <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>apache-client</artifactId></exclusion>
                     <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>netty-nio-client</artifactId></exclusion>
+                    <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>apache5-client</artifactId></exclusion>
                 </exclusions>
             </dependency>
             <dependency>
@@ -103,6 +109,7 @@
                 <exclusions>
                     <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>apache-client</artifactId></exclusion>
                     <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>netty-nio-client</artifactId></exclusion>
+                    <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>apache5-client</artifactId></exclusion>
                 </exclusions>
             </dependency>
             <dependency>
@@ -112,6 +119,7 @@
                 <exclusions>
                     <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>apache-client</artifactId></exclusion>
                     <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>netty-nio-client</artifactId></exclusion>
+                    <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>apache5-client</artifactId></exclusion>
                 </exclusions>
             </dependency>
             <dependency>
@@ -121,6 +129,7 @@
                 <exclusions>
                     <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>apache-client</artifactId></exclusion>
                     <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>netty-nio-client</artifactId></exclusion>
+                    <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>apache5-client</artifactId></exclusion>
                 </exclusions>
             </dependency>
             <dependency>
@@ -130,6 +139,7 @@
                 <exclusions>
                     <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>apache-client</artifactId></exclusion>
                     <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>netty-nio-client</artifactId></exclusion>
+                    <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>apache5-client</artifactId></exclusion>
                 </exclusions>
             </dependency>
             <dependency>
@@ -166,7 +176,7 @@
                     <artifactId>maven-dependency-plugin</artifactId>
                     <executions>
                         <execution>
-                            <!-- WHY: no build da IDE (m2e) o spring-aws resolve para target/classes, uma pasta que o
+                            <!-- WHY: no build da IDE (m2e) o spring-aws resolve para a pasta de classes, que o
                                  copy-dependencies recusa (MDEP-187); o zip da Lambda sai do mvn package -->
                             <?m2e ignore?>
                             <id>copy-lambda-dependencies</id>

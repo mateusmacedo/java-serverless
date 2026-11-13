@@ -3,6 +3,7 @@ node_modules/
 .nx/*
 !.nx/ci-config.yaml
 target/
+target-ide/
 .serverless/
 .idea/
 *.iml
