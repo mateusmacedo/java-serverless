@@ -169,7 +169,7 @@ class FunctionTimingConfigurationTest {
                 assertThat(map(event).get("sqs")).extracting(value -> map(value).get("batchSize")).isEqualTo(1);
             }
         }
-        assertThat(consumers).isEqualTo(1);
+        assertThat(consumers).as("resume (results) and issue-projector (issues, M5)").isEqualTo(2);
     }
 
     @Test
@@ -218,7 +218,8 @@ class FunctionTimingConfigurationTest {
         }
         monitored.add("StreamFailuresQueue");
 
-        assertThat(monitored).containsExactlyInAnyOrder("ResultsDeadLetterQueue", "StreamFailuresQueue");
+        assertThat(monitored).containsExactlyInAnyOrder("ResultsDeadLetterQueue", "IssuesDeadLetterQueue",
+                "StreamFailuresQueue");
         for (String queue : monitored) {
             Object queueName = map(map(resources.get(queue)).get("Properties")).get("QueueName");
             Map<Object, Map<String, Object>> alarms = new HashMap<>();
@@ -288,6 +289,39 @@ class FunctionTimingConfigurationTest {
                 .contains("dynamodb:UpdateItem");
         assertThat(environment()).containsKeys("RESULTS_QUEUE_URL", "RESULTS_DLQ_URL", "DLQ_MAX_ATTEMPTS",
                 "STUCK_VERSION_MARGIN_SECONDS", "RESUMING_RETRY_AFTER_SECONDS");
+    }
+
+    @Test
+    void issuesQueueReceivesTheProviderOperationalEventsAndTheReconcilerReprocessesItsDlq() {
+        Map<String, Object> rule = map(map(resources().get("ProviderIssuesRule")).get("Properties"));
+        assertThat(map(rule.get("EventPattern"))).containsEntry("source", List.of("mmda.provider"))
+                .containsEntry("detail-type", List.of("QueryReconciled", "OperationIssueRaised", "OperationIssueUpdated"));
+        assertThat(logicalId(map(list(rule.get("Targets")).getFirst()).get("Arn"))).isEqualTo("IssuesQueue");
+        Map<String, Object> policy = map(list(map(map(map(resources().get("IssuesQueuePolicy")).get("Properties"))
+                .get("PolicyDocument")).get("Statement")).getFirst());
+        assertThat(map(map(policy.get("Condition")).get("ArnEquals")).get("aws:SourceArn"))
+                .isEqualTo("ProviderIssuesRule.Arn");
+
+        Map<String, Object> projector = map(map(serverless.get("functions")).get("issueProjector"));
+        assertThat(map(projector.get("environment"))).containsEntry("QUARKUS_LAMBDA_HANDLER", "issue-projector");
+        assertThat(projector).doesNotContainKey("memorySize");
+        Map<String, Object> sqs = map(map(list(projector.get("events")).getFirst()).get("sqs"));
+        assertThat(logicalId(sqs.get("arn"))).isEqualTo("IssuesQueue");
+        assertThat(sqs).containsEntry("functionResponseType", "ReportBatchItemFailures");
+        assertThat(functionTimeout("issueProjector")).isEqualTo(functionTimeout("resume"));
+        assertThat(param("issuesVisibilityTimeoutSeconds")).isEqualTo(90);
+        assertThat(param("issuesMaxReceiveCount")).isEqualTo(5);
+        assertThat(statements("IssueProjectorRole").stream().flatMap(statement -> actions(statement).stream()))
+                .containsExactlyInAnyOrder("dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "sqs:ReceiveMessage",
+                        "sqs:DeleteMessage", "sqs:GetQueueAttributes");
+
+        List<Map<String, Object>> reconciler = statements("ReconcilerRole");
+        assertThat(actionsOn(reconciler, "IssuesDeadLetterQueue.Arn"))
+                .containsExactlyInAnyOrder("sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes");
+        assertThat(actionsOn(reconciler, "IssuesQueue.Arn")).containsExactly("sqs:SendMessage");
+        assertThat(environment()).containsKeys("ISSUES_QUEUE_URL", "ISSUES_DLQ_URL");
+        assertThat(statements("ApiRole").stream().flatMap(statement -> actions(statement).stream()))
+                .as("the selection checks the offer in its transaction").contains("dynamodb:ConditionCheckItem");
     }
 
     private static Map<String, Object> resources() {

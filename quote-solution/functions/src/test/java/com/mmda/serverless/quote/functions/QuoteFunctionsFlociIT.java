@@ -6,6 +6,7 @@ import static org.awaitility.Awaitility.await;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.mmda.serverless.quote.domain.QuoteEvents;
 import com.mmda.serverless.quote.domain.QuoteIssues;
 import com.mmda.serverless.quote.domain.QuoteKeys;
@@ -17,6 +18,8 @@ import io.quarkus.test.common.WithTestResource;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import java.lang.reflect.Proxy;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -36,6 +39,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.yaml.snakeyaml.Yaml;
 import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.http.crt.AwsCrtHttpClient;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
@@ -118,6 +122,21 @@ class QuoteFunctionsFlociIT {
 
     @Inject
     DeadLetterReprocessor deadLetters;
+
+    @Inject
+    IssueProjectorHandler issueProjector;
+
+    @Inject
+    IssueProjector issueProjectorLogic;
+
+    @Inject
+    IssueReviewer issueReviewer;
+
+    @ConfigProperty(name = "reconciler.issues-queue-url")
+    String issuesQueueUrl;
+
+    @ConfigProperty(name = "reconciler.issues-dead-letter-queue-url")
+    String issuesDeadLetterQueueUrl;
 
     @Inject
     QuoteTable table;
@@ -1204,6 +1223,263 @@ class QuoteFunctionsFlociIT {
         assertThat(report).containsKeys("republished", "resumed", "versions", "expiredTasks", "deadLetters",
                 "outboxPendingAgeSeconds");
         assertThat(report.keySet()).noneMatch(key -> key.endsWith("Error"));
+    }
+
+    @Test
+    void issueProjectorProjectsTheProviderIssueIdempotentlyByEventIdAndRevision() throws Exception {
+        String issueId = "is_" + UUID.randomUUID().toString().replace("-", "");
+        String queryId = "q_" + UUID.randomUUID().toString().replace("-", "");
+        String raised = providerEvent("OperationIssueRaised", Map.of("issueId", issueId, "queryId", queryId));
+        String updated = providerEvent("OperationIssueUpdated", Map.of("issueId", issueId, "queryId", queryId));
+
+        assertThat(issueProjector.handleRequest(QuoteFixtures.sqs(raised), null).batchItemFailures()).isEmpty();
+
+        Map<String, AttributeValue> issue = item(QuoteKeys.issuePk(issueId), "META");
+        assertThat(issue.get("type").s()).as("the item type (ADR 0015)").isEqualTo("ISSUE");
+        assertThat(issue.get("issueType").s()).as("the event type").isEqualTo("UNKNOWN_QUERY");
+        assertThat(issue.get("status").s()).isEqualTo("OPEN");
+        assertThat(issue.get("source").s()).isEqualTo("provider");
+        assertThat(issue.get("reconcilable").bool()).isTrue();
+        assertThat(issue.get("revision").n()).isEqualTo("1");
+        assertThat(issue.get("gsi1pk").s()).isEqualTo("ISSUES#org-acme");
+        assertThat(issue.get("gsi1sk").s()).isEqualTo(issue.get("lastSeenAt").s() + "#" + issueId);
+        assertThat(issue).as("only the quote's own issues are reviewed").doesNotContainKey("gsi2pk");
+        assertThat(item(QuoteKeys.queryRefPk(queryId), "META").get("organizationId").s()).isEqualTo("org-acme");
+
+        assertThat(issueProjectorLogic.handle(raised)).as("the same event").isEqualTo(IssueProjector.Disposition.DISCARDED);
+        assertThat(issueProjectorLogic.handle(updated)).isEqualTo(IssueProjector.Disposition.PROJECTED);
+        Map<String, AttributeValue> resolved = item(QuoteKeys.issuePk(issueId), "META");
+        assertThat(resolved.get("status").s()).isEqualTo("RESOLVED");
+        assertThat(resolved.get("revision").n()).isEqualTo("2");
+        assertThat(resolved.get("firstSeenAt").s()).isEqualTo(issue.get("firstSeenAt").s());
+        assertThat(resolved.get("gsi1sk").s()).isNotEqualTo(issue.get("gsi1sk").s());
+
+        String republished = withEventId(raised, UUID.randomUUID().toString());
+        assertThat(issueProjectorLogic.handle(republished)).as("an older revision").isEqualTo(IssueProjector.Disposition.DISCARDED);
+        assertThat(item(QuoteKeys.issuePk(issueId), "META").get("status").s()).isEqualTo("RESOLVED");
+    }
+
+    @Test
+    void queryReconciledUpdatesTheOperationOfItsOrganizationOnce() throws Exception {
+        String operationId = "op_" + UUID.randomUUID().toString().replace("-", "");
+        String queryId = "q_" + UUID.randomUUID().toString().replace("-", "");
+        dynamoDb.putItem(builder -> builder.tableName(FlociResource.TABLE).item(Map.of(
+                "pk", AttributeValue.fromS(QuoteKeys.operationPk(operationId)), "sk", AttributeValue.fromS("META"),
+                "type", AttributeValue.fromS("OPERATION"), "operationId", AttributeValue.fromS(operationId),
+                "organizationId", AttributeValue.fromS("org-acme"), "queryId", AttributeValue.fromS(queryId),
+                "status", AttributeValue.fromS("QUEUED"), "reason", AttributeValue.fromS("motivo do operador"),
+                "revision", AttributeValue.fromN("0"))));
+        String failed = providerEvent("QueryReconciled", "failed", Map.of("operationId", operationId,
+                "queryId", queryId));
+
+        assertThat(issueProjectorLogic.handle(failed)).isEqualTo(IssueProjector.Disposition.PROJECTED);
+
+        Map<String, AttributeValue> operation = item(QuoteKeys.operationPk(operationId), "META");
+        assertThat(operation.get("status").s()).isEqualTo("FAILED");
+        assertThat(operation.get("revision").n()).isEqualTo("2");
+        assertThat(operation.get("reason").s()).as("the audit stays").isEqualTo("motivo do operador");
+        assertThat(operation.get("safeSummary").s()).contains("UNKNOWN");
+        assertThat(operation.get("updatedAt").s()).isEqualTo(Instant.parse(
+                objectMapper.readTree(failed).at("/detail/occurredAt").asText()).toString());
+        assertThat(item(QuoteKeys.queryRefPk(queryId), "META"))
+                .as("the pair of a QueryReconciled is the request's; only an issue makes the query known").isNull();
+        assertThat(issueProjectorLogic.handle(failed)).isEqualTo(IssueProjector.Disposition.DISCARDED);
+
+        String foreign = providerEvent("QueryReconciled", "succeeded", Map.of("operationId", operationId,
+                "queryId", queryId, "organizationId", "org-globex", "eventId", UUID.randomUUID().toString()));
+        assertThat(issueProjectorLogic.handle(withRevision(foreign, 3))).as("another organization")
+                .isEqualTo(IssueProjector.Disposition.FOREIGN_ORGANIZATION);
+        assertThat(item(QuoteKeys.operationPk(operationId), "META").get("status").s()).isEqualTo("FAILED");
+        assertThat(item(QuoteKeys.queryRefPk(queryId), "META")).isNull();
+    }
+
+    @Test
+    void malformedAndForeignIssueEventsAreNotProjected() throws Exception {
+        String raised = providerEvent("OperationIssueRaised", Map.of("issueId", "is_" + "0".repeat(32)));
+        ObjectNode fromQuote = (ObjectNode) objectMapper.readTree(raised);
+        fromQuote.put("source", "mmda.quote");
+        ObjectNode otherType = (ObjectNode) objectMapper.readTree(raised);
+        otherType.put("detail-type", "EnrichmentResolved");
+        ObjectNode withoutIssue = (ObjectNode) objectMapper.readTree(raised);
+        ((ObjectNode) withoutIssue.get("detail")).remove("issueId");
+        ObjectNode quoteType = (ObjectNode) objectMapper.readTree(raised);
+        ((ObjectNode) quoteType.get("detail")).put("type", "STUCK_VERSION");
+
+        assertThat(issueProjectorLogic.handle(fromQuote.toString())).isEqualTo(IssueProjector.Disposition.IGNORED);
+        assertThat(issueProjectorLogic.handle(otherType.toString())).isEqualTo(IssueProjector.Disposition.IGNORED);
+        for (String malformed : List.of(withoutIssue.toString(), quoteType.toString(), "not json")) {
+            assertThat(issueProjector.handleRequest(QuoteFixtures.sqs(malformed), null).batchItemFailures())
+                    .as(malformed).hasSize(1);
+        }
+        assertThat(item(QuoteKeys.issuePk("is_" + "0".repeat(32)), "META")).isNull();
+    }
+
+    @Test
+    void issuesDlqIsRedrivenBelowTheLimitAndDiscardedAtItWithTheEventOrganization() throws Exception {
+        String issueId = "is_" + UUID.randomUUID().toString().replace("-", "");
+        String queryId = "q_" + UUID.randomUUID().toString().replace("-", "");
+        String body = providerEvent("OperationIssueRaised", Map.of("issueId", issueId, "queryId", queryId,
+                "eventId", UUID.randomUUID().toString()));
+        sqs.sendMessage(builder -> builder.queueUrl(issuesDeadLetterQueueUrl).messageBody(body));
+
+        assertThat(deadLetters.reprocessIssues(Instant.now()).get("redriven")).isEqualTo(1);
+
+        Message redriven = await().atMost(Duration.ofSeconds(15)).until(() -> sqs.receiveMessage(builder -> builder
+                .queueUrl(issuesQueueUrl).maxNumberOfMessages(1).waitTimeSeconds(1).messageAttributeNames("All"))
+                .messages().stream().findFirst().orElse(null), message -> message != null);
+        assertThat(redriven.messageAttributes().get("dlqAttempt").stringValue()).isEqualTo("2");
+        assertThat(issueProjector.handleRequest(QuoteFixtures.sqs(redriven.body()), null).batchItemFailures()).isEmpty();
+        sqs.deleteMessage(builder -> builder.queueUrl(issuesQueueUrl).receiptHandle(redriven.receiptHandle()));
+        assertThat(item(QuoteKeys.issuePk(issueId), "META").get("issueType").s()).isEqualTo("UNKNOWN_QUERY");
+
+        sqs.sendMessage(builder -> builder.queueUrl(issuesDeadLetterQueueUrl).messageBody(body)
+                .messageAttributes(Map.of("dlqAttempt", MessageAttributeValue.builder().dataType("Number")
+                        .stringValue("3").build())));
+        sqs.sendMessage(builder -> builder.queueUrl(issuesDeadLetterQueueUrl).messageBody("not json"));
+        assertThat(deadLetters.reprocessIssues(Instant.now()).get("discarded")).isEqualTo(2);
+
+        String eventId = objectMapper.readTree(body).at("/detail/eventId").asText();
+        Map<String, AttributeValue> deadLetter = issue(QuoteIssues.Type.DEAD_LETTER, eventId);
+        assertThat(deadLetter.get("organizationId").s()).isEqualTo("org-acme");
+        assertThat(deadLetter.get("queryId").s()).isEqualTo(queryId);
+        assertThat(deadLetter.get("safeSummary").s()).contains("issues-dlq", "tentativa 3");
+        assertThat(deadLetter).as("a discarded message is a fact, not a situation that goes away")
+                .doesNotContainKey("gsi2pk");
+        assertThat(visibleMessages(issuesDeadLetterQueueUrl)).isZero();
+        assertThat(visibleMessages(deadLetterQueueUrl)).as("the results-dlq is another queue").isZero();
+    }
+
+    @Test
+    void stuckVersionIsResolvedOnceTheVersionLeavesTheActiveIndex() throws Exception {
+        String quoteId = UUID.randomUUID().toString();
+        QuoteFixtures.createQuote(dynamoDb, quoteId, QuoteFixtures.snapshot(Usage.PERSONAL, 2021, false, "2012-03-15"),
+                Instant.now().minusSeconds(600));
+        versionReconciler.reconcile(Instant.now());
+        Map<String, AttributeValue> stuck = issue(QuoteIssues.Type.STUCK_VERSION, QuoteIssues.versionTarget(quoteId, 1));
+        assertThat(stuck.get("gsi2pk").s()).isEqualTo("ISSUE_OPEN");
+
+        issueReviewer.review(Instant.now());
+        assertThat(issue(QuoteIssues.Type.STUCK_VERSION, QuoteIssues.versionTarget(quoteId, 1)).get("status").s())
+                .as("the version is still active").isEqualTo("OPEN");
+
+        dynamoDb.updateItem(builder -> builder.tableName(FlociResource.TABLE)
+                .key(Map.of("pk", AttributeValue.fromS(QuoteKeys.quotePk(quoteId)), "sk", AttributeValue.fromS("V#0001")))
+                .updateExpression("SET phase = :terminal, outcome = :outcome REMOVE gsi2pk, gsi2sk")
+                .expressionAttributeValues(Map.of(":terminal", AttributeValue.fromS("TERMINAL"),
+                        ":outcome", AttributeValue.fromS("TECHNICAL_FAILURE"))));
+        Instant reviewedAt = Instant.now();
+        assertThat(issueReviewer.review(reviewedAt).get("resolved")).isPositive();
+
+        Map<String, AttributeValue> resolved = issue(QuoteIssues.Type.STUCK_VERSION, QuoteIssues.versionTarget(quoteId, 1));
+        assertThat(resolved.get("status").s()).isEqualTo("RESOLVED");
+        assertThat(resolved.get("revision").n()).isEqualTo(Long.toString(Long.parseLong(stuck.get("revision").n()) + 1));
+        assertThat(resolved.get("firstSeenAt").s()).isEqualTo(stuck.get("firstSeenAt").s());
+        assertThat(resolved.get("lastSeenAt").s()).isEqualTo(reviewedAt.toString());
+        assertThat(resolved.get("gsi1sk").s()).isEqualTo(reviewedAt + "#" + resolved.get("issueId").s());
+        assertThat(resolved).containsKey("resolvedAt").doesNotContainKey("gsi2pk");
+
+        versionReconciler.reconcile(Instant.now());
+        assertThat(issue(QuoteIssues.Type.STUCK_VERSION, QuoteIssues.versionTarget(quoteId, 1)).get("status").s())
+                .as("a terminal version is not reopened").isEqualTo("RESOLVED");
+    }
+
+    @Test
+    void staleSummaryReadDoesNotDemoteAnyPhaseNorTheOfferCount() throws Exception {
+        String quoteId = newQuote(Usage.PERSONAL, 2021, false, "2012-03-15");
+        step("load-snapshot", quoteId);
+        Map<String, AttributeValue> validating = version(quoteId);
+        assertThat(validating.get("phase").s()).isEqualTo("VALIDATING");
+        setVersionPhase(quoteId, "QUOTING");
+        table.refreshSummary(quoteId, 1, Instant.now());
+        assertThat(item(QuoteKeys.quotePk(quoteId), "META").get("phase").s()).isEqualTo("QUOTING");
+        QuoteTable staleRead = new QuoteTable(dynamoDb, config, objectMapper) {
+            @Override
+            Optional<Map<String, AttributeValue>> get(String pk, String sk) {
+                return QuoteKeys.versionSk(1).equals(sk) ? Optional.of(validating) : super.get(pk, sk);
+            }
+        };
+
+        staleRead.refreshSummary(quoteId, 1, Instant.now());
+        staleRead.repairSummary(quoteId, 1, Instant.now());
+        assertThat(item(QuoteKeys.quotePk(quoteId), "META").get("phase").s()).as("VALIDATING over QUOTING")
+                .isEqualTo("QUOTING");
+
+        dynamoDb.updateItem(builder -> builder.tableName(FlociResource.TABLE)
+                .key(Map.of("pk", AttributeValue.fromS(QuoteKeys.quotePk(quoteId)), "sk", AttributeValue.fromS("META")))
+                .updateExpression("SET offerCount = :two")
+                .expressionAttributeValues(Map.of(":two", AttributeValue.fromN("2"))));
+        QuoteTable staleCount = new QuoteTable(dynamoDb, config, objectMapper) {
+            @Override
+            int count(String pk, String prefix) {
+                return 1;
+            }
+        };
+        staleCount.refreshSummary(quoteId, 1, Instant.now());
+        assertThat(item(QuoteKeys.quotePk(quoteId), "META").get("offerCount").n()).isEqualTo("2");
+
+        setVersionPhase(quoteId, "TERMINAL");
+        QuoteTable moreOffers = new QuoteTable(dynamoDb, config, objectMapper) {
+            @Override
+            int count(String pk, String prefix) {
+                return 3;
+            }
+        };
+        moreOffers.refreshSummary(quoteId, 1, Instant.now());
+        Map<String, AttributeValue> meta = item(QuoteKeys.quotePk(quoteId), "META");
+        assertThat(meta.get("phase").s()).isEqualTo("TERMINAL");
+        assertThat(meta.get("offerCount").n()).isEqualTo("3");
+    }
+
+    @Test
+    void reconcilerRunsTheM5DutiesAndReportsThem() {
+        Map<String, Object> report = reconciler.handleRequest(Map.of("source", "test"), null);
+
+        assertThat(report).containsKeys("issues", "issueDeadLetters");
+        assertThat(report.keySet()).noneMatch(key -> key.endsWith("Error"));
+    }
+
+    private void setVersionPhase(String quoteId, String phase) {
+        dynamoDb.updateItem(builder -> builder.tableName(FlociResource.TABLE)
+                .key(Map.of("pk", AttributeValue.fromS(QuoteKeys.quotePk(quoteId)), "sk", AttributeValue.fromS("V#0001")))
+                .updateExpression("SET phase = :phase")
+                .expressionAttributeValues(Map.of(":phase", AttributeValue.fromS(phase))));
+    }
+
+    private String providerEvent(String detailType, Map<String, String> overrides) throws Exception {
+        return providerEvent(detailType, null, overrides);
+    }
+
+    /**
+     * Exemplo do AsyncAPI da provider, pelo nome ou o primeiro, com os campos trocados para o teste não colidir
+     * com outro.
+     */
+    private String providerEvent(String detailType, String example, Map<String, String> overrides) throws Exception {
+        JsonNode asyncApi = objectMapper.valueToTree(new Yaml().load(
+                Files.readString(Path.of("../../docs/events/provider-solution.asyncapi.yaml"))));
+        JsonNode examples = asyncApi.at("/components/messages/" + detailType + "/examples");
+        JsonNode chosen = examples.get(0);
+        for (JsonNode candidate : examples) {
+            if (candidate.path("name").asText().equals(example)) {
+                chosen = candidate;
+            }
+        }
+        ObjectNode payload = (ObjectNode) chosen.get("payload").deepCopy();
+        ObjectNode detail = (ObjectNode) payload.get("detail");
+        detail.put("eventId", UUID.randomUUID().toString());
+        overrides.forEach(detail::put);
+        return payload.toString();
+    }
+
+    private String withEventId(String body, String eventId) throws Exception {
+        ObjectNode envelope = (ObjectNode) objectMapper.readTree(body);
+        ((ObjectNode) envelope.get("detail")).put("eventId", eventId);
+        return envelope.toString();
+    }
+
+    private String withRevision(String body, int revision) throws Exception {
+        ObjectNode envelope = (ObjectNode) objectMapper.readTree(body);
+        ((ObjectNode) envelope.get("detail")).put("revision", revision);
+        return envelope.toString();
     }
 
     /** Execução encerrada no estado pedido, gravada como a execução da versão 1. */

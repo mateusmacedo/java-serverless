@@ -132,11 +132,21 @@ class QueryLedger {
     }
 
     Optional<String> organizationOf(String queryId) {
-        return Items.string(dynamoDb.getItem(builder -> builder
+        return ownerOf(queryId).map(QueryOwner::organizationId);
+    }
+
+    /** Organização e cotação gravadas na {@code QUERY}; vazio quando a consulta não existe. */
+    Optional<QueryOwner> ownerOf(String queryId) {
+        Map<String, AttributeValue> item = dynamoDb.getItem(builder -> builder
                         .tableName(properties.tableName())
                         .consistentRead(true)
                         .key(Items.key(Items.queryPk(queryId), META)))
-                .item(), "organizationId");
+                .item();
+        return Items.string(item, "organizationId").map(organizationId ->
+                new QueryOwner(organizationId, Items.string(item, "quoteId").orElse(null)));
+    }
+
+    record QueryOwner(String organizationId, String quoteId) {
     }
 
     /** Consultas do índice ({@code QUERY_IN_FLIGHT} ou {@code QUERY_UNKNOWN}) com {@code gsi2sk} antes do instante. */

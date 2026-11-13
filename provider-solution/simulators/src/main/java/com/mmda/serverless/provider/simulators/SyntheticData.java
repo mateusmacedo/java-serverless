@@ -12,8 +12,9 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Dados sintéticos e determinísticos pelas referências do catálogo: a mesma referência sempre gera o
- * mesmo perfil e a mesma oferta, sem depender do arquivo do catálogo.
+ * Dados sintéticos e determinísticos pela referência, para o que o catálogo do laboratório não tem (valor de
+ * mercado, sinistros e prêmio) e para referências fora dele, como as dos testes da provider: a mesma referência
+ * sempre gera o mesmo perfil e a mesma oferta.
  */
 final class SyntheticData {
 

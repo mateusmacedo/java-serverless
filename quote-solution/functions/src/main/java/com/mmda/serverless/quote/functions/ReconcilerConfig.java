@@ -11,6 +11,11 @@ public interface ReconcilerConfig {
 
     String resultsDeadLetterQueueUrl();
 
+    /** Fila {@code issues} do {@code issue-projector}, para onde volta a mensagem reprocessada da DLQ (M5). */
+    String issuesQueueUrl();
+
+    String issuesDeadLetterQueueUrl();
+
     /** Tentativas de uma mensagem da DLQ, contando a entrega original (ADR 0007). */
     int dlqMaxAttempts();
 

@@ -19,6 +19,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -52,6 +53,9 @@ class EnrichmentReuseIT extends FlociIntegrationTest {
 
     @MockitoSpyBean
     private ReuseLedger reuseLedger;
+
+    @MockitoSpyBean
+    private QueryLedger queryLedger;
 
     @Autowired
     private EnrichmentWorkerFunction worker;
@@ -515,6 +519,73 @@ class EnrichmentReuseIT extends FlociIntegrationTest {
     }
 
     @Test
+    void followerAlreadyRegisteredByAnotherDeliveryWaitsForTheLeaderWithoutASecondRegistration() {
+        String vehicle = vehicle("double-registration");
+        String queryKey = queryKey(vehicle);
+        TestRequests.Request leader = request(vehicle);
+        worker.apply(EnrichmentWorkerIT.sqsEvent(leader.body()));
+        forgetReuseIndex(queryKey);
+        setLeadershipState(queryKey, "IN_FLIGHT");
+        long fencingVersion = Long.parseLong(
+                attribute(item("INFLIGHT#" + queryKey, "META"), "fencingVersion").orElseThrow());
+        TestRequests.Request follower = request(vehicle);
+        List<ReuseLedger.Registration> registrations = new CopyOnWriteArrayList<>();
+        doAnswer(invocation -> {
+            givenFollower(queryKey, fencingVersion, follower);
+            ReuseLedger.Registration registration = (ReuseLedger.Registration) invocation.callRealMethod();
+            registrations.add(registration);
+            return registration;
+        }).when(reuseLedger).register(eq(queryKey), anyLong(), any(), any());
+
+        SQSBatchResponse response = worker.apply(EnrichmentWorkerIT.sqsEvent(follower.body()));
+
+        assertThat(response.getBatchItemFailures()).isEmpty();
+        assertThat(registrations).containsExactly(ReuseLedger.Registration.ALREADY_REGISTERED);
+        assertThat(followers(queryKey)).extracting(item -> attribute(item, "workRef").orElseThrow())
+                .containsExactly(follower.workRef());
+        String followerResult = "OUTBOX#" + EventIds.enrichmentResolved(leader.queryId(), follower.workRef());
+        assertThat(item(followerResult, "META")).as("the leader's fan-out answers the follower").isEmpty();
+        assertThat(item("CONSUMED#" + follower.eventId(), "META")).isEmpty();
+        assertThat(item("QUERY#" + follower.queryId(), "META")).isEmpty();
+
+        setLeadershipState(queryKey, "COMPLETED");
+        worker.apply(EnrichmentWorkerIT.sqsEvent(follower.body()));
+
+        assertThat(resolved(leader.queryId(), follower).path("reuseDecision").asString()).isEqualTo("JOIN");
+        assertThat(PROVIDERS.calls(follower.queryId())).isZero();
+        assertThat(PROVIDERS.enrichmentCalls(vehicle)).isEqualTo(1);
+    }
+
+    @Test
+    void deliveryThatLosesItsQueryToAnotherDeliveryOfTheSameRequestNeitherCallsNorPublishes() {
+        String vehicle = vehicle("double-lead");
+        String queryKey = queryKey(vehicle);
+        TestRequests.Request request = request(vehicle);
+        doAnswer(invocation -> {
+            Object read = invocation.callRealMethod();
+            givenLiveLeader(queryKey, request);
+            return read;
+        }).doCallRealMethod().when(reuseLedger).reuseEntry(queryKey);
+        List<QueryLedger.Leading> leadings = new CopyOnWriteArrayList<>();
+        doAnswer(invocation -> {
+            QueryLedger.Leading leading = (QueryLedger.Leading) invocation.callRealMethod();
+            leadings.add(leading);
+            return leading;
+        }).when(queryLedger).lead(any(), any(), any(), any());
+
+        SQSBatchResponse response = worker.apply(EnrichmentWorkerIT.sqsEvent(request.body()));
+
+        assertThat(response.getBatchItemFailures()).isEmpty();
+        assertThat(leadings).containsExactly(QueryLedger.Leading.QUERY_EXISTS);
+        assertThat(attribute(item("QUERY#" + request.queryId(), "META"), "state")).contains("IN_FLIGHT");
+        assertThat(queryItems(request.queryId(), "ATTEMPT#")).hasSize(1);
+        assertThat(attribute(item("INFLIGHT#" + queryKey, "META"), "leaderWorkRef")).contains(request.workRef());
+        assertThat(item("OUTBOX#" + EventIds.enrichmentResolved(request.queryId(), request.workRef()), "META"))
+                .isEmpty();
+        assertThat(PROVIDERS.enrichmentCalls(vehicle)).isZero();
+    }
+
+    @Test
     void requestThatLosesTheIndexToAnotherLeaderRereadsItAndUsesTheNewEvidence() {
         String vehicle = vehicle("index-race");
         String queryKey = queryKey(vehicle);
@@ -589,6 +660,30 @@ class EnrichmentReuseIT extends FlociIntegrationTest {
                 "type", AttributeValue.fromS("ATTEMPT"),
                 "sequence", AttributeValue.fromN("1"),
                 "startedAt", AttributeValue.fromS(startedAt))));
+    }
+
+    /**
+     * A liderança, a consulta em voo e a {@code ATTEMPT#0001} que outra entrega do mesmo pedido grava ao liderar, com a
+     * lease válida.
+     */
+    private void givenLiveLeader(String queryKey, TestRequests.Request leader) {
+        Instant now = TestClock.INSTANCE.instant();
+        givenLeadershipInFlight(queryKey, leader, now.plus(reuse.lease()));
+        DYNAMO_DB.putItem(builder -> builder.tableName(TABLE).item(Map.of(
+                "pk", AttributeValue.fromS("QUERY#" + leader.queryId()),
+                "sk", AttributeValue.fromS("META"),
+                "type", AttributeValue.fromS("QUERY"),
+                "state", AttributeValue.fromS("IN_FLIGHT"),
+                "queryKey", AttributeValue.fromS(queryKey),
+                "fencingVersion", AttributeValue.fromN("1"),
+                "gsi2pk", AttributeValue.fromS("QUERY_IN_FLIGHT"),
+                "gsi2sk", AttributeValue.fromS(Timestamps.format(now)))));
+        DYNAMO_DB.putItem(builder -> builder.tableName(TABLE).item(Map.of(
+                "pk", AttributeValue.fromS("QUERY#" + leader.queryId()),
+                "sk", AttributeValue.fromS("ATTEMPT#" + Identities.sequence(1)),
+                "type", AttributeValue.fromS("ATTEMPT"),
+                "sequence", AttributeValue.fromN("1"),
+                "startedAt", AttributeValue.fromS(Timestamps.format(now)))));
     }
 
     /** Liderança em voo na versão 1, numa cadeia que começa nela. */

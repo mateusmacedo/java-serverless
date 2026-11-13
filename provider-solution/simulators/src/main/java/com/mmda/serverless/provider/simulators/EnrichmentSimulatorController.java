@@ -2,6 +2,9 @@ package com.mmda.serverless.provider.simulators;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
@@ -13,9 +16,10 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Provedor de enriquecimento simulado (§10): perfil do veículo e do condutor, 404 {@code NOT_FOUND}
- * declarado para referência desconhecida, 503 nas duas primeiras chamadas de cada {@code clientReference}
- * do {@code vehicle-flaky} e 504 sempre para o {@code vehicle-enrichment-down}.
+ * Provedor de enriquecimento simulado (§10): 404 {@code NOT_FOUND} declarado para referência desconhecida, 503 nas
+ * duas primeiras chamadas de cada {@code clientReference} do {@code vehicle-flaky} e 504 sempre para o
+ * {@code vehicle-enrichment-down}. Marca, modelo, ano e habilitação vêm do catálogo do laboratório; o resto do
+ * perfil, e o perfil inteiro de referência fora do catálogo, é sintético.
  */
 @RestController
 class EnrichmentSimulatorController {
@@ -23,12 +27,16 @@ class EnrichmentSimulatorController {
     static final String VEHICLE_FLAKY = "vehicle-flaky";
     static final String VEHICLE_ENRICHMENT_DOWN = "vehicle-enrichment-down";
     static final int FLAKY_FAILURES = 2;
+    /** WHY: o {@code licenseDate} do catálogo é data civil no fuso do contrato, e não em UTC. */
+    static final ZoneId CIVIL_ZONE = ZoneId.of("America/Sao_Paulo");
 
     private final ScenarioCounters counters;
+    private final LabCatalog catalog;
     private final Clock clock;
 
-    EnrichmentSimulatorController(ScenarioCounters counters, Clock clock) {
+    EnrichmentSimulatorController(ScenarioCounters counters, LabCatalog catalog, Clock clock) {
         this.counters = counters;
+        this.catalog = catalog;
         this.clock = clock;
     }
 
@@ -55,14 +63,26 @@ class EnrichmentSimulatorController {
         if (!notFoundRefs.isEmpty()) {
             return error(HttpStatus.NOT_FOUND, new ErrorBody("NOT_FOUND", null, notFoundRefs));
         }
-        SyntheticData.VehicleData vehicle = SyntheticData.vehicle(request.vehicleRef());
-        SyntheticData.DriverData driver = SyntheticData.driver(request.principalDriverRef());
-        return ResponseEntity.ok(new ProfileResponse(
-                request.clientReference(),
-                new VehicleBody(vehicle.ref(), vehicle.make(), vehicle.model(), vehicle.modelYear(),
-                        vehicle.marketValue().toPlainString()),
-                new DriverBody(driver.ref(), driver.licenseYears(), driver.claimsLast5Years()),
-                clock.instant().truncatedTo(ChronoUnit.MILLIS).toString()));
+        Instant now = clock.instant().truncatedTo(ChronoUnit.MILLIS);
+        return ResponseEntity.ok(new ProfileResponse(request.clientReference(), vehicle(request.vehicleRef()),
+                driver(request.principalDriverRef(), LocalDate.ofInstant(now, CIVIL_ZONE)), now.toString()));
+    }
+
+    private VehicleBody vehicle(String ref) {
+        SyntheticData.VehicleData synthetic = SyntheticData.vehicle(ref);
+        String marketValue = synthetic.marketValue().toPlainString();
+        return catalog.vehicle(ref)
+                .map(vehicle -> new VehicleBody(ref, vehicle.make(), vehicle.model(), vehicle.year(), marketValue))
+                .orElseGet(() -> new VehicleBody(ref, synthetic.make(), synthetic.model(), synthetic.modelYear(),
+                        marketValue));
+    }
+
+    private DriverBody driver(String ref, LocalDate today) {
+        SyntheticData.DriverData synthetic = SyntheticData.driver(ref);
+        int licenseYears = catalog.driver(ref)
+                .map(driver -> driver.licenseYears(today))
+                .orElse(synthetic.licenseYears());
+        return new DriverBody(ref, licenseYears, synthetic.claimsLast5Years());
     }
 
     private static ResponseEntity<Object> error(HttpStatus status, ErrorBody body) {

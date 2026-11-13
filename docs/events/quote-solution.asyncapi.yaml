@@ -1,7 +1,7 @@
 asyncapi: 3.1.0
 info:
   title: quote-solution eventos
-  version: 0.2.0
+  version: 0.3.0
   description: |
     Eventos que a `quote-solution`, em Quarkus, publica no barramento da plataforma
     `platform-{stage}-events` ([ADR 0013](../decisions/0013-barramento-da-plataforma.md)), com
@@ -22,9 +22,11 @@ info:
     `quoteId|version|kind|insurerId` (`kind` `ENRICHMENT` ou `INSURER`; `insurerId` vazio no
     enriquecimento).
 
-    Eventos que a quote consome (descritos no AsyncAPI da `provider-solution`): `EnrichmentResolved` e
-    `InsurerResultRecorded`, pela regra `source` `mmda.provider` com alvo na fila
-    `quote-solution-{stage}-results`. Do `EnrichmentResolved`, a quote lê `eventId`, `workRef`,
+    Eventos que a quote consome, declarados nas operações `receive` com as mensagens do AsyncAPI da
+    `provider-solution`: `EnrichmentResolved` e `InsurerResultRecorded`, pela regra `source` `mmda.provider` com
+    alvo na fila `quote-solution-{stage}-results`, e, a partir do M5, `QueryReconciled`, `OperationIssueRaised` e
+    `OperationIssueUpdated`, por outra regra, com alvo na fila `quote-solution-{stage}-issues` (operações
+    `receiveQueryReconciled` e `receiveOperationIssue`). Do `EnrichmentResolved`, a quote lê `eventId`, `workRef`,
     `resultType`, `evidenceId`, `queryId`, `reuseDecision`, `policyVersion`, `notFoundRefs`,
     `reusableUntil`, `errorClass` e `result`; a regra de seleção `sel-1` usa `result.vehicle.year` quando
     existe. `HIT`, `JOIN` e `MISS` seguem o mesmo fluxo: a quote grava `evidenceId`, `queryId`,
@@ -68,7 +70,91 @@ channels:
         $ref: '#/components/messages/OfferSelected'
       queryReconcileRequested:
         $ref: '#/components/messages/QueryReconcileRequested'
+  resultsQueue:
+    address: quote-solution-{stage}-results
+    title: Fila results da quote
+    description: |
+      Alvo da regra `ProviderResultsRule` do barramento (`source` `mmda.provider`, `detail-type`
+      `EnrichmentResolved` e `InsurerResultRecorded`). O `resume` lê a fila em lote de 1, com falha parcial; depois
+      de `resultsMaxReceiveCount` recebimentos, a mensagem vai para a `results-dlq`, que o `reconciler` reprocessa.
+    parameters:
+      stage:
+        $ref: '#/components/parameters/stage'
+    messages:
+      enrichmentResolved:
+        $ref: './provider-solution.asyncapi.yaml#/components/messages/EnrichmentResolved'
+      insurerResultRecorded:
+        $ref: './provider-solution.asyncapi.yaml#/components/messages/InsurerResultRecorded'
+  issuesQueue:
+    address: quote-solution-{stage}-issues
+    title: Fila issues da quote (M5)
+    description: |
+      Alvo da regra `ProviderIssuesRule` do barramento (`source` `mmda.provider`, `detail-type` `QueryReconciled`,
+      `OperationIssueRaised` e `OperationIssueUpdated`). O `issue-projector` lê a fila em lote de 1, com falha
+      parcial; depois de `issuesMaxReceiveCount` recebimentos, a mensagem vai para a `issues-dlq`, que o
+      `reconciler` reprocessa como as outras DLQs (ADR 0007).
+    parameters:
+      stage:
+        $ref: '#/components/parameters/stage'
+    messages:
+      queryReconciled:
+        $ref: './provider-solution.asyncapi.yaml#/components/messages/QueryReconciled'
+      operationIssueRaised:
+        $ref: './provider-solution.asyncapi.yaml#/components/messages/OperationIssueRaised'
+      operationIssueUpdated:
+        $ref: './provider-solution.asyncapi.yaml#/components/messages/OperationIssueUpdated'
 operations:
+  receiveProviderResults:
+    action: receive
+    title: O resume retoma a execução com o resultado da provider
+    description: |
+      Os campos lidos e as regras de descarte estão na descrição do documento. O resultado retoma a tarefa da
+      execução pelo waiter do `workRef`; o que chega depois do prazo vira evidência `LATE`.
+    channel:
+      $ref: '#/channels/resultsQueue'
+    messages:
+      - $ref: '#/channels/resultsQueue/messages/enrichmentResolved'
+      - $ref: '#/channels/resultsQueue/messages/insurerResultRecorded'
+  receiveQueryReconciled:
+    action: receive
+    title: O issue-projector registra o resultado de uma reconciliação manual (M5)
+    description: |
+      Lê `eventId`, `operationId`, `organizationId`, `queryId`, `status` (`QUEUED`, `RUNNING`, `SUCCEEDED` ou
+      `FAILED`), `safeSummary` e `revision` (inteiro maior ou igual a 1), obrigatórios, e `occurredAt`, que vira o
+      `updatedAt` da operação. Grava no `OPERATION#<operationId>`, que a API criou com o pedido (`QUEUED`, revisão 0),
+      só quando a `revision` é maior que a gravada e a organização é a da operação, com o `CONSUMED#<eventId>` na
+      mesma transação; o evento repetido e a revisão antiga são descartados. O resultado com outra organização que a
+      da operação é descartado sem gravar nada e vai para o log em `WARN`. O par `queryId` e `organizationId` do
+      `QueryReconciled` é o do pedido e não prova que a consulta é da organização: ele não grava `QUERYREF#`.
+
+      Nas duas operações da fila `issues`, o evento de outra `source` ou de outro `detail-type` é ignorado e sai da
+      fila. A mensagem malformada (campo obrigatório ausente, `type` ou `status` fora dos valores aceitos, instante
+      inválido ou `revision` menor que 1) volta à fila e, no limite, vai para a `issues-dlq`; descartada lá, vira uma
+      ocorrência `DEAD_LETTER` da própria quote, com a organização e a consulta do evento e sem `RECONCILE`. Campos
+      desconhecidos são ignorados.
+    channel:
+      $ref: '#/channels/issuesQueue'
+    messages:
+      - $ref: '#/channels/issuesQueue/messages/queryReconciled'
+  receiveOperationIssue:
+    action: receive
+    title: O issue-projector projeta as ocorrências operacionais da provider (M5)
+    description: |
+      Lê `eventId`, `issueId`, `type` (um dos quatro tipos da provider: `UNKNOWN_QUERY`, `UNMATCHED_CALLBACK`,
+      `DEAD_LETTER` ou `STALE_OUTBOX`), `status` (`OPEN` ou `RESOLVED`), `firstSeenAt`, `lastSeenAt`, `safeSummary`
+      e `revision` (inteiro maior ou igual a 1), obrigatórios; `reconcilable` (falso quando ausente),
+      `organizationId`, `queryId` e `quoteId` são opcionais. Grava o `ISSUE#<issueId>`, com o `type` do evento em
+      `issueType`, só quando a `revision` é maior que a gravada, com o `CONSUMED#<eventId>` na mesma transação; o
+      evento repetido e a revisão antiga são descartados. Com `organizationId`, a ocorrência entra na listagem da
+      organização (`GET /v1/operations/issues`), da vista por último para a mais antiga. Com `organizationId` e
+      `queryId`, grava também o `QUERYREF#<queryId>`, que torna a consulta conhecida da organização e autoriza o
+      `RECONCILE` da ocorrência `reconcilable` e `OPEN`; a organização gravada primeiro não muda. As regras de
+      descarte comuns à fila estão em `receiveQueryReconciled`.
+    channel:
+      $ref: '#/channels/issuesQueue'
+    messages:
+      - $ref: '#/channels/issuesQueue/messages/operationIssueRaised'
+      - $ref: '#/channels/issuesQueue/messages/operationIssueUpdated'
   emitQuoteAccepted:
     action: send
     title: A API aceita uma cotação ou uma nova versão
@@ -285,8 +371,8 @@ components:
               operationId: op_m4_example_unknown
               organizationId: org-acme
               queryId: q_099d4987d3e2f2e6656e9285ac76a83e
-              reason: UNKNOWN_QUERY
-              requestedBy: operator-ana
+              reason: Consulta UNKNOWN há mais de 10 minutos; conferir com o fornecedor.
+              requestedBy: 8d2f6c3a-4b1e-4f7d-9a2c-5e6b7c8d9e0f
   schemas:
     Envelope:
       type: object
@@ -718,8 +804,13 @@ components:
           type: string
         reason:
           type: string
+          maxLength: 500
+          description: |
+            Motivo do operador, em texto livre, como chegou no `POST /v1/operations/queries/{queryId}/reconcile`. Serve
+            só à auditoria: não é código nem enum, e o operador é orientado a não incluir dado pessoal.
         requestedBy:
           type: string
+          description: Id do usuário no user pool (o `sub` do token) que pediu a reconciliação.
     WorkRef:
       type: string
       pattern: '^wr_[0-9a-f]{32}$'

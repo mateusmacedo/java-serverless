@@ -7,7 +7,9 @@ import com.mmda.serverless.quote.domain.CanonicalJson;
 import com.mmda.serverless.quote.domain.Deadlines;
 import com.mmda.serverless.quote.domain.Hashes;
 import com.mmda.serverless.quote.domain.Idempotency;
+import com.mmda.serverless.quote.domain.Outcome;
 import com.mmda.serverless.quote.domain.Permission;
+import com.mmda.serverless.quote.domain.Phase;
 import com.mmda.serverless.quote.domain.QuoteKeys;
 import com.mmda.serverless.quote.domain.QuoteSnapshot;
 import io.quarkus.security.Authenticated;
@@ -24,9 +26,13 @@ import jakarta.ws.rs.core.HttpHeaders;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -44,7 +50,6 @@ public class QuoteResource {
 
     private static final Logger LOG = Logger.getLogger(QuoteResource.class);
     static final String IDEMPOTENCY_KEY = "Idempotency-Key";
-    private static final int MAX_OFFERS_PAGE = 100;
 
     private final QuoteStore store;
     private final Catalog catalog;
@@ -152,6 +157,62 @@ public class QuoteResource {
                 .build();
     }
 
+    /**
+     * Cotações da organização, as mais novas primeiro, com o resumo da versão atual gravado no {@code META}. Os
+     * filtros são combinados; ao mudar a combinação, o cliente recomeça sem cursor.
+     */
+    @GET
+    public QuoteViews.QuotesPage list(@QueryParam("cursor") String cursor,
+            @QueryParam("limit") @DefaultValue(Paging.DEFAULT_LIMIT) String limit, @QueryParam("phase") String phase,
+            @QueryParam("outcome") String outcome, @QueryParam("createdFrom") String createdFrom,
+            @QueryParam("createdTo") String createdTo) {
+        String organizationId = caller.require(Permission.QUOTES_READ);
+        int pageSize = Paging.limit(limit);
+        List<ErrorResponse.FieldError> errors = new ArrayList<>();
+        QuoteStore.QuoteFilter filter = new QuoteStore.QuoteFilter(
+                enumValue(Phase.class, "phase", phase, errors), enumValue(Outcome.class, "outcome", outcome, errors),
+                instant("createdFrom", createdFrom, errors), instant("createdTo", createdTo, errors));
+        if (filter.createdFrom() != null && filter.createdTo() != null
+                && filter.createdFrom().isAfter(filter.createdTo())) {
+            errors.add(new ErrorResponse.FieldError("createdTo", "Use um instante igual ou posterior a createdFrom."));
+        }
+        String after = position(cursor);
+        if (!errors.isEmpty()) {
+            throw ApiException.validation(errors);
+        }
+        IndexPages.Page page = store.listQuotes(organizationId, filter, after, pageSize);
+        return new QuoteViews.QuotesPage(page.items().stream().map(QuoteViews.QuoteSummary::of).toList(),
+                page.nextPosition() == null ? null : QuoteViews.encodeCursor(page.nextPosition()));
+    }
+
+    /**
+     * Seleção definitiva de uma oferta (RN13): registra a intenção de proposta, sem emitir proposta. A mesma oferta
+     * devolve a seleção existente, mesmo com outra chave (T28); a oferta expirada, de versão substituída ou fora da
+     * versão é recusada sem gravar nada (T18). Permitida durante {@code QUOTING}, enquanto as outras consultas seguem.
+     */
+    @POST
+    @Path("/{quoteId}/versions/{version}/selection")
+    @Consumes(MediaType.APPLICATION_JSON)
+    public Response select(@PathParam("quoteId") String quoteId, @PathParam("version") String version,
+            @HeaderParam(IDEMPOTENCY_KEY) String idempotencyKey, String body) {
+        String organizationId = caller.require(Permission.OFFERS_SELECT);
+        Map<String, AttributeValue> meta = ownedMeta(quoteId, organizationId);
+        MutationRequests.requireIdempotencyKey(idempotencyKey);
+        JsonNode json = MutationRequests.json(body);
+        String offerId = MutationRequests.offerId(json);
+        int number = versionNumber(version);
+        QuoteStore.RecordedSelection selection = store.select(new QuoteStore.NewSelection(
+                new Idempotency.Key(organizationId, Idempotency.Operation.SELECT_OFFER, quoteId, idempotencyKey),
+                Hashes.sha256Hex(CanonicalJson.canonicalize(json)), quoteId, number, offerId, organizationId,
+                caller.userId(), Instant.now(clock)), meta);
+        LOG.infof("offer selected quoteId=%s version=%d selectionId=%s organizationId=%s correlationId=%s", quoteId,
+                number, selection.selectionId(), organizationId, correlation.id());
+        return Response.status(Response.Status.CREATED)
+                .entity(new QuoteViews.Selection(selection.selectionId(), selection.offerId(), selection.selectedAt(),
+                        QuoteViews.SELECTION_STATUS))
+                .build();
+    }
+
     @GET
     @Path("/{quoteId}/versions/{version}")
     public QuoteViews.QuoteVersion version(@PathParam("quoteId") String quoteId, @PathParam("version") String version) {
@@ -169,9 +230,9 @@ public class QuoteResource {
     @GET
     @Path("/{quoteId}/versions/{version}/offers")
     public QuoteViews.OffersPage offers(@PathParam("quoteId") String quoteId, @PathParam("version") String version,
-            @QueryParam("cursor") String cursor, @QueryParam("limit") @DefaultValue("20") String limit) {
+            @QueryParam("cursor") String cursor, @QueryParam("limit") @DefaultValue(Paging.DEFAULT_LIMIT) String limit) {
         String organizationId = caller.require(Permission.QUOTES_READ);
-        int pageSize = pageSize(limit);
+        int pageSize = Paging.limit(limit);
         int number = versionNumber(version);
         Map<String, AttributeValue> meta = ownedMeta(quoteId, organizationId);
         QuoteViews.VersionItems items = QuoteViews.VersionItems.of(number, store.versionItems(quoteId, number));
@@ -181,27 +242,49 @@ public class QuoteResource {
         return views.offers(number, meta, items, Instant.now(clock), cursor, pageSize);
     }
 
-    /**
-     * WHY: com {@code int} no {@code @QueryParam}, um valor não numérico vira {@code NotFoundException} no
-     * Quarkus REST, e o contrato pede 400 para parâmetro inválido.
-     */
-    private static int pageSize(String limit) {
-        try {
-            int size = Integer.parseInt(limit);
-            if (size >= 1 && size <= MAX_OFFERS_PAGE) {
-                return size;
-            }
-        } catch (NumberFormatException invalid) {
-            // NOTE: cai no mesmo erro de validação do valor fora da faixa
-        }
-        throw ApiException.validation(List.of(new ErrorResponse.FieldError("limit", "Use um valor de 1 a 100.")));
-    }
-
     /** Cotação de outra organização responde 404, como a inexistente: não revela que ela existe. */
     private Map<String, AttributeValue> ownedMeta(String quoteId, String organizationId) {
         return store.meta(quoteId)
                 .filter(meta -> organizationId.equals(Items.string(meta, "organizationId")))
                 .orElseThrow(ApiException::notFound);
+    }
+
+    private static <E extends Enum<E>> E enumValue(Class<E> type, String name, String value,
+            List<ErrorResponse.FieldError> errors) {
+        if (value == null || value.isEmpty()) {
+            return null;
+        }
+        try {
+            return Enum.valueOf(type, value);
+        } catch (IllegalArgumentException unknown) {
+            errors.add(new ErrorResponse.FieldError(name, "Valor fora do enum do contrato."));
+            return null;
+        }
+    }
+
+    private static Instant instant(String name, String value, List<ErrorResponse.FieldError> errors) {
+        if (value == null || value.isEmpty()) {
+            return null;
+        }
+        try {
+            return OffsetDateTime.parse(value).toInstant();
+        } catch (DateTimeParseException malformed) {
+            errors.add(new ErrorResponse.FieldError(name, "Use data e hora ISO 8601, como 2026-11-12T00:00:00Z."));
+            return null;
+        }
+    }
+
+    /**
+     * Posição de um cursor da listagem; fora do formato {@code <createdAt>#<quoteId>} ou maior que uma chave do
+     * índice, responde 400.
+     */
+    static String position(String cursor) {
+        String position = QuoteViews.decodeCursor(cursor);
+        if (position != null && (IndexPages.idOf(position) == null
+                || position.getBytes(StandardCharsets.UTF_8).length > IndexPages.MAX_POSITION_BYTES)) {
+            throw ApiException.validation(List.of(new ErrorResponse.FieldError("cursor", "Cursor inválido.")));
+        }
+        return position;
     }
 
     private static int versionNumber(String version) {

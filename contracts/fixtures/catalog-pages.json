@@ -1,0 +1,167 @@
+{
+  "description": "Respostas do catálogo para a org-acme, derivadas de catalog.json: clientes, veículos com busca e cursor, condutores e perfis de cobertura.",
+  "exchanges": [
+    {
+      "name": "clientes",
+      "request": {
+        "method": "GET",
+        "path": "/v1/catalog/customers"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "items": [
+            {
+              "id": "customer-acme-ana",
+              "label": "Ana Lima (sintética)"
+            },
+            {
+              "id": "customer-acme-bruno",
+              "label": "Bruno Rocha (sintética)"
+            },
+            {
+              "id": "customer-acme-frota",
+              "label": "Frota Acme Logística (sintética)"
+            }
+          ],
+          "nextCursor": null
+        }
+      }
+    },
+    {
+      "name": "veículos com busca",
+      "request": {
+        "method": "GET",
+        "path": "/v1/catalog/vehicles?search=hatch&limit=2"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "items": [
+            {
+              "id": "vehicle-hatch-2021",
+              "label": "Hatch 1.0 2021"
+            },
+            {
+              "id": "vehicle-salvage",
+              "label": "Hatch 2017 (recuperado de sinistro)"
+            }
+          ],
+          "nextCursor": "dmVoaWNsZS1zYWx2YWdl"
+        }
+      }
+    },
+    {
+      "name": "condutores",
+      "request": {
+        "method": "GET",
+        "path": "/v1/catalog/drivers"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "items": [
+            {
+              "id": "driver-acme-ana",
+              "label": "Ana Lima"
+            },
+            {
+              "id": "driver-acme-bruno",
+              "label": "Bruno Rocha"
+            },
+            {
+              "id": "driver-no-license",
+              "label": "Caio Nunes (sem data de habilitação no cadastro)"
+            },
+            {
+              "id": "driver-not-found",
+              "label": "Davi Souza (desconhecido do provedor)"
+            }
+          ],
+          "nextCursor": null
+        }
+      }
+    },
+    {
+      "name": "perfis de cobertura",
+      "request": {
+        "method": "GET",
+        "path": "/v1/catalog/coverage-profiles"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "items": [
+            {
+              "code": "COMPREHENSIVE",
+              "label": "Completa",
+              "summary": "Colisão, incêndio, roubo e furto e danos a terceiros",
+              "coverages": [
+                {
+                  "code": "COLLISION",
+                  "label": "Colisão",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "FIRE_THEFT",
+                  "label": "Incêndio, roubo e furto",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_PROPERTY",
+                  "label": "Danos materiais a terceiros",
+                  "insuredAmount": "100000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_BODILY",
+                  "label": "Danos corporais a terceiros",
+                  "insuredAmount": "100000.00"
+                }
+              ]
+            },
+            {
+              "code": "THEFT_AND_THIRD_PARTY",
+              "label": "Roubo, furto e terceiros",
+              "summary": "Incêndio, roubo e furto e danos a terceiros, sem colisão",
+              "coverages": [
+                {
+                  "code": "FIRE_THEFT",
+                  "label": "Incêndio, roubo e furto",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_PROPERTY",
+                  "label": "Danos materiais a terceiros",
+                  "insuredAmount": "50000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_BODILY",
+                  "label": "Danos corporais a terceiros",
+                  "insuredAmount": "50000.00"
+                }
+              ]
+            },
+            {
+              "code": "THIRD_PARTY",
+              "label": "Somente terceiros",
+              "summary": "Danos materiais e corporais a terceiros",
+              "coverages": [
+                {
+                  "code": "THIRD_PARTY_PROPERTY",
+                  "label": "Danos materiais a terceiros",
+                  "insuredAmount": "50000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_BODILY",
+                  "label": "Danos corporais a terceiros",
+                  "insuredAmount": "50000.00"
+                }
+              ]
+            }
+          ],
+          "nextCursor": null
+        }
+      }
+    }
+  ]
+}

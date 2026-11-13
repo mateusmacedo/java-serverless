@@ -7,6 +7,7 @@ import java.time.Clock;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -16,7 +17,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * Seguradora síncrona alpha (§10): responde a oferta na própria chamada; recusa o
- * {@code vehicle-alpha-declines} e fica indisponível (503) para o {@code vehicle-alpha-down}.
+ * {@code vehicle-alpha-declines} e fica indisponível (503) para o {@code vehicle-alpha-down}. As coberturas da
+ * oferta são as do perfil pedido no catálogo do laboratório; perfil fora do catálogo é pedido inválido.
  */
 @RestController
 class AlphaInsurerSimulatorController {
@@ -24,14 +26,17 @@ class AlphaInsurerSimulatorController {
     static final String VEHICLE_ALPHA_DECLINES = "vehicle-alpha-declines";
     static final String VEHICLE_ALPHA_DOWN = "vehicle-alpha-down";
     static final String INSURER_NAME = "Alpha Seguros";
+    private static final String DEDUCTIBLE_COVERAGE = "COLLISION";
     private static final BigDecimal DEDUCTIBLE_RATE = new BigDecimal("0.05");
     private static final int MAX_INSTALLMENTS = 10;
 
     private final SimulatorProperties properties;
+    private final LabCatalog catalog;
     private final Clock clock;
 
-    AlphaInsurerSimulatorController(SimulatorProperties properties, Clock clock) {
+    AlphaInsurerSimulatorController(SimulatorProperties properties, LabCatalog catalog, Clock clock) {
         this.properties = properties;
+        this.catalog = catalog;
         this.clock = clock;
     }
 
@@ -42,6 +47,12 @@ class AlphaInsurerSimulatorController {
             return ResponseEntity.badRequest().body(new ErrorBody("INVALID_REQUEST",
                     "clientReference and risk.vehicle are required"));
         }
+        Optional<LabCatalog.CoverageProfile> profile = catalog.coverageProfile(
+                RiskFields.coverageProfile(request.risk()));
+        if (profile.isEmpty()) {
+            return ResponseEntity.badRequest().body(new ErrorBody("INVALID_REQUEST",
+                    "risk.coverageProfile is not in the catalog"));
+        }
         if (VEHICLE_ALPHA_DOWN.equals(vehicleRef)) {
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(new ErrorBody("TEMPORARILY_UNAVAILABLE", null));
@@ -49,12 +60,12 @@ class AlphaInsurerSimulatorController {
         if (VEHICLE_ALPHA_DECLINES.equals(vehicleRef)) {
             return ResponseEntity.ok(new Decline(request.clientReference(), "DECLINED", "RISK_NOT_ACCEPTED"));
         }
-        return ResponseEntity.ok(offer(request.clientReference(), vehicleRef, RiskFields.usage(request.risk())));
+        return ResponseEntity.ok(offer(request.clientReference(), vehicleRef, RiskFields.usage(request.risk()),
+                profile.get()));
     }
 
-    private Offer offer(String clientReference, String vehicleRef, String usage) {
+    private Offer offer(String clientReference, String vehicleRef, String usage, LabCatalog.CoverageProfile profile) {
         BigDecimal total = SyntheticData.basePremium(vehicleRef, usage);
-        BigDecimal marketValue = SyntheticData.vehicle(vehicleRef).marketValue();
         BigDecimal installment = total.divide(BigDecimal.valueOf(MAX_INSTALLMENTS), 2, RoundingMode.HALF_UP);
         String expiresAt = clock.instant().plusSeconds(properties.offerValiditySeconds())
                 .truncatedTo(ChronoUnit.MILLIS).toString();
@@ -66,11 +77,13 @@ class AlphaInsurerSimulatorController {
                 new Premium(total.toPlainString(), "BRL"),
                 List.of(new PaymentOption(1, total.toPlainString()),
                         new PaymentOption(MAX_INSTALLMENTS, installment.toPlainString())),
-                List.of(new Coverage("COLLISION", "Colisão, incêndio e roubo", marketValue.toPlainString()),
-                        new Coverage("THIRD_PARTY_PROPERTY", "Danos materiais a terceiros", "100000.00"),
-                        new Coverage("THIRD_PARTY_BODILY", "Danos corporais a terceiros", "200000.00")),
-                List.of(new Deductible("COLLISION",
-                        marketValue.multiply(DEDUCTIBLE_RATE).setScale(2, RoundingMode.HALF_UP).toPlainString())),
+                profile.coverages().stream()
+                        .map(coverage -> new Coverage(coverage.code(), coverage.label(), coverage.insuredAmount()))
+                        .toList(),
+                profile.coverage(DEDUCTIBLE_COVERAGE)
+                        .map(coverage -> new Deductible(coverage.code(), new BigDecimal(coverage.insuredAmount())
+                                .multiply(DEDUCTIBLE_RATE).setScale(2, RoundingMode.HALF_UP).toPlainString()))
+                        .stream().toList(),
                 expiresAt);
     }
 

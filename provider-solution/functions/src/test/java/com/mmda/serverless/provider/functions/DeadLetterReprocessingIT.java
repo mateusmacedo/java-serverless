@@ -193,6 +193,66 @@ class DeadLetterReprocessingIT extends FlociIntegrationTest {
         assertThat(visible(RECONCILE_DLQ_URL)).isZero();
     }
 
+    @Test
+    void discardedReconciliationCarriesOnlyAnExistingQueryOfTheOrganizationOfTheRequest() {
+        String queryId = "q_" + UUID.randomUUID().toString().replace("-", "");
+        DYNAMO_DB.putItem(builder -> builder.tableName(TABLE).item(Map.of(
+                "pk", AttributeValue.fromS("QUERY#" + queryId),
+                "sk", AttributeValue.fromS("META"),
+                "type", AttributeValue.fromS("QUERY"),
+                "organizationId", AttributeValue.fromS("org-acme"),
+                "quoteId", AttributeValue.fromS("quote-dlq-owner"),
+                "state", AttributeValue.fromS("COMPLETED"))));
+        Map<String, AttributeValue> query = item("QUERY#" + queryId, "META");
+        String own = discardReconciliation("org-acme", queryId);
+        String foreign = discardReconciliation("org-globex", queryId);
+        String missing = discardReconciliation("org-acme", "q_" + UUID.randomUUID().toString().replace("-", ""));
+
+        await().atMost(Duration.ofSeconds(10)).until(() -> {
+            deadLetters.run(Instant.now());
+            return List.of(own, foreign, missing).stream().allMatch(operationId ->
+                    attribute(item("OPERATION#" + operationId, "META"), "status").orElseThrow().equals("FAILED"));
+        });
+
+        JsonNode ownIssue = raisedIssue("reconcile-requests|" + own);
+        assertThat(ownIssue.path("organizationId").asString()).isEqualTo("org-acme");
+        assertThat(ownIssue.path("queryId").asString()).isEqualTo(queryId);
+        assertThat(ownIssue.path("quoteId").asString()).as("the quote of the query, which the request does not carry")
+                .isEqualTo("quote-dlq-owner");
+        JsonNode foreignIssue = raisedIssue("reconcile-requests|" + foreign);
+        assertThat(foreignIssue.path("organizationId").asString()).isEqualTo("org-globex");
+        assertThat(foreignIssue.has("queryId")).as("another organization's query stays out of the issue").isFalse();
+        assertThat(foreignIssue.has("quoteId")).isFalse();
+        Map<String, AttributeValue> foreignItem = item("ISSUE#" + Identities.issueId(IssueType.DEAD_LETTER,
+                "reconcile-requests|" + foreign), "META");
+        assertThat(foreignItem).doesNotContainKeys("queryId", "quoteId");
+        assertThat(raisedIssue("reconcile-requests|" + missing).has("queryId"))
+                .as("a query the provider does not have is treated as nonexistent").isFalse();
+        assertThat(item("QUERY#" + queryId, "META")).isEqualTo(query);
+    }
+
+    /** Pedido de reconciliação {@code RUNNING} que chega à DLQ no último recebimento; devolve o {@code operationId}. */
+    private String discardReconciliation(String organizationId, String queryId) {
+        String operationId = "op_" + UUID.randomUUID().toString().replace("-", "");
+        QueryReconcileRequest request = new QueryReconcileRequest(UUID.randomUUID().toString(), operationId,
+                organizationId, queryId, "UNKNOWN_QUERY", "operator-" + organizationId);
+        assertThat(operationLedger.start(request, Instant.now())).isPresent();
+        String body = objectMapper.writeValueAsString(Map.of("version", "0", "id", UUID.randomUUID().toString(),
+                "detail-type", "QueryReconcileRequested", "source", "mmda.quote", "detail", request));
+        SQS.sendMessage(builder -> builder.queueUrl(RECONCILE_DLQ_URL).messageBody(body)
+                .messageAttributes(Map.of(DeadLetterReprocessor.ATTEMPT_ATTRIBUTE, MessageAttributeValue.builder()
+                        .dataType("Number").stringValue(Integer.toString(operations.dlqMaxAttempts())).build())));
+        return operationId;
+    }
+
+    /** {@code OperationIssueRaised} da primeira revisão da ocorrência {@code DEAD_LETTER} do alvo, no outbox. */
+    private JsonNode raisedIssue(String target) {
+        String issueId = Identities.issueId(IssueType.DEAD_LETTER, target);
+        Map<String, AttributeValue> outbox = item("OUTBOX#" + EventIds.operationIssue(issueId, 1), "META");
+        assertThat(attribute(outbox, "detailType")).as("issue of %s", target).contains("OperationIssueRaised");
+        return objectMapper.readTree(attribute(outbox, "detail").orElseThrow());
+    }
+
     /** O pedido já atendido chega à DLQ, como depois de uma entrega que caiu entre o efeito e a confirmação. */
     private void redriveFromTheDeadLetterQueue(String body, String sourceUrl, String deadLetterUrl,
                                                Function<SQSEvent, SQSBatchResponse> worker) {

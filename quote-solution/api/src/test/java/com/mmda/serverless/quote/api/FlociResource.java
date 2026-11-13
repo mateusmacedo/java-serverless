@@ -45,8 +45,14 @@ public class FlociResource implements QuarkusTestResourceLifecycleManager {
     static final TestUser WRITER = new TestUser("ana-writer",
             List.of("org_org-acme", "perm_quotes_read", "perm_quotes_write", "perm_offers_select"));
     static final TestUser READER = new TestUser("rui-reader", List.of("org_org-acme", "perm_quotes_read"));
+    /** {@code perm_offers_select} desde o M5: a seleção numa cotação de outra organização responde 404 (T18). */
     static final TestUser GLOBEX = new TestUser("carla-globex",
-            List.of("org_org-globex", "perm_quotes_read", "perm_quotes_write"));
+            List.of("org_org-globex", "perm_quotes_read", "perm_quotes_write", "perm_offers_select"));
+    /** Operadores do M5, com as permissões de operação e sem as de cotação. */
+    static final TestUser OPERATOR = new TestUser("olga-operator",
+            List.of("org_org-acme", "perm_operations_read", "perm_operations_reconcile"));
+    static final TestUser GLOBEX_OPERATOR = new TestUser("gil-globex-operator",
+            List.of("org_org-globex", "perm_operations_read", "perm_operations_reconcile"));
 
     private FlociContainer floci;
 
@@ -73,12 +79,12 @@ public class FlociResource implements QuarkusTestResourceLifecycleManager {
                             ExplicitAuthFlowsType.ALLOW_REFRESH_TOKEN_AUTH))
                     .userPoolClient().clientId();
             for (String group : List.of("org_org-acme", "org_org-globex", "perm_quotes_read", "perm_quotes_write",
-                    "perm_offers_select")) {
+                    "perm_offers_select", "perm_operations_read", "perm_operations_reconcile")) {
                 cognito.createGroup(builder -> builder.userPoolId(poolId).groupName(group));
             }
 
             Map<String, String> properties = new HashMap<>();
-            for (TestUser user : List.of(WRITER, READER, GLOBEX)) {
+            for (TestUser user : List.of(WRITER, READER, GLOBEX, OPERATOR, GLOBEX_OPERATOR)) {
                 createUser(cognito, poolId, user);
                 var tokens = cognito.initiateAuth(builder -> builder
                         .clientId(clientId)

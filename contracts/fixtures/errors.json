@@ -1,0 +1,164 @@
+{
+  "description": "Erros padrão: 400 com fieldErrors, 401 de sessão inválida, 403 sem permissão (seleção sem offers:select e reconciliação sem operations:reconcile), 404 de recurso não acessível, 415, 429 com Retry-After e 503 antes da aceitação durável, que o cliente reenvia com a mesma chave.",
+  "exchanges": [
+    {
+      "name": "validação",
+      "request": {
+        "method": "POST",
+        "path": "/v1/quotes",
+        "headers": {
+          "Idempotency-Key": "invalid-1"
+        },
+        "body": {
+          "product": "AUTO",
+          "applicantRef": "customer-acme-ana",
+          "risk": {
+            "vehicleRef": "vehicle-hatch-2021",
+            "usage": "BOAT",
+            "principalDriverRef": "driver-acme-ana"
+          },
+          "coverageProfile": "COMPREHENSIVE",
+          "desiredStartDate": "01/12/2026"
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "VALIDATION_ERROR",
+          "message": "A requisição tem campos inválidos.",
+          "correlationId": "7d1c2a9e-1f6b-4c3a-9e8d-0a1b2c3d4e5f",
+          "fieldErrors": [
+            {
+              "path": "risk.usage",
+              "message": "Use PERSONAL ou COMMERCIAL."
+            },
+            {
+              "path": "desiredStartDate",
+              "message": "Use uma data válida no formato YYYY-MM-DD."
+            }
+          ]
+        }
+      },
+      "invalidRequest": true
+    },
+    {
+      "name": "sessão inválida",
+      "request": {
+        "method": "GET",
+        "path": "/v1/me"
+      },
+      "response": {
+        "status": 401,
+        "body": {
+          "code": "UNAUTHENTICATED",
+          "message": "Sessão inválida ou ausente.",
+          "correlationId": "7d1c2a9e-1f6b-4c3a-9e8d-0a1b2c3d4e5f"
+        }
+      }
+    },
+    {
+      "name": "seleção sem offers:select",
+      "request": {
+        "method": "POST",
+        "path": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/1/selection",
+        "headers": {
+          "Idempotency-Key": "select-6"
+        },
+        "body": {
+          "offerId": "of_0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+        }
+      },
+      "response": {
+        "status": 403,
+        "body": {
+          "code": "FORBIDDEN",
+          "message": "O usuário não tem permissão para esta operação.",
+          "correlationId": "7d1c2a9e-1f6b-4c3a-9e8d-0a1b2c3d4e5f"
+        }
+      }
+    },
+    {
+      "name": "reconciliação sem operations:reconcile",
+      "request": {
+        "method": "POST",
+        "path": "/v1/operations/queries/q_099d4987d3e2f2e6656e9285ac76a83e/reconcile",
+        "headers": {
+          "Idempotency-Key": "reconcile-9"
+        },
+        "body": {
+          "reason": "Consulta sem resposta do fornecedor."
+        }
+      },
+      "response": {
+        "status": 403,
+        "body": {
+          "code": "FORBIDDEN",
+          "message": "O usuário não tem permissão para esta operação.",
+          "correlationId": "7d1c2a9e-1f6b-4c3a-9e8d-0a1b2c3d4e5f"
+        }
+      }
+    },
+    {
+      "name": "cotação de outra organização",
+      "request": {
+        "method": "GET",
+        "path": "/v1/quotes/8e2a7d3c-41b6-4f0e-9c5a-1d2e3f4a5b6c/versions/1"
+      },
+      "response": {
+        "status": 404,
+        "body": {
+          "code": "NOT_FOUND",
+          "message": "Recurso não encontrado.",
+          "correlationId": "7d1c2a9e-1f6b-4c3a-9e8d-0a1b2c3d4e5f"
+        }
+      }
+    },
+    {
+      "name": "quota excedida",
+      "request": {
+        "method": "GET",
+        "path": "/v1/quotes"
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "Retry-After": "5"
+        },
+        "body": {
+          "code": "RATE_LIMITED",
+          "message": "Muitas requisições; tente de novo depois do Retry-After.",
+          "correlationId": "7d1c2a9e-1f6b-4c3a-9e8d-0a1b2c3d4e5f"
+        }
+      }
+    },
+    {
+      "name": "indisponível antes da aceitação",
+      "request": {
+        "method": "POST",
+        "path": "/v1/quotes",
+        "headers": {
+          "Idempotency-Key": "intent-2"
+        },
+        "body": {
+          "product": "AUTO",
+          "applicantRef": "customer-acme-ana",
+          "risk": {
+            "vehicleRef": "vehicle-hatch-2021",
+            "usage": "PERSONAL",
+            "principalDriverRef": "driver-acme-ana"
+          },
+          "coverageProfile": "COMPREHENSIVE",
+          "desiredStartDate": "2026-12-01"
+        }
+      },
+      "response": {
+        "status": 503,
+        "body": {
+          "code": "SERVICE_UNAVAILABLE",
+          "message": "Não foi possível aceitar a cotação agora; reenvie com a mesma Idempotency-Key.",
+          "correlationId": "7d1c2a9e-1f6b-4c3a-9e8d-0a1b2c3d4e5f"
+        }
+      }
+    }
+  ]
+}

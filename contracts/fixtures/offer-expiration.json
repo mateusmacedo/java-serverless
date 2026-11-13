@@ -1,0 +1,192 @@
+{
+  "description": "Expiração: depois do validUntil no relógio do servidor, a oferta deixa de ser selecionável (OFFER_EXPIRED) e SELECT_OFFER sai das ações. Se a oferta expira entre a leitura e o envio, o servidor decide e responde 409 OFFER_EXPIRED, sem gravar intenção.",
+  "exchanges": [
+    {
+      "name": "oferta vencida",
+      "request": {
+        "method": "GET",
+        "path": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/1/offers"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "revision": 3,
+          "serverTime": "2026-11-12T10:31:00.000Z",
+          "items": [
+            {
+              "id": "of_0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+              "insurerId": "alpha",
+              "insurerName": "Alpha Seguros",
+              "premiumTotal": "2450.90",
+              "currency": "BRL",
+              "installments": [
+                {
+                  "count": 1,
+                  "amount": "2450.90"
+                },
+                {
+                  "count": 10,
+                  "amount": "245.09"
+                }
+              ],
+              "coverages": [
+                {
+                  "code": "COLLISION",
+                  "label": "Colisão",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "FIRE_THEFT",
+                  "label": "Incêndio, roubo e furto",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_PROPERTY",
+                  "label": "Danos materiais a terceiros",
+                  "insuredAmount": "100000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_BODILY",
+                  "label": "Danos corporais a terceiros",
+                  "insuredAmount": "100000.00"
+                }
+              ],
+              "deductibles": [
+                {
+                  "coverageCode": "COLLISION",
+                  "amount": "3500.00"
+                }
+              ],
+              "validUntil": "2026-11-12T10:30:04.000Z",
+              "selectable": false,
+              "unavailabilityReason": "OFFER_EXPIRED"
+            }
+          ],
+          "nextCursor": null
+        }
+      }
+    },
+    {
+      "name": "sem SELECT_OFFER",
+      "request": {
+        "method": "GET",
+        "path": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/1"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "quoteId": "5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11",
+          "version": 1,
+          "currentVersion": 1,
+          "snapshot": {
+            "product": "AUTO",
+            "applicantRef": "customer-acme-ana",
+            "applicant": {
+              "id": "customer-acme-ana",
+              "label": "Ana Lima (sintética)"
+            },
+            "risk": {
+              "vehicleRef": "vehicle-hatch-2021",
+              "usage": "PERSONAL",
+              "principalDriverRef": "driver-acme-ana",
+              "vehicle": {
+                "id": "vehicle-hatch-2021",
+                "label": "Hatch 1.0 2021",
+                "make": "Fiat",
+                "model": "Argo",
+                "year": 2021,
+                "salvage": false
+              },
+              "principalDriver": {
+                "id": "driver-acme-ana",
+                "label": "Ana Lima",
+                "licenseDate": "2012-03-15"
+              }
+            },
+            "coverageProfile": "COMPREHENSIVE",
+            "coverage": {
+              "code": "COMPREHENSIVE",
+              "label": "Completa",
+              "summary": "Colisão, incêndio, roubo e furto e danos a terceiros",
+              "coverages": [
+                {
+                  "code": "COLLISION",
+                  "label": "Colisão",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "FIRE_THEFT",
+                  "label": "Incêndio, roubo e furto",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_PROPERTY",
+                  "label": "Danos materiais a terceiros",
+                  "insuredAmount": "100000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_BODILY",
+                  "label": "Danos corporais a terceiros",
+                  "insuredAmount": "100000.00"
+                }
+              ]
+            },
+            "desiredStartDate": "2026-12-01"
+          },
+          "phase": "TERMINAL",
+          "outcome": "PARTIAL",
+          "outcomeReason": null,
+          "supersededAt": null,
+          "revision": 13,
+          "updatedAt": "2026-11-12T10:00:22.000Z",
+          "serverTime": "2026-11-12T10:31:00.000Z",
+          "retryAfterSeconds": null,
+          "missingFields": [],
+          "insurerResults": [
+            {
+              "insurerId": "alpha",
+              "insurerName": "Alpha Seguros",
+              "status": "QUOTED",
+              "reasonCode": null,
+              "missingFields": [],
+              "updatedAt": "2026-11-12T10:00:04.000Z"
+            },
+            {
+              "insurerId": "beta",
+              "insurerName": "Beta Seguros",
+              "status": "TIMED_OUT",
+              "reasonCode": "STEP_TIMEOUT",
+              "missingFields": [],
+              "updatedAt": "2026-11-12T10:00:22.000Z"
+            }
+          ],
+          "selection": null,
+          "allowedActions": [
+            "CREATE_VERSION"
+          ]
+        }
+      }
+    },
+    {
+      "name": "seleção recusada",
+      "request": {
+        "method": "POST",
+        "path": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/1/selection",
+        "headers": {
+          "Idempotency-Key": "select-expired"
+        },
+        "body": {
+          "offerId": "of_0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+        }
+      },
+      "response": {
+        "status": 409,
+        "body": {
+          "code": "OFFER_EXPIRED",
+          "message": "A oferta expirou; atualize as ofertas da versão.",
+          "correlationId": "7d1c2a9e-1f6b-4c3a-9e8d-0a1b2c3d4e5f"
+        }
+      }
+    }
+  ]
+}

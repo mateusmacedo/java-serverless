@@ -66,6 +66,20 @@
     </dependencies>
 
     <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+            <!-- WHY: os simuladores usam o mesmo catálogo de fixtures do contrato com o frontend e da quote-api (PRD,
+                 contrato compartilhado); o arquivo entra no zip sem cópia no módulo -->
+            <resource>
+                <directory>${project.basedir}/../../contracts/fixtures</directory>
+                <targetPath>fixtures</targetPath>
+                <includes>
+                    <include>catalog.json</include>
+                </includes>
+            </resource>
+        </resources>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

@@ -25,6 +25,12 @@ public final class QuoteEvents {
 
     public static final String ENRICHMENT_RESOLVED = "EnrichmentResolved";
     public static final String INSURER_RESULT_RECORDED = "InsurerResultRecorded";
+    public static final String OFFER_SELECTED = "OfferSelected";
+    public static final String QUERY_RECONCILE_REQUESTED = "QueryReconcileRequested";
+    /** Eventos da provider projetados pelo {@code issue-projector} (M5). */
+    public static final String QUERY_RECONCILED = "QueryReconciled";
+    public static final String OPERATION_ISSUE_RAISED = "OperationIssueRaised";
+    public static final String OPERATION_ISSUE_UPDATED = "OperationIssueUpdated";
 
     public static final String ENRICHMENT_PROVIDER = "enrichment-sim";
     public static final String ENRICHMENT_OPERATION = "VEHICLE_DRIVER_PROFILE";
@@ -107,6 +113,32 @@ public final class QuoteEvents {
         detail.put("outcome", outcome.name());
         detail.put("outcomeReason", outcomeReason == null ? null : outcomeReason.name());
         detail.put("offerCount", offerCount);
+        return detail;
+    }
+
+    /** Intenção de proposta registrada; o {@code eventId} é o UUIDv5 do {@code selectionId}. */
+    public static Map<String, Object> offerSelected(Instant occurredAt, String quoteId, int version, String offerId,
+            String selectionId) {
+        Map<String, Object> detail = envelope(Hashes.uuidV5(selectionId).toString(), occurredAt);
+        detail.put("quoteId", quoteId);
+        detail.put("version", version);
+        detail.put("offerId", offerId);
+        detail.put("selectionId", selectionId);
+        return detail;
+    }
+
+    /**
+     * Pedido de reconciliação manual de uma consulta da provider. O {@code eventId} é aleatório: a provider
+     * deduplica pelo {@code operationId}.
+     */
+    public static Map<String, Object> queryReconcileRequested(String eventId, Instant occurredAt, String operationId,
+            String organizationId, String queryId, String reason, String requestedBy) {
+        Map<String, Object> detail = envelope(eventId, occurredAt);
+        detail.put("operationId", operationId);
+        detail.put("organizationId", organizationId);
+        detail.put("queryId", queryId);
+        detail.put("reason", reason);
+        detail.put("requestedBy", requestedBy);
         return detail;
     }
 

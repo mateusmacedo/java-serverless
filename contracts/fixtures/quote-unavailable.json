@@ -1,0 +1,190 @@
+{
+  "description": "Indisponibilidade: seguradora fora do ar ou sem resposta no prazo (UNAVAILABLE e TIMED_OUT) sem nenhuma oferta termina TECHNICAL_FAILURE, nunca NO_OFFER. A falha do enriquecimento obrigatório também termina TECHNICAL_FAILURE, sem consultar seguradoras.",
+  "exchanges": [
+    {
+      "name": "seguradoras indisponíveis",
+      "request": {
+        "method": "GET",
+        "path": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/1"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "quoteId": "5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11",
+          "version": 1,
+          "currentVersion": 1,
+          "snapshot": {
+            "product": "AUTO",
+            "applicantRef": "customer-acme-ana",
+            "applicant": {
+              "id": "customer-acme-ana",
+              "label": "Ana Lima (sintética)"
+            },
+            "risk": {
+              "vehicleRef": "vehicle-hatch-2021",
+              "usage": "PERSONAL",
+              "principalDriverRef": "driver-acme-ana",
+              "vehicle": {
+                "id": "vehicle-hatch-2021",
+                "label": "Hatch 1.0 2021",
+                "make": "Fiat",
+                "model": "Argo",
+                "year": 2021,
+                "salvage": false
+              },
+              "principalDriver": {
+                "id": "driver-acme-ana",
+                "label": "Ana Lima",
+                "licenseDate": "2012-03-15"
+              }
+            },
+            "coverageProfile": "COMPREHENSIVE",
+            "coverage": {
+              "code": "COMPREHENSIVE",
+              "label": "Completa",
+              "summary": "Colisão, incêndio, roubo e furto e danos a terceiros",
+              "coverages": [
+                {
+                  "code": "COLLISION",
+                  "label": "Colisão",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "FIRE_THEFT",
+                  "label": "Incêndio, roubo e furto",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_PROPERTY",
+                  "label": "Danos materiais a terceiros",
+                  "insuredAmount": "100000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_BODILY",
+                  "label": "Danos corporais a terceiros",
+                  "insuredAmount": "100000.00"
+                }
+              ]
+            },
+            "desiredStartDate": "2026-12-01"
+          },
+          "phase": "TERMINAL",
+          "outcome": "TECHNICAL_FAILURE",
+          "outcomeReason": "INSURER_TECHNICAL_FAILURE",
+          "supersededAt": null,
+          "revision": 9,
+          "updatedAt": "2026-11-12T10:00:22.000Z",
+          "serverTime": "2026-11-12T10:00:23.000Z",
+          "retryAfterSeconds": null,
+          "missingFields": [],
+          "insurerResults": [
+            {
+              "insurerId": "alpha",
+              "insurerName": "Alpha Seguros",
+              "status": "UNAVAILABLE",
+              "reasonCode": "PROVIDER_UNAVAILABLE",
+              "missingFields": [],
+              "updatedAt": "2026-11-12T10:00:04.000Z"
+            },
+            {
+              "insurerId": "beta",
+              "insurerName": "Beta Seguros",
+              "status": "TIMED_OUT",
+              "reasonCode": "STEP_TIMEOUT",
+              "missingFields": [],
+              "updatedAt": "2026-11-12T10:00:22.000Z"
+            }
+          ],
+          "selection": null,
+          "allowedActions": [
+            "CREATE_VERSION"
+          ]
+        }
+      }
+    },
+    {
+      "name": "enriquecimento indisponível",
+      "request": {
+        "method": "GET",
+        "path": "/v1/quotes/5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11/versions/1"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "quoteId": "5b0b6c1e-5f1d-4a8e-9a39-2f1f5d6e7c11",
+          "version": 1,
+          "currentVersion": 1,
+          "snapshot": {
+            "product": "AUTO",
+            "applicantRef": "customer-acme-ana",
+            "applicant": {
+              "id": "customer-acme-ana",
+              "label": "Ana Lima (sintética)"
+            },
+            "risk": {
+              "vehicleRef": "vehicle-enrichment-down",
+              "usage": "PERSONAL",
+              "principalDriverRef": "driver-acme-ana",
+              "vehicle": {
+                "id": "vehicle-enrichment-down",
+                "label": "Sedã 2019 (provedor fora do ar)",
+                "make": "Honda",
+                "model": "City",
+                "year": 2019,
+                "salvage": false
+              },
+              "principalDriver": {
+                "id": "driver-acme-ana",
+                "label": "Ana Lima",
+                "licenseDate": "2012-03-15"
+              }
+            },
+            "coverageProfile": "COMPREHENSIVE",
+            "coverage": {
+              "code": "COMPREHENSIVE",
+              "label": "Completa",
+              "summary": "Colisão, incêndio, roubo e furto e danos a terceiros",
+              "coverages": [
+                {
+                  "code": "COLLISION",
+                  "label": "Colisão",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "FIRE_THEFT",
+                  "label": "Incêndio, roubo e furto",
+                  "insuredAmount": "90000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_PROPERTY",
+                  "label": "Danos materiais a terceiros",
+                  "insuredAmount": "100000.00"
+                },
+                {
+                  "code": "THIRD_PARTY_BODILY",
+                  "label": "Danos corporais a terceiros",
+                  "insuredAmount": "100000.00"
+                }
+              ]
+            },
+            "desiredStartDate": "2026-12-01"
+          },
+          "phase": "TERMINAL",
+          "outcome": "TECHNICAL_FAILURE",
+          "outcomeReason": "ENRICHMENT_FAILED",
+          "supersededAt": null,
+          "revision": 4,
+          "updatedAt": "2026-11-12T10:00:04.000Z",
+          "serverTime": "2026-11-12T10:00:05.000Z",
+          "retryAfterSeconds": null,
+          "missingFields": [],
+          "insurerResults": [],
+          "selection": null,
+          "allowedActions": [
+            "CREATE_VERSION"
+          ]
+        }
+      }
+    }
+  ]
+}

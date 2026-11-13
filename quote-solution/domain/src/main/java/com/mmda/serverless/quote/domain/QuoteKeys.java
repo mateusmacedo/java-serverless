@@ -27,6 +27,11 @@ public final class QuoteKeys {
      * retirado pelo {@code refreshSummary} ou pelo reparo do {@code reconciler} (M4).
      */
     public static final String SUMMARY_PENDING = "SUMMARY_PENDING";
+    /**
+     * Ocorrência da quote que se resolve sozinha ({@code STUCK_VERSION}), ainda aberta: o {@code reconciler} a
+     * revisa e a resolve quando a situação some (M5). As projetadas da provider nunca entram neste índice.
+     */
+    public static final String ISSUE_OPEN = "ISSUE_OPEN";
 
     /** Valores do atributo {@code type}; o filtro do stream depende de {@code OUTBOX}. */
     public static final String TYPE_QUOTE = "QUOTE";
@@ -42,6 +47,10 @@ public final class QuoteKeys {
     public static final String TYPE_CONSUMED = "CONSUMED";
     /** Ocorrência ({@code ISSUE#}); o tipo da ocorrência fica em {@code issueType}, como na provider. */
     public static final String TYPE_ISSUE = "ISSUE";
+    /** Consulta conhecida da organização ({@code QUERYREF#}), que autoriza o {@code RECONCILE} (M5). */
+    public static final String TYPE_QUERYREF = "QUERYREF";
+    /** Reconciliação manual pedida pela API ({@code OPERATION#}) (M5). */
+    public static final String TYPE_OPERATION = "OPERATION";
 
     private QuoteKeys() {
     }
@@ -109,6 +118,26 @@ public final class QuoteKeys {
     /** {@code gsi1pk} das ocorrências de uma organização, lido pelo {@code GET /v1/operations/issues} (M5). */
     public static String issuesIndexPk(String organizationId) {
         return "ISSUES#" + organizationId;
+    }
+
+    public static String queryRefPk(String queryId) {
+        return "QUERYREF#" + queryId;
+    }
+
+    public static String operationPk(String operationId) {
+        return "OPERATION#" + operationId;
+    }
+
+    /**
+     * Identificador da seleção: uma por versão (RN13). WHY: determinístico pela versão, então o
+     * {@code OfferSelected} de uma versão tem sempre o mesmo {@code eventId}, mesmo numa corrida de pedidos.
+     */
+    public static String selectionId(String quoteId, int version) {
+        return "sel_" + Hashes.sha256Hex("selection|" + quoteId + "|" + version).substring(0, 32);
+    }
+
+    public static String operationStatusUrl(String operationId) {
+        return "/v1/operations/" + operationId;
     }
 
     /** Nome determinístico da execução; não leva dado pessoal (RN04). */

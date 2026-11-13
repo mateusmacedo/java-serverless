@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.math.BigDecimal;
+import org.hamcrest.Matchers;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -51,6 +52,35 @@ class AlphaInsurerSimulatorControllerTest {
                 .isEqualByComparingTo(SyntheticData.basePremium("vehicle-hatch-2019", "PERSONAL"));
         assertThat(java.time.Instant.parse(offer.path("expiresAt").asString()))
                 .isAfter(java.time.Instant.now().plusSeconds(1700));
+    }
+
+    @Test
+    void coveragesAreTheOnesOfTheRequestedProfileInTheCatalog() throws Exception {
+        quote("q_1", """
+                {"vehicle":{"id":"vehicle-hatch-2021","make":"Fiat","model":"Argo","year":2021,"salvage":false},\
+                "usage":"PERSONAL","coverageProfile":{"code":"COMPREHENSIVE","label":"Completa"}}""")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.coverages.length()").value(4))
+                .andExpect(jsonPath("$.coverages[0].code").value("COLLISION"))
+                .andExpect(jsonPath("$.coverages[0].description").value("Colisão"))
+                .andExpect(jsonPath("$.coverages[0].limit").value("90000.00"))
+                .andExpect(jsonPath("$.coverages[1].code").value("FIRE_THEFT"))
+                .andExpect(jsonPath("$.coverages[3].limit").value("100000.00"))
+                .andExpect(jsonPath("$.deductibles.length()").value(1))
+                .andExpect(jsonPath("$.deductibles[0].amount").value("4500.00"));
+        quote("q_2", "{\"vehicle\":{\"id\":\"vehicle-hatch-2021\"},\"coverageProfile\":\"THIRD_PARTY\"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.coverages[*].code").value(
+                        Matchers.contains("THIRD_PARTY_PROPERTY", "THIRD_PARTY_BODILY")))
+                .andExpect(jsonPath("$.coverages[0].limit").value("50000.00"))
+                .andExpect(jsonPath("$.deductibles").isEmpty());
+    }
+
+    @Test
+    void coverageProfileOutsideTheCatalogIsAnInvalidRequest() throws Exception {
+        quote("q_1", "{\"vehicle\":{\"id\":\"vehicle-hatch-2021\"},\"coverageProfile\":{\"code\":\"PLATINUM\"}}")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
     }
 
     @Test

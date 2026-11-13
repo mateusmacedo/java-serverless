@@ -77,6 +77,22 @@ final class QuoteViews {
     record OffersPage(long revision, String serverTime, List<Offer> items, String nextCursor) {
     }
 
+    /** Resumo da cotação na listagem, lido do {@code META}: fase, resultado e ofertas da versão atual. */
+    @JsonInclude(JsonInclude.Include.ALWAYS)
+    record QuoteSummary(String id, int currentVersion, String phase, String outcome, String createdAt,
+            int offerCount) {
+
+        static QuoteSummary of(Map<String, AttributeValue> meta) {
+            return new QuoteSummary(Items.string(meta, "quoteId"), (int) Items.number(meta, "currentVersion", 1),
+                    Items.string(meta, "phase"), Items.string(meta, "outcome"), Items.string(meta, "createdAt"),
+                    (int) Items.number(meta, "offerCount", 0));
+        }
+    }
+
+    @JsonInclude(JsonInclude.Include.ALWAYS)
+    record QuotesPage(List<QuoteSummary> items, String nextCursor) {
+    }
+
     /** Itens de uma versão separados por tipo. */
     record VersionItems(Map<String, AttributeValue> version, List<Map<String, AttributeValue>> results,
             List<Map<String, AttributeValue>> offers, Map<String, AttributeValue> selection) {
@@ -170,12 +186,15 @@ final class QuoteViews {
                 Items.string(meta, "selectionId") != null);
     }
 
-    /** Mudança mais recente entre a versão, os resultados e as ofertas. */
+    /** Mudança mais recente entre a versão, os resultados, as ofertas e a seleção. */
     private static String updatedAt(VersionItems items) {
         List<String> instants = new ArrayList<>();
         instants.add(Items.string(items.version(), "updatedAt"));
         items.results().forEach(result -> instants.add(Items.string(result, "updatedAt")));
         items.offers().forEach(offer -> instants.add(Items.string(offer, "createdAt")));
+        if (items.selection() != null) {
+            instants.add(Items.string(items.selection(), "selectedAt"));
+        }
         return instants.stream().filter(value -> value != null).map(Instant::parse).max(Comparator.naturalOrder())
                 .map(Instant::toString).orElse(null);
     }

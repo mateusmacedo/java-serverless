@@ -13,4 +13,9 @@ class SimulatorsConfiguration {
     Clock clock() {
         return Clock.systemUTC();
     }
+
+    @Bean
+    LabCatalog labCatalog() {
+        return LabCatalog.fromClasspath();
+    }
 }

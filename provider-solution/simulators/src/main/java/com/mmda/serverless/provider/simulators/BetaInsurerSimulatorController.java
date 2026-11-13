@@ -9,6 +9,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -21,9 +22,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * Seguradora assíncrona beta (§10): aceita o pedido com {@code 202} e um {@code providerRequestId} e entrega o
- * resultado por callback, agendado na fila {@code sim-callbacks}. O veículo escolhe o cenário; o resultado e o
- * agendamento são decididos antes da resposta, então o {@code vehicle-beta-early} chega antes do {@code 202}
- * gravado pelo worker.
+ * resultado por callback, agendado na fila {@code sim-callbacks}. O veículo escolhe o cenário, e as coberturas
+ * são as do perfil pedido no catálogo. O resultado e o agendamento são decididos antes da resposta, então o
+ * {@code vehicle-beta-early} chega antes do {@code 202} gravado pelo worker.
  */
 @RestController
 class BetaInsurerSimulatorController {
@@ -32,19 +33,22 @@ class BetaInsurerSimulatorController {
     static final String INSURER_NAME = "Beta Seguros";
     static final int DUPLICATE_GAP_SECONDS = 2;
     private static final BigDecimal PREMIUM_FACTOR = new BigDecimal("1.06");
+    private static final String DEDUCTIBLE_COVERAGE = "COLLISION";
     private static final BigDecimal DEDUCTIBLE_RATE = new BigDecimal("0.04");
     private static final int MAX_INSTALLMENTS = 12;
 
     private final BetaQuotes quotes;
     private final ScheduledCallbacks callbacks;
     private final SimulatorProperties properties;
+    private final LabCatalog catalog;
     private final Clock clock;
 
     BetaInsurerSimulatorController(BetaQuotes quotes, ScheduledCallbacks callbacks, SimulatorProperties properties,
-                                   Clock clock) {
+                                   LabCatalog catalog, Clock clock) {
         this.quotes = quotes;
         this.callbacks = callbacks;
         this.properties = properties;
+        this.catalog = catalog;
         this.clock = clock;
     }
 
@@ -55,13 +59,19 @@ class BetaInsurerSimulatorController {
             return ResponseEntity.badRequest().body(new ErrorBody("INVALID_REQUEST",
                     "clientReference and risk.vehicle are required"));
         }
+        Optional<LabCatalog.CoverageProfile> profile = catalog.coverageProfile(
+                RiskFields.coverageProfile(request.risk()));
+        if (profile.isEmpty()) {
+            return ResponseEntity.badRequest().body(new ErrorBody("INVALID_REQUEST",
+                    "risk.coverageProfile is not in the catalog"));
+        }
         BetaScenario scenario = BetaScenario.of(vehicleRef);
         Instant now = clock.instant().truncatedTo(ChronoUnit.MILLIS);
         String providerRequestId = "beta-" + UUID.randomUUID();
         List<Delivery> deliveries = deliveries(scenario);
         int readyAfter = deliveries.isEmpty() ? properties.betaCallbackDelaySeconds() : deliveries.getFirst().delaySeconds();
         Map<String, Object> result = result(scenario, request.clientReference(), vehicleRef,
-                RiskFields.usage(request.risk()), now);
+                RiskFields.usage(request.risk()), profile.get(), now);
         quotes.save(new BetaQuote(providerRequestId, request.clientReference(), scenario.name(), now,
                 now.plusSeconds(readyAfter), result));
         String externalEventId = "bev-" + UUID.randomUUID();
@@ -104,19 +114,19 @@ class BetaInsurerSimulatorController {
     }
 
     private Map<String, Object> result(BetaScenario scenario, String clientReference, String vehicleRef, String usage,
-                                       Instant now) {
+                                       LabCatalog.CoverageProfile profile, Instant now) {
         return switch (scenario) {
             case DECLINES -> Map.of("outcome", "DECLINED", "declineCode", "RISK_NOT_ACCEPTED");
             case NEEDS_INFO -> Map.of("outcome", "PENDING_INFORMATION", "pendingFields", List.of(Map.of(
                     "field", "risk.principalDriver.licenseDate", "code", "MISSING_LICENSE_DATE")));
-            default -> offer(clientReference, vehicleRef, usage, now);
+            default -> offer(clientReference, vehicleRef, usage, profile, now);
         };
     }
 
-    private Map<String, Object> offer(String clientReference, String vehicleRef, String usage, Instant now) {
+    private Map<String, Object> offer(String clientReference, String vehicleRef, String usage,
+                                      LabCatalog.CoverageProfile profile, Instant now) {
         BigDecimal total = SyntheticData.basePremium(vehicleRef, usage).multiply(PREMIUM_FACTOR)
                 .setScale(2, RoundingMode.HALF_UP);
-        BigDecimal marketValue = SyntheticData.vehicle(vehicleRef).marketValue();
         BigDecimal installment = total.divide(BigDecimal.valueOf(MAX_INSTALLMENTS), 2, RoundingMode.HALF_UP);
         Map<String, Object> offer = new LinkedHashMap<>();
         offer.put("outcome", "OFFER");
@@ -126,33 +136,46 @@ class BetaInsurerSimulatorController {
         offer.put("paymentOptions", List.of(
                 Map.of("installments", 1, "installmentAmount", total.toPlainString()),
                 Map.of("installments", MAX_INSTALLMENTS, "installmentAmount", installment.toPlainString())));
-        offer.put("coverages", List.of(
-                Map.of("code", "COLLISION", "description", "Colisão, incêndio e roubo",
-                        "limit", marketValue.toPlainString()),
-                Map.of("code", "THIRD_PARTY_PROPERTY", "description", "Danos materiais a terceiros",
-                        "limit", "150000.00"),
-                Map.of("code", "THIRD_PARTY_BODILY", "description", "Danos corporais a terceiros",
-                        "limit", "300000.00")));
-        offer.put("deductibles", List.of(Map.of("coverage", "COLLISION",
-                "amount", marketValue.multiply(DEDUCTIBLE_RATE).setScale(2, RoundingMode.HALF_UP).toPlainString())));
+        offer.put("coverages", profile.coverages().stream()
+                .map(coverage -> Map.of("code", coverage.code(), "description", coverage.label(),
+                        "limit", coverage.insuredAmount()))
+                .toList());
+        offer.put("deductibles", profile.coverage(DEDUCTIBLE_COVERAGE)
+                .map(coverage -> Map.of("coverage", coverage.code(), "amount", new BigDecimal(coverage.insuredAmount())
+                        .multiply(DEDUCTIBLE_RATE).setScale(2, RoundingMode.HALF_UP).toPlainString()))
+                .stream().toList());
         offer.put("expiresAt", now.plusSeconds(properties.offerValiditySeconds()).truncatedTo(ChronoUnit.MILLIS)
                 .toString());
         return offer;
     }
 
+    /** Cenário pelo veículo do catálogo; {@code OFFER} vale para qualquer outro veículo. */
     enum BetaScenario {
-        OFFER, DECLINES, SILENT, DUPLICATE, LATE, NEEDS_INFO, EARLY;
+        OFFER(null),
+        DECLINES("vehicle-beta-declines"),
+        SILENT("vehicle-beta-silent"),
+        DUPLICATE("vehicle-beta-duplicate"),
+        LATE("vehicle-beta-late"),
+        NEEDS_INFO("vehicle-beta-needs-info"),
+        EARLY("vehicle-beta-early");
+
+        private final String vehicleRef;
+
+        BetaScenario(String vehicleRef) {
+            this.vehicleRef = vehicleRef;
+        }
+
+        String vehicleRef() {
+            return vehicleRef;
+        }
 
         static BetaScenario of(String vehicleRef) {
-            return switch (vehicleRef) {
-                case "vehicle-beta-declines" -> DECLINES;
-                case "vehicle-beta-silent" -> SILENT;
-                case "vehicle-beta-duplicate" -> DUPLICATE;
-                case "vehicle-beta-late" -> LATE;
-                case "vehicle-beta-needs-info" -> NEEDS_INFO;
-                case "vehicle-beta-early" -> EARLY;
-                default -> OFFER;
-            };
+            for (BetaScenario scenario : values()) {
+                if (vehicleRef.equals(scenario.vehicleRef)) {
+                    return scenario;
+                }
+            }
+            return OFFER;
         }
     }
 

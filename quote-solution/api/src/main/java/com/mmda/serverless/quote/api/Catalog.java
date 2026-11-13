@@ -36,6 +36,10 @@ public class Catalog {
         return document.organizations().stream().filter(org -> org.id().equals(organizationId)).findFirst();
     }
 
+    public List<QuoteSnapshot.CoverageProfile> coverageProfiles() {
+        return document.coverageProfiles();
+    }
+
     public Optional<QuoteSnapshot.CoverageProfile> coverageProfile(String code) {
         return document.coverageProfiles().stream().filter(profile -> profile.code().equals(code)).findFirst();
     }
