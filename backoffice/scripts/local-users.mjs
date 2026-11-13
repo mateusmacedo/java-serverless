@@ -23,9 +23,10 @@ const USERS = [
   },
 ];
 
-const password = process.env.BACKOFFICE_PASSWORD ?? '!1Admin-local';
+const password = process.env.BACKOFFICE_PASSWORD ?? '';
 const policy = [
-  [password.length >= 8, '8 ou mais caracteres'],
+  // INVARIANT: os mesmos limites do PasswordPolicy do QuoteUserPool no serverless.yml da quote-solution.
+  [password.length >= 12, '12 ou mais caracteres'],
   [/[a-z]/.test(password), 'uma letra minúscula'],
   [/[A-Z]/.test(password), 'uma letra maiúscula'],
   [/\d/.test(password), 'um número'],
