@@ -1155,7 +1155,11 @@ class QuoteFlowE2E {
                 assertThat(quoteItems(quoteId, "V#0001#OFFER#")).as("the finalization keeps the offers")
                         .containsExactlyInAnyOrderElementsOf(offersWhenStopped);
                 assertThat(offersByInsurer(accepted)).containsOnlyKeys(ALPHA);
-                assertThat(versionItem(quoteId, 1)).as("out of the ACTIVE_VERSION index").doesNotContainKey("gsi2pk");
+                // WHY: a versão já fica TERMINAL com gsi2pk = SUMMARY_PENDING; o refreshSummary tira o atributo
+                // depois do commit da finalização, na mesma invocação do reconciler
+                await().atMost(Duration.ofSeconds(stage.stepsMarginSeconds())).pollInterval(Duration.ofMillis(250))
+                        .untilAsserted(() -> assertThat(versionItem(quoteId, 1))
+                                .as("out of the ACTIVE_VERSION and SUMMARY_PENDING indexes").doesNotContainKey("gsi2pk"));
                 Map<String, AttributeValue> issue = quoteIssue("WORKFLOW_FAILED", quoteId + "|1").orElseThrow();
                 assertThat(string(issue, "type")).as("the item type (ADR 0015)").isEqualTo("ISSUE");
                 assertThat(string(issue, "issueType")).isEqualTo("WORKFLOW_FAILED");

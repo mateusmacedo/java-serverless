@@ -391,7 +391,8 @@ Floci que a API devolvia com `type: null` ([desenho técnico](plataforma-de-cota
   `SUCCEEDED`.
 - **T20:** `StopExecution` com a oferta da alpha gravada e a beta em `PROCESSING`. O `reconciler`
   finaliza a versão: `PARTIAL`, beta `TIMED_OUT` com `WORKFLOW_ABORTED`, ofertas mantidas, versão fora do
-  `ACTIVE_VERSION`, `WORKFLOW_FAILED` aberta e `QuoteCompleted` no outbox. Como o `StopExecution` do
+  `ACTIVE_VERSION` e do `SUMMARY_PENDING` (o teste espera com prazo a remoção do `gsi2pk`, que o
+  `refreshSummary` faz depois do commit da finalização), `WORKFLOW_FAILED` aberta e `QuoteCompleted` no outbox. Como o `StopExecution` do
   Floci não para o interpretador ([desenho técnico](plataforma-de-cotacao.md), §13), o caso despacha a
   cotação cerca de 51 s depois de um ciclo do `reconciler` e tenta até 3 cotações, registrando cada
   tentativa no log; nas rodadas validadas, bastou a primeira. Cada tentativa apaga o reuso do par, para o
@@ -735,11 +736,7 @@ O `QuoteFlowE2E` passou nos 26 testes em 793,8 s (13:17 min no Maven), com a má
   mas o `reconciler` finalizou a versão antes do `ConsolidateQuote` (`TERMINAL` e `WORKFLOW_FAILED` no
   mesmo instante). A finalização e o `WORKFLOW_FAILED` são legítimos, e o teste acusou "consolidated before
   the reconciler". Decidir pela transição a `TERMINAL` ou pela presença da ocorrência evitaria o falso
-  negativo. Há outra corrida no mesmo caso: a finalização grava `TERMINAL` com `gsi2pk = SUMMARY_PENDING`, e
-  o `refreshSummary` só remove o atributo depois do commit. Na validação antes do PR, o teste leu a versão
-  cerca de 600 ms antes dessa remoção e acusou "out of the ACTIVE_VERSION index"; a versão convergiu sem
-  `gsi2pk`, e a reexecução passou. Esperar a remoção com prazo, em vez de afirmar na primeira leitura,
-  evitaria o falso negativo.
+  negativo.
 - O disparo dos alarmes e a extração das métricas EMF não têm teste no Floci; ficam para o M6.
 - O `ContractClient` confere a requisição só nos 2xx; nos erros, só a resposta. O T22 afirma o 2xx de 11
   das 14 operações; o de `createQuoteVersion`, `reconcileQuery` e `getOperation` é conferido em outros
