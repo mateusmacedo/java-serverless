@@ -26,12 +26,12 @@ Processos de cotação dependem de consultas a serviços externos e precisam pre
 
 Não foram fornecidos contratos de seguradoras, volumes, custos ou indicadores atuais. Redução de custo e desempenho são hipóteses a medir, não resultados comprovados.
 
-| Usuário | Necessidade |
-|---|---|
+| Usuário           | Necessidade                                                                                                   |
+| ----------------- | ------------------------------------------------------------------------------------------------------------- |
 | Corretor/operador | Solicitar cotação, acompanhar pendências e comparar ofertas sem confundir falha técnica com recusa comercial. |
-| Sistema parceiro | Integrar via API idempotente e recuperar andamento e resultados. |
-| Operação técnica | Identificar consultas paradas, callbacks não associados e falhas recuperáveis. |
-| Engenharia | Implementar regras com testes e implementar contratos independentes dos provedores. |
+| Sistema parceiro  | Integrar via API idempotente e recuperar andamento e resultados.                                              |
+| Operação técnica  | Identificar consultas paradas, callbacks não associados e falhas recuperáveis.                                |
+| Engenharia        | Implementar regras com testes e implementar contratos independentes dos provedores.                           |
 
 ## 3. Objetivos e não objetivos
 
@@ -74,21 +74,21 @@ Este PRD especifica os serviços e contratos. Telas, componentes, interação e 
 
 ## 6. Requisitos funcionais e critérios de aceite
 
-| ID | Requisito P0 | Critério de aceite |
-|---|---|---|
-| RF01 | Registrar cotação de forma durável e idempotente | Mesma organização, chave e conteúdo retornam a mesma identidade; conteúdo diferente com a mesma chave retorna 409. |
-| RF02 | Versionar entradas relevantes | Alterar risco/coberturas gera versão nova; versão anterior permanece consultável e não pode ser usada para nova seleção após substituição. |
-| RF03 | Executar regras de elegibilidade na aplicação | Mesmas entradas e versão de regra produzem a mesma decisão no conjunto de testes; recusa conhecida é resultado, não exceção técnica. |
-| RF04 | Reutilizar enriquecimento válido | Resultado compatível, autorizado e dentro da idade máxima evita chamada externa; a decisão registra HIT e referência utilizada. |
-| RF05 | Coordenar consultas equivalentes | Cem solicitações concorrentes da mesma chave no cenário normal geram um líder de consulta; seguidores recebem a mesma evidência. Falhas ambíguas não prometem exatamente uma chamada externa. |
-| RF06 | Consultar seguradoras elegíveis | Lista é calculada por regra; cada item possui resultado independente e prazo próprio. |
-| RF07 | Suportar seguradora síncrona e assíncrona | Ambos os simuladores produzem ofertas no mesmo contrato normalizado; callback duplicado não duplica oferta. |
-| RF08 | Preservar resultados parciais | Oferta de A fica visível antes da conclusão de B; falha de B não apaga A. |
-| RF09 | Tratar falhas por classificação | Recusa não dispara retry; erro transitório elegível possui tentativas limitadas; timeout ambíguo vai para reconciliação quando não há repetição segura. |
-| RF10 | Consolidar sem ambiguidade | Resultado distingue ausência comercial de oferta, pendência e impossibilidade técnica de concluir. |
-| RF11 | Selecionar oferta | Oferta expirada, de versão substituída ou de outra organização não pode ser selecionada; seleção repetida é idempotente. |
-| RF12 | Recuperar trabalho interrompido | Queda entre persistência e publicação é recuperada por outbox; recuperação após callback não altera oferta já registrada. |
-| RF13 | Disponibilizar rastreabilidade | Cotação referencia workflow, regras, consultas, tentativas e ofertas, sem expor tokens ou credenciais ao usuário. |
+| ID   | Requisito P0                                     | Critério de aceite                                                                                                                                                                            |
+| ---- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| RF01 | Registrar cotação de forma durável e idempotente | Mesma organização, chave e conteúdo retornam a mesma identidade; conteúdo diferente com a mesma chave retorna 409.                                                                            |
+| RF02 | Versionar entradas relevantes                    | Alterar risco/coberturas gera versão nova; versão anterior permanece consultável e não pode ser usada para nova seleção após substituição.                                                    |
+| RF03 | Executar regras de elegibilidade na aplicação    | Mesmas entradas e versão de regra produzem a mesma decisão no conjunto de testes; recusa conhecida é resultado, não exceção técnica.                                                          |
+| RF04 | Reutilizar enriquecimento válido                 | Resultado compatível, autorizado e dentro da idade máxima evita chamada externa; a decisão registra HIT e referência utilizada.                                                               |
+| RF05 | Coordenar consultas equivalentes                 | Cem solicitações concorrentes da mesma chave no cenário normal geram um líder de consulta; seguidores recebem a mesma evidência. Falhas ambíguas não prometem exatamente uma chamada externa. |
+| RF06 | Consultar seguradoras elegíveis                  | Lista é calculada por regra; cada item possui resultado independente e prazo próprio.                                                                                                         |
+| RF07 | Suportar seguradora síncrona e assíncrona        | Ambos os simuladores produzem ofertas no mesmo contrato normalizado; callback duplicado não duplica oferta.                                                                                   |
+| RF08 | Preservar resultados parciais                    | Oferta de A fica visível antes da conclusão de B; falha de B não apaga A.                                                                                                                     |
+| RF09 | Tratar falhas por classificação                  | Recusa não dispara retry; erro transitório elegível possui tentativas limitadas; timeout ambíguo vai para reconciliação quando não há repetição segura.                                       |
+| RF10 | Consolidar sem ambiguidade                       | Resultado distingue ausência comercial de oferta, pendência e impossibilidade técnica de concluir.                                                                                            |
+| RF11 | Selecionar oferta                                | Oferta expirada, de versão substituída ou de outra organização não pode ser selecionada; seleção repetida é idempotente.                                                                      |
+| RF12 | Recuperar trabalho interrompido                  | Queda entre persistência e publicação é recuperada por outbox; recuperação após callback não altera oferta já registrada.                                                                     |
+| RF13 | Disponibilizar rastreabilidade                   | Cotação referencia workflow, regras, consultas, tentativas e ofertas, sem expor tokens ou credenciais ao usuário.                                                                             |
 
 Histórias centrais: como corretor, quero receber ofertas mesmo com uma seguradora indisponível; como parceiro, quero repetir um envio após timeout sem criar nova cotação; como operador, quero identificar consultas com resultado desconhecido e reconciliá-las sem repetir cobranças indevidas. RF01, RF08, RF09 e RF12 são seus critérios de conclusão.
 
@@ -127,17 +127,17 @@ Estados terminais não são sobrescritos silenciosamente por callbacks tardios; 
 
 ### Precedência da consolidação
 
-| Condição | outcome |
-|---|---|
-| Entrada incompleta identificada antes das consultas | NEEDS_INFORMATION |
-| Regra própria impede continuar | INELIGIBLE |
-| Enriquecimento obrigatório respondeu NOT_FOUND | NEEDS_INFORMATION; missingFields aponta a referência com reasonCode ENRICHMENT_NOT_FOUND e nenhuma seguradora é consultada |
-| Nenhuma seguradora aplicável pela política | NO_OFFER com motivo NO_APPLICABLE_INSURER |
-| Pelo menos uma oferta e todos os demais resultados são QUOTED/DECLINED | COMPLETED |
-| Pelo menos uma oferta e há pendência ou falha técnica | PARTIAL |
-| Sem oferta e existe NEEDS_INFORMATION | NEEDS_INFORMATION; preservar falhas adicionais |
-| Sem oferta nem pendência, com falha técnica em alguma seguradora | TECHNICAL_FAILURE |
-| Todas as seguradoras consultadas recusaram | NO_OFFER |
+| Condição                                                               | outcome                                                                                                                    |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Entrada incompleta identificada antes das consultas                    | NEEDS_INFORMATION                                                                                                          |
+| Regra própria impede continuar                                         | INELIGIBLE                                                                                                                 |
+| Enriquecimento obrigatório respondeu NOT_FOUND                         | NEEDS_INFORMATION; missingFields aponta a referência com reasonCode ENRICHMENT_NOT_FOUND e nenhuma seguradora é consultada |
+| Nenhuma seguradora aplicável pela política                             | NO_OFFER com motivo NO_APPLICABLE_INSURER                                                                                  |
+| Pelo menos uma oferta e todos os demais resultados são QUOTED/DECLINED | COMPLETED                                                                                                                  |
+| Pelo menos uma oferta e há pendência ou falha técnica                  | PARTIAL                                                                                                                    |
+| Sem oferta e existe NEEDS_INFORMATION                                  | NEEDS_INFORMATION; preservar falhas adicionais                                                                             |
+| Sem oferta nem pendência, com falha técnica em alguma seguradora       | TECHNICAL_FAILURE                                                                                                          |
+| Todas as seguradoras consultadas recusaram                             | NO_OFFER                                                                                                                   |
 
 Se enriquecimento obrigatório falhar, encerrar TECHNICAL_FAILURE sem inventar informação. Todos os motivos por seguradora permanecem disponíveis, independentemente do outcome agregado. O motivo do outcome agregado (por exemplo, NO_APPLICABLE_INSURER) fica em outcomeReason.
 
@@ -171,12 +171,12 @@ flowchart LR
 
 ### Divisão entre as soluções
 
-| | quote-solution (Quarkus) | provider-solution (Spring) |
-|---|---|---|
-| Papel | Núcleo da cotação | Ponte com fornecedores |
-| HTTP | API de produto: /v1/me, catálogo, cotações, versões, ofertas, seleção e /v1/operations | POST /v1/providers/{provider}/callbacks e simuladores (seguradora síncrona, seguradora assíncrona e provedor de enriquecimento) |
-| Processamento | Máquina principal, regras de elegibilidade, consolidação, seleção, outbox, waiters, resumer e reconciliação de cotações | Workers SQS de enriquecimento e de seguradoras, reuso com liderança, quota por provedor, inbox de callbacks e reconciliação de consultas |
-| Motivo do framework | A meta de latência do produto (§12) é da API; Lambdas Quarkus sobem mais rápido que as Spring no modo JVM | Trabalho assíncrono com prazo de até 90 s por seguradora, onde o cold start pesa pouco e a coordenação é mais complexa |
+|                     | quote-solution (Quarkus)                                                                                                | provider-solution (Spring)                                                                                                               |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Papel               | Núcleo da cotação                                                                                                       | Ponte com fornecedores                                                                                                                   |
+| HTTP                | API de produto: /v1/me, catálogo, cotações, versões, ofertas, seleção e /v1/operations                                  | POST /v1/providers/{provider}/callbacks e simuladores (seguradora síncrona, seguradora assíncrona e provedor de enriquecimento)          |
+| Processamento       | Máquina principal, regras de elegibilidade, consolidação, seleção, outbox, waiters, resumer e reconciliação de cotações | Workers SQS de enriquecimento e de seguradoras, reuso com liderança, quota por provedor, inbox de callbacks e reconciliação de consultas |
+| Motivo do framework | A meta de latência do produto (§12) é da API; Lambdas Quarkus sobem mais rápido que as Spring no modo JVM               | Trabalho assíncrono com prazo de até 90 s por seguradora, onde o cold start pesa pouco e a coordenação é mais complexa                   |
 
 Integração entre as soluções:
 
@@ -231,39 +231,39 @@ Concorrência por execução não é limite global por seguradora. Adaptadores a
 
 ### Parâmetros iniciais de laboratório
 
-| Parâmetro | Valor inicial proposto |
-|---|---|
-| Prazo total por cotação | 5 minutos |
-| Prazo por seguradora | 90 segundos, limitado pelo prazo restante |
-| Map concurrency | 2 |
-| Retry transitório seguro | Até 2 retries, além da tentativa inicial, backoff e jitter |
-| Validade de enriquecimento simulado | 15 minutos |
-| Validade de oferta simulada | 30 minutos |
-| Orientação de atualização ao cliente | retryAfterSeconds configurável, inicialmente 3 |
+| Parâmetro                            | Valor inicial proposto                                     |
+| ------------------------------------ | ---------------------------------------------------------- |
+| Prazo total por cotação              | 5 minutos                                                  |
+| Prazo por seguradora                 | 90 segundos, limitado pelo prazo restante                  |
+| Map concurrency                      | 2                                                          |
+| Retry transitório seguro             | Até 2 retries, além da tentativa inicial, backoff e jitter |
+| Validade de enriquecimento simulado  | 15 minutos                                                 |
+| Validade de oferta simulada          | 30 minutos                                                 |
+| Orientação de atualização ao cliente | retryAfterSeconds configurável, inicialmente 3             |
 
 Valores são configuráveis e devem ser revisados após medir e obter contratos. O orçamento da etapa inclui fila, execução e retries. Evitar retry simultâneo no SDK, worker e workflow sem orçamento combinado.
 
 ## 10. Modelo de dados lógico
 
-| Entidade | Solução | Campos essenciais e invariantes |
-|---|---|---|
-| Quote | quote | id, organizationId, createdBy, currentVersion, createdAt. Acesso sempre por organização. |
-| QuoteVersion | quote | quoteId, version, snapshotRef, inputHash, phase, outcome, outcomeReason, missingFields, ruleVersion, workflowVersion, executionArn, deadlineAt, supersededAt, revision. Única por quoteId/version. |
-| IdempotencyRecord | quote | organizationId, operation, scope, key, requestHash, resourceRef, createdAt. Única por organização/operação/escopo/chave; nas operações sobre versões e seleção, o escopo é a cotação. requestHash é SHA-256 do body em JSON canônico (RFC 8785). Sem expiração curta no laboratório. |
-| QuoteEvidence | quote | quoteId, version, evidenceId, reuseDecision, policyVersion. Mantém proveniência por cotação. |
-| InsurerResult | quote | quoteId, version, insurerId, status, reasonCode, queryRef, attemptRef. Única por cotação/versão/seguradora no MVP. |
-| Offer | quote | id, insurerResultId, externalOfferId, premiumTotal, currency, installments, coverages, deductibles, validUntil, rawResponseRef. Oferta imutável. |
-| QuoteSelection | quote | selectionId, quoteId, version, offerId, selectedAt, selectedBy. Uma seleção por versão, definitiva no MVP (RN13). |
-| WorkflowWaiter | quote | workRef, executionArn, tokenEncrypted, expiresAt, status. Segredo operacional; nunca sai da quote-solution. |
-| OperationIssue | quote | id, type, status, queryId opcional, quoteId opcional, firstSeenAt, lastSeenAt, safeSummary. Projeção de eventos da provider-solution e de falhas da própria quote-solution. |
-| ReconcileOperation | quote | operationId, queryId, reason, requestedBy, status (QUEUED, RUNNING, SUCCEEDED, FAILED), safeSummary, updatedAt. Auditoria da reconciliação manual. |
-| ExternalQuery | provider | id, queryKey, provider, operation (ENRICH ou QUOTE), contractVersion, state, leaseUntil, fencingVersion, providerRequestId. Estado técnico separado do resultado: PENDING, IN_FLIGHT, COMPLETED, FAILED ou UNKNOWN (resultado ambíguo que exige reconciliação). Pedidos de cotação a seguradoras também são ExternalQuery, sem índice de reuso. |
-| QueryAttempt | provider | id, queryId, sequence, startedAt, finishedAt, outcome, errorClass, providerRequestId. Não sobrescrever tentativas anteriores. |
-| QueryEvidence | provider | id, queryId, normalizedResultRef, rawResponseRef, observedAt, receivedAt, reusableUntil, resultType, checksum. Imutável. |
-| ReuseIndex | provider | queryKey, evidenceId, revision. Ponteiro para evidência elegível mais recente; só para operation ENRICH. |
-| CallbackInbox | provider | id, provider, externalEventId, correlationId, payloadRef, receivedAt, processingStatus. Deduplicação por provedor/evento. |
-| ProviderQuota | provider | provider, credentialRef, window, used, limit. Atualização condicional; vale para todos os workflows. |
-| Outbox | ambas | id, aggregateId, eventType, payloadRef, createdAt, publishedAt, attempts. Publicação pelo menos uma vez; consumidores idempotentes. |
+| Entidade           | Solução  | Campos essenciais e invariantes                                                                                                                                                                                                                                                                                                                 |
+| ------------------ | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Quote              | quote    | id, organizationId, createdBy, currentVersion, createdAt. Acesso sempre por organização.                                                                                                                                                                                                                                                        |
+| QuoteVersion       | quote    | quoteId, version, snapshotRef, inputHash, phase, outcome, outcomeReason, missingFields, ruleVersion, workflowVersion, executionArn, deadlineAt, supersededAt, revision. Única por quoteId/version.                                                                                                                                              |
+| IdempotencyRecord  | quote    | organizationId, operation, scope, key, requestHash, resourceRef, createdAt. Única por organização/operação/escopo/chave; nas operações sobre versões e seleção, o escopo é a cotação. requestHash é SHA-256 do body em JSON canônico (RFC 8785). Sem expiração curta no laboratório.                                                            |
+| QuoteEvidence      | quote    | quoteId, version, evidenceId, reuseDecision, policyVersion. Mantém proveniência por cotação.                                                                                                                                                                                                                                                    |
+| InsurerResult      | quote    | quoteId, version, insurerId, status, reasonCode, queryRef, attemptRef. Única por cotação/versão/seguradora no MVP.                                                                                                                                                                                                                              |
+| Offer              | quote    | id, insurerResultId, externalOfferId, premiumTotal, currency, installments, coverages, deductibles, validUntil, rawResponseRef. Oferta imutável.                                                                                                                                                                                                |
+| QuoteSelection     | quote    | selectionId, quoteId, version, offerId, selectedAt, selectedBy. Uma seleção por versão, definitiva no MVP (RN13).                                                                                                                                                                                                                               |
+| WorkflowWaiter     | quote    | workRef, executionArn, tokenEncrypted, expiresAt, status. Segredo operacional; nunca sai da quote-solution.                                                                                                                                                                                                                                     |
+| OperationIssue     | quote    | id, type, status, queryId opcional, quoteId opcional, firstSeenAt, lastSeenAt, safeSummary. Projeção de eventos da provider-solution e de falhas da própria quote-solution.                                                                                                                                                                     |
+| ReconcileOperation | quote    | operationId, queryId, reason, requestedBy, status (QUEUED, RUNNING, SUCCEEDED, FAILED), safeSummary, updatedAt. Auditoria da reconciliação manual.                                                                                                                                                                                              |
+| ExternalQuery      | provider | id, queryKey, provider, operation (ENRICH ou QUOTE), contractVersion, state, leaseUntil, fencingVersion, providerRequestId. Estado técnico separado do resultado: PENDING, IN_FLIGHT, COMPLETED, FAILED ou UNKNOWN (resultado ambíguo que exige reconciliação). Pedidos de cotação a seguradoras também são ExternalQuery, sem índice de reuso. |
+| QueryAttempt       | provider | id, queryId, sequence, startedAt, finishedAt, outcome, errorClass, providerRequestId. Não sobrescrever tentativas anteriores.                                                                                                                                                                                                                   |
+| QueryEvidence      | provider | id, queryId, normalizedResultRef, rawResponseRef, observedAt, receivedAt, reusableUntil, resultType, checksum. Imutável.                                                                                                                                                                                                                        |
+| ReuseIndex         | provider | queryKey, evidenceId, revision. Ponteiro para evidência elegível mais recente; só para operation ENRICH.                                                                                                                                                                                                                                        |
+| CallbackInbox      | provider | id, provider, externalEventId, correlationId, payloadRef, receivedAt, processingStatus. Deduplicação por provedor/evento.                                                                                                                                                                                                                       |
+| ProviderQuota      | provider | provider, credentialRef, window, used, limit. Atualização condicional; vale para todos os workflows.                                                                                                                                                                                                                                            |
+| Outbox             | ambas    | id, aggregateId, eventType, payloadRef, createdAt, publishedAt, attempts. Publicação pelo menos uma vez; consumidores idempotentes.                                                                                                                                                                                                             |
 
 ### Mapeamento para DynamoDB
 
@@ -281,20 +281,20 @@ Autenticação por OIDC/OAuth com validação de access token; identidade da org
 
 O contrato compartilhado, ao final deste documento, prevalece sobre esta tabela em caso de divergência.
 
-| Método e rota | Solução | Contrato |
-|---|---|---|
-| GET /v1/me | quote | Usuário, organização e permissões. |
-| GET /v1/catalog/customers, /vehicles, /drivers e /coverage-profiles | quote | Fixtures autorizadas do laboratório, com search e cursor. |
-| POST /v1/quotes | quote | Idempotency-Key obrigatório. Cria snapshot; 202 + quoteId, version, phase, statusUrl. |
-| GET /v1/quotes | quote | Paginação por cursor; filtros phase, outcome, createdFrom e createdTo; escopo da organização. |
-| GET /v1/quotes/{id}/versions/{v} | quote | Fase, resultado, pendências, estados por seguradora e progresso. |
-| GET /v1/quotes/{id}/versions/{v}/offers | quote | Ofertas parciais, validade e comparação de coberturas. |
-| POST /v1/quotes/{id}/versions | quote | Idempotency-Key, expectedVersion e novo snapshot; conflito concorrente retorna 409. |
-| POST /v1/quotes/{id}/versions/{v}/selection | quote | offerId e Idempotency-Key; cria intenção definitiva, não emite proposta. |
-| GET /v1/operations/issues | quote | Restrito; projeção de OperationIssue, sem tokens nem payload bruto. |
-| POST /v1/operations/queries/{id}/reconcile | quote | Operador autorizado registra ReconcileOperation com motivo e auditoria; a quote-solution publica QueryReconcileRequested. |
-| GET /v1/operations/{operationId} | quote | Situação da reconciliação. |
-| POST /v1/providers/{provider}/callbacks | provider | Autenticação específica do provedor; confirmação somente após inbox durável. Endpoint exposto a fornecedores, fora da API de produto. |
+| Método e rota                                                       | Solução  | Contrato                                                                                                                              |
+| ------------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| GET /v1/me                                                          | quote    | Usuário, organização e permissões.                                                                                                    |
+| GET /v1/catalog/customers, /vehicles, /drivers e /coverage-profiles | quote    | Fixtures autorizadas do laboratório, com search e cursor.                                                                             |
+| POST /v1/quotes                                                     | quote    | Idempotency-Key obrigatório. Cria snapshot; 202 + quoteId, version, phase, statusUrl.                                                 |
+| GET /v1/quotes                                                      | quote    | Paginação por cursor; filtros phase, outcome, createdFrom e createdTo; escopo da organização.                                         |
+| GET /v1/quotes/{id}/versions/{v}                                    | quote    | Fase, resultado, pendências, estados por seguradora e progresso.                                                                      |
+| GET /v1/quotes/{id}/versions/{v}/offers                             | quote    | Ofertas parciais, validade e comparação de coberturas.                                                                                |
+| POST /v1/quotes/{id}/versions                                       | quote    | Idempotency-Key, expectedVersion e novo snapshot; conflito concorrente retorna 409.                                                   |
+| POST /v1/quotes/{id}/versions/{v}/selection                         | quote    | offerId e Idempotency-Key; cria intenção definitiva, não emite proposta.                                                              |
+| GET /v1/operations/issues                                           | quote    | Restrito; projeção de OperationIssue, sem tokens nem payload bruto.                                                                   |
+| POST /v1/operations/queries/{id}/reconcile                          | quote    | Operador autorizado registra ReconcileOperation com motivo e auditoria; a quote-solution publica QueryReconcileRequested.             |
+| GET /v1/operations/{operationId}                                    | quote    | Situação da reconciliação.                                                                                                            |
+| POST /v1/providers/{provider}/callbacks                             | provider | Autenticação específica do provedor; confirmação somente após inbox durável. Endpoint exposto a fornecedores, fora da API de produto. |
 
 Exemplo ilustrativo de criação:
 
@@ -334,16 +334,16 @@ Não haverá cobrança aos usuários no MVP. Chamadas de fornecedor terão conta
 
 ## 13. Métricas e eventos
 
-| Métrica | Definição e uso |
-|---|---|
-| Taxa de reuso | HIT / avaliações de reuso elegíveis; JOIN medido separadamente. |
-| Chamadas por cotação | Tentativas externas reais / versões aceitas. |
-| Tempo até primeira oferta | Primeira oferta persistida menos aceitação durável. |
-| Tempo até conclusão | Terminal menos aceitação durável; segmentar por outcome. |
-| Cotações com oferta | Versões com pelo menos uma oferta / versões elegíveis. |
-| Falha técnica por seguradora | Resultados técnicos / consultas àquela seguradora. |
-| Pendências de reconciliação | Quantidade e idade do estado UNKNOWN ou callback não associado. |
-| Custo por cotação | Custo atribuível de infraestrutura e provedor / versões processadas. |
+| Métrica                      | Definição e uso                                                      |
+| ---------------------------- | -------------------------------------------------------------------- |
+| Taxa de reuso                | HIT / avaliações de reuso elegíveis; JOIN medido separadamente.      |
+| Chamadas por cotação         | Tentativas externas reais / versões aceitas.                         |
+| Tempo até primeira oferta    | Primeira oferta persistida menos aceitação durável.                  |
+| Tempo até conclusão          | Terminal menos aceitação durável; segmentar por outcome.             |
+| Cotações com oferta          | Versões com pelo menos uma oferta / versões elegíveis.               |
+| Falha técnica por seguradora | Resultados técnicos / consultas àquela seguradora.                   |
+| Pendências de reconciliação  | Quantidade e idade do estado UNKNOWN ou callback não associado.      |
+| Custo por cotação            | Custo atribuível de infraestrutura e provedor / versões processadas. |
 
 Eventos mínimos: QuoteAccepted, ReuseEvaluated, ExternalQueryStarted, ExternalQueryCompleted, InsurerResultRecorded, QuoteCompleted, OfferSelected. Não incluir dados pessoais nos eventos analíticos.
 
@@ -351,39 +351,39 @@ Guardrails: nenhuma oferta duplicada nos testes; nenhuma leitura entre organiza�
 
 ## 14. Matriz de testes de aceitação
 
-| Caso | Resultado esperado |
-|---|---|
-| T01: fluxo normal com duas seguradoras | Duas ofertas, COMPLETED, evidências vinculadas. |
-| T02: reenvio com mesma chave/body | Mesma cotação, nenhuma execução adicional. |
-| T03: mesma chave/body diferente | 409, sem alteração da cotação existente. |
-| T04: HIT de enriquecimento | Nenhuma chamada externa; referência da evidência preservada. |
-| T05: enriquecimento expirado | Nova consulta, histórico anterior intacto. |
-| T06: cem consultas equivalentes concorrentes | Um líder em ausência de falhas; seguidores terminam com a mesma evidência. |
-| T07: seguradora A oferece e B recusa | COMPLETED com uma oferta e motivo da recusa. |
-| T08: A oferece e B expira | Oferta visível antes; outcome PARTIAL ao concluir. |
-| T09: todas recusam | NO_OFFER, sem retry comercial. |
-| T10: todas indisponíveis | TECHNICAL_FAILURE, não NO_OFFER. |
-| T11: callback duplicado | Uma oferta e processamento idempotente da retomada. |
-| T12: callback antes da correlação completa | Inbox retém e reconciliação associa, sem perda. |
-| T13: resultado salvo e retomada falha | Outbox recupera, sem chamar seguradora novamente. |
-| T14: timeout após fornecedor aceitar | Estado ambíguo reconciliado; sem repetição insegura. |
-| T15: líder antigo retorna após lease transferida | Fencing impede sobrescrita; evidência é preservada para avaliação. |
-| T16: callback após prazo final | Evidência tardia registrada; cotação terminal não reabre. |
-| T17: nova versão durante consulta antiga | Resultados isolados; seleção na versão substituída bloqueada. |
-| T18: oferta expirada/organização diferente | Seleção rejeitada sem criar intenção de proposta. |
-| T19: queda após commit da criação | Outbox inicia workflow posteriormente. |
-| T20: falha fatal no workflow | Reconciliação atualiza base e gera alerta sem apagar ofertas. |
-| T21: múltiplos workflows no mesmo provedor | Quota global respeitada, não só Map concurrency. |
-| T22: contrato frontend/backend | Schemas, enums, permissões e fixtures idênticos nos dois consumidores; erros e resultados parciais exercitados. |
-| T23: regra própria recusa o risco | INELIGIBLE, nenhuma consulta externa. |
-| T24: entrada incompleta antes das consultas | NEEDS_INFORMATION com missingFields; nenhuma seguradora consultada. |
-| T25: enriquecimento obrigatório responde NOT_FOUND | NEEDS_INFORMATION com reasonCode ENRICHMENT_NOT_FOUND; nenhuma seguradora consultada. |
-| T26: nenhuma seguradora aplicável | NO_OFFER com outcomeReason NO_APPLICABLE_INSURER. |
-| T27: falha do enriquecimento obrigatório | TECHNICAL_FAILURE, sem consultar seguradoras nem inventar dados. |
-| T28: seleção repetida e troca de oferta | Mesma oferta retorna a seleção existente; outra oferta retorna 409 SELECTION_ALREADY_EXISTS. |
-| T29: corrida entre seleção e nova versão | Apenas uma ação vence; após a seleção, nova versão retorna 409 QUOTE_ALREADY_SELECTED e NEEDS_INFORMATION posterior não oferece CREATE_VERSION. |
-| T30: usuário sem permissão | 403 em seleção e reconciliação sem offers:select ou operations:reconcile. |
-| T31: mensagem falha repetidamente | Vai para a DLQ após o limite e o reprocessamento não duplica resultado nem chamada externa. |
+| Caso                                               | Resultado esperado                                                                                                                              |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| T01: fluxo normal com duas seguradoras             | Duas ofertas, COMPLETED, evidências vinculadas.                                                                                                 |
+| T02: reenvio com mesma chave/body                  | Mesma cotação, nenhuma execução adicional.                                                                                                      |
+| T03: mesma chave/body diferente                    | 409, sem alteração da cotação existente.                                                                                                        |
+| T04: HIT de enriquecimento                         | Nenhuma chamada externa; referência da evidência preservada.                                                                                    |
+| T05: enriquecimento expirado                       | Nova consulta, histórico anterior intacto.                                                                                                      |
+| T06: cem consultas equivalentes concorrentes       | Um líder em ausência de falhas; seguidores terminam com a mesma evidência.                                                                      |
+| T07: seguradora A oferece e B recusa               | COMPLETED com uma oferta e motivo da recusa.                                                                                                    |
+| T08: A oferece e B expira                          | Oferta visível antes; outcome PARTIAL ao concluir.                                                                                              |
+| T09: todas recusam                                 | NO_OFFER, sem retry comercial.                                                                                                                  |
+| T10: todas indisponíveis                           | TECHNICAL_FAILURE, não NO_OFFER.                                                                                                                |
+| T11: callback duplicado                            | Uma oferta e processamento idempotente da retomada.                                                                                             |
+| T12: callback antes da correlação completa         | Inbox retém e reconciliação associa, sem perda.                                                                                                 |
+| T13: resultado salvo e retomada falha              | Outbox recupera, sem chamar seguradora novamente.                                                                                               |
+| T14: timeout após fornecedor aceitar               | Estado ambíguo reconciliado; sem repetição insegura.                                                                                            |
+| T15: líder antigo retorna após lease transferida   | Fencing impede sobrescrita; evidência é preservada para avaliação.                                                                              |
+| T16: callback após prazo final                     | Evidência tardia registrada; cotação terminal não reabre.                                                                                       |
+| T17: nova versão durante consulta antiga           | Resultados isolados; seleção na versão substituída bloqueada.                                                                                   |
+| T18: oferta expirada/organização diferente         | Seleção rejeitada sem criar intenção de proposta.                                                                                               |
+| T19: queda após commit da criação                  | Outbox inicia workflow posteriormente.                                                                                                          |
+| T20: falha fatal no workflow                       | Reconciliação atualiza base e gera alerta sem apagar ofertas.                                                                                   |
+| T21: múltiplos workflows no mesmo provedor         | Quota global respeitada, não só Map concurrency.                                                                                                |
+| T22: contrato frontend/backend                     | Schemas, enums, permissões e fixtures idênticos nos dois consumidores; erros e resultados parciais exercitados.                                 |
+| T23: regra própria recusa o risco                  | INELIGIBLE, nenhuma consulta externa.                                                                                                           |
+| T24: entrada incompleta antes das consultas        | NEEDS_INFORMATION com missingFields; nenhuma seguradora consultada.                                                                             |
+| T25: enriquecimento obrigatório responde NOT_FOUND | NEEDS_INFORMATION com reasonCode ENRICHMENT_NOT_FOUND; nenhuma seguradora consultada.                                                           |
+| T26: nenhuma seguradora aplicável                  | NO_OFFER com outcomeReason NO_APPLICABLE_INSURER.                                                                                               |
+| T27: falha do enriquecimento obrigatório           | TECHNICAL_FAILURE, sem consultar seguradoras nem inventar dados.                                                                                |
+| T28: seleção repetida e troca de oferta            | Mesma oferta retorna a seleção existente; outra oferta retorna 409 SELECTION_ALREADY_EXISTS.                                                    |
+| T29: corrida entre seleção e nova versão           | Apenas uma ação vence; após a seleção, nova versão retorna 409 QUOTE_ALREADY_SELECTED e NEEDS_INFORMATION posterior não oferece CREATE_VERSION. |
+| T30: usuário sem permissão                         | 403 em seleção e reconciliação sem offers:select ou operations:reconcile.                                                                       |
+| T31: mensagem falha repetidamente                  | Vai para a DLQ após o limite e o reprocessamento não duplica resultado nem chamada externa.                                                     |
 
 Testes unitários para regras; integração para unicidade/transações/inbox/outbox; contratos para adaptadores e para os eventos entre as soluções; testes em conta AWS de desenvolvimento para callback, IAM, timeout e recuperação reais. Simulador local não comprova o comportamento gerenciado do Step Functions.
 
@@ -391,16 +391,16 @@ Testes unitários para regras; integração para unicidade/transações/inbox/ou
 
 Estimativas relativas para orientar sequência, sujeitas à capacidade da equipe; não são compromissos de prazo.
 
-| Marco | Duração indicativa | Entrega e conhecimento consolidado |
-|---|---|---|
-| M0 — Fundação | A estimar | ADRs da divisão entre soluções, do barramento da plataforma e do modelo DynamoDB; stack `platform/events`; esqueleto dos módulos; verificação no Floci de waitForTaskToken, Map dinâmico, TransactWriteItems, DynamoDB Streams e regra entre stacks com fila como alvo. |
-| M1 — Corte vertical | 1–2 semanas | API, snapshot, idempotência, outbox, workflow mínimo e uma seguradora síncrona simulada atendida pela provider-solution via barramento; compreender Task/Choice, task token e aceitação durável. Medir o p95 da API. |
-| M2 — Reuso | 1–2 semanas | Evidências, chave, validade, liderança, JOIN, lease e fencing; NOT_FOUND; compreender cache versus histórico e concorrência. |
-| M3 — Assíncrono | 1–2 semanas | Seguradora assíncrona, callbacks com inbox, Map com duas seguradoras, resultados parciais e quota por provedor. |
-| M4 — Falhas | 1 semana | Retry, prazos, DLQ, fencing, reconciliação e alarmes. |
-| M5 — Contrato integrado | 1 semana | APIs de identidade, catálogo, operação e seleção; OpenAPI e fixtures; validar consumo pelo frontend e medir tempo até primeira oferta. |
-| M6 — AWS de desenvolvimento | A estimar | Stage `dev` com parâmetros próprios, deploy das três stacks e repetição dos testes que o Floci não comprova (task token, IAM, timeouts). |
-| M7 — Provedor real | A estimar após descoberta | Integrar seguradora homologada; validar contratos e políticas reais. |
+| Marco                       | Duração indicativa        | Entrega e conhecimento consolidado                                                                                                                                                                                                                                      |
+| --------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| M0 — Fundação               | A estimar                 | ADRs da divisão entre soluções, do barramento da plataforma e do modelo DynamoDB; stack `platform/events`; esqueleto dos módulos; verificação no Floci de waitForTaskToken, Map dinâmico, TransactWriteItems, DynamoDB Streams e regra entre stacks com fila como alvo. |
+| M1 — Corte vertical         | 1–2 semanas               | API, snapshot, idempotência, outbox, workflow mínimo e uma seguradora síncrona simulada atendida pela provider-solution via barramento; compreender Task/Choice, task token e aceitação durável. Medir o p95 da API.                                                    |
+| M2 — Reuso                  | 1–2 semanas               | Evidências, chave, validade, liderança, JOIN, lease e fencing; NOT_FOUND; compreender cache versus histórico e concorrência.                                                                                                                                            |
+| M3 — Assíncrono             | 1–2 semanas               | Seguradora assíncrona, callbacks com inbox, Map com duas seguradoras, resultados parciais e quota por provedor.                                                                                                                                                         |
+| M4 — Falhas                 | 1 semana                  | Retry, prazos, DLQ, fencing, reconciliação e alarmes.                                                                                                                                                                                                                   |
+| M5 — Contrato integrado     | 1 semana                  | APIs de identidade, catálogo, operação e seleção; OpenAPI e fixtures; validar consumo pelo frontend e medir tempo até primeira oferta.                                                                                                                                  |
+| M6 — AWS de desenvolvimento | A estimar                 | Stage `dev` com parâmetros próprios, deploy das três stacks e repetição dos testes que o Floci não comprova (task token, IAM, timeouts).                                                                                                                                |
+| M7 — Provedor real          | A estimar após descoberta | Integrar seguradora homologada; validar contratos e políticas reais.                                                                                                                                                                                                    |
 
 Testes por marco: M1 executa T01 com uma seguradora, T02, T03, T19, T23 e T24; M2 executa T04, T05, T06, T15, T25 e T27; M3 executa T01 completo, T07, T08, T11, T12, T21 e T26; M4 executa T09, T10, T13, T14, T16, T17, T20 e T31; M5 executa T18, T22, T28, T29 e T30; M6 repete na AWS os cenários de callback, IAM, timeout e recuperação.
 
@@ -446,19 +446,19 @@ Ordem de implementação: barramento da plataforma → domínio e estados → pe
 
 ## 17. Riscos e decisões pendentes
 
-| Item | Efeito | Decisão necessária |
-|---|---|---|
-| Produto real e campos obrigatórios | Altera regras, contratos e normalização | Confirmar ramo de seguro e primeira seguradora. |
-| Contratos de reuso | Pode limitar cache e compartilhamento | Definir política por fornecedor e finalidade antes de dados reais. |
-| Persistência de referência | Influencia custo, transações e operação | Resolvido na v2.1: DynamoDB, no padrão do monorepo; desenho de chaves em ADR no M0. |
-| Recursos do Floci | Task token, Streams ou transações podem não ser emulados | Verificar no M0; sem suporte, usar publicador agendado e validar o restante no M6. |
-| Desenho de chaves do DynamoDB | Erro custa migração de dados e reescrita de consultas | Registrar padrões de acesso e chaves em ADR antes do código. |
-| Barramento compartilhado | Regra com filtro errado entrega evento a quem não deveria | Filtrar por source e detail-type; teste de contrato por evento. |
-| APIs sem idempotência/status | Timeout pode gerar cobrança duplicada | Política de reconciliação e intervenção manual. |
-| Volume e SLA desconhecidos | Dimensionamento e orçamento incertos | Medir baseline e definir metas de produção. |
-| Propostas reais | Seleção pode exigir reprecificação | Especificar novo PRD antes de envio/emissão. |
-| Comparabilidade de ofertas | Coberturas podem ser diferentes | Normalização homologada por especialista de produto. |
-| Identidades e cadastros reais | Determinam referências permitidas | MVP com fixtures sintéticas; homologar fonte cadastral antes da integração comercial. |
+| Item                               | Efeito                                                    | Decisão necessária                                                                    |
+| ---------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Produto real e campos obrigatórios | Altera regras, contratos e normalização                   | Confirmar ramo de seguro e primeira seguradora.                                       |
+| Contratos de reuso                 | Pode limitar cache e compartilhamento                     | Definir política por fornecedor e finalidade antes de dados reais.                    |
+| Persistência de referência         | Influencia custo, transações e operação                   | Resolvido na v2.1: DynamoDB, no padrão do monorepo; desenho de chaves em ADR no M0.   |
+| Recursos do Floci                  | Task token, Streams ou transações podem não ser emulados  | Verificar no M0; sem suporte, usar publicador agendado e validar o restante no M6.    |
+| Desenho de chaves do DynamoDB      | Erro custa migração de dados e reescrita de consultas     | Registrar padrões de acesso e chaves em ADR antes do código.                          |
+| Barramento compartilhado           | Regra com filtro errado entrega evento a quem não deveria | Filtrar por source e detail-type; teste de contrato por evento.                       |
+| APIs sem idempotência/status       | Timeout pode gerar cobrança duplicada                     | Política de reconciliação e intervenção manual.                                       |
+| Volume e SLA desconhecidos         | Dimensionamento e orçamento incertos                      | Medir baseline e definir metas de produção.                                           |
+| Propostas reais                    | Seleção pode exigir reprecificação                        | Especificar novo PRD antes de envio/emissão.                                          |
+| Comparabilidade de ofertas         | Coberturas podem ser diferentes                           | Normalização homologada por especialista de produto.                                  |
+| Identidades e cadastros reais      | Determinam referências permitidas                         | MVP com fixtures sintéticas; homologar fonte cadastral antes da integração comercial. |
 
 ## 18. Referências técnicas
 
@@ -484,17 +484,17 @@ Esta seção é reproduzida nos dois PRDs e deve permanecer idêntica. O backend
 
 ### Endpoints e resposta
 
-| Endpoint | Contrato compartilhado |
-|---|---|
-| POST /v1/quotes | Header Idempotency-Key; body acima; 202 com quoteId, version, phase, statusUrl. Repetição idêntica retorna mesma identidade. |
-| GET /v1/quotes | cursor, phase, outcome, createdFrom, createdTo; retorna items e nextCursor; resumo com id, currentVersion, phase, outcome, createdAt e offerCount. |
-| GET /v1/quotes/{id}/versions/{v} | Snapshot autorizado, phase, outcome, outcomeReason, currentVersion, supersededAt, revision, updatedAt, serverTime, retryAfterSeconds, missingFields, insurerResults, selection, allowedActions. |
-| GET /v1/quotes/{id}/versions/{v}/offers | Lista com revision, serverTime, items e nextCursor; item contém id, insurerId/name, premiumTotal, currency, installments, coverages, deductibles, validUntil, selectable e unavailabilityReason. |
-| POST /v1/quotes/{id}/versions | Idempotency-Key, expectedVersion e novo snapshot; 202 com version/statusUrl; divergência de expectedVersion retorna 409. |
-| POST /v1/quotes/{id}/versions/{v}/selection | Idempotency-Key e offerId; 201 com selectionId, offerId, selectedAt e status=INTENT_RECORDED; repetição idêntica retorna seleção existente. |
-| GET /v1/operations/issues | Restrito; cursor, type e status; items com id, queryId opcional, quoteId opcional, type, status, firstSeenAt, lastSeenAt, safeSummary e allowedActions. Sem tokens/payload bruto. |
-| POST /v1/operations/queries/{id}/reconcile | Idempotency-Key e reason obrigatório; 202 com operationId, status=QUEUED e statusUrl. |
-| GET /v1/operations/{operationId} | status QUEUED/RUNNING/SUCCEEDED/FAILED, safeSummary e updatedAt. |
+| Endpoint                                    | Contrato compartilhado                                                                                                                                                                           |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| POST /v1/quotes                             | Header Idempotency-Key; body acima; 202 com quoteId, version, phase, statusUrl. Repetição idêntica retorna mesma identidade.                                                                     |
+| GET /v1/quotes                              | cursor, phase, outcome, createdFrom, createdTo; retorna items e nextCursor; resumo com id, currentVersion, phase, outcome, createdAt e offerCount.                                               |
+| GET /v1/quotes/{id}/versions/{v}            | Snapshot autorizado, phase, outcome, outcomeReason, currentVersion, supersededAt, revision, updatedAt, serverTime, retryAfterSeconds, missingFields, insurerResults, selection, allowedActions.  |
+| GET /v1/quotes/{id}/versions/{v}/offers     | Lista com revision, serverTime, items e nextCursor; item contém id, insurerId/name, premiumTotal, currency, installments, coverages, deductibles, validUntil, selectable e unavailabilityReason. |
+| POST /v1/quotes/{id}/versions               | Idempotency-Key, expectedVersion e novo snapshot; 202 com version/statusUrl; divergência de expectedVersion retorna 409.                                                                         |
+| POST /v1/quotes/{id}/versions/{v}/selection | Idempotency-Key e offerId; 201 com selectionId, offerId, selectedAt e status=INTENT_RECORDED; repetição idêntica retorna seleção existente.                                                      |
+| GET /v1/operations/issues                   | Restrito; cursor, type e status; items com id, queryId opcional, quoteId opcional, type, status, firstSeenAt, lastSeenAt, safeSummary e allowedActions. Sem tokens/payload bruto.                |
+| POST /v1/operations/queries/{id}/reconcile  | Idempotency-Key e reason obrigatório; 202 com operationId, status=QUEUED e statusUrl.                                                                                                            |
+| GET /v1/operations/{operationId}            | status QUEUED/RUNNING/SUCCEEDED/FAILED, safeSummary e updatedAt.                                                                                                                                 |
 
 missingFields contém path, label e reasonCode. allowedActions usa CREATE_VERSION e SELECT_OFFER nas cotações; RECONCILE nos itens operacionais quando queryId existe. Um callback não correlacionado pode ser apenas consultável, sem botão de reconciliação manual indevido.
 

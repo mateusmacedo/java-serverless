@@ -34,13 +34,13 @@ $legenda_erros()
 @enduml
 ```
 
-| Estado | Tipo | O que faz |
-|---|---|---|
-| `Validate` | Task, Lambda `validate` | Rejeita payload vazio ou acima do limite; assina o conteúdo com HMAC |
-| `Persist` | Task, Lambda `persist` | Grava o resultado no DynamoDB |
-| `Notify` | Task, Lambda `notify` | Publica no SNS e emite `RequestCompleted` no EventBridge |
+| Estado                  | Tipo                                     | O que faz                                                               |
+| ----------------------- | ---------------------------------------- | ----------------------------------------------------------------------- |
+| `Validate`              | Task, Lambda `validate`                  | Rejeita payload vazio ou acima do limite; assina o conteúdo com HMAC    |
+| `Persist`               | Task, Lambda `persist`                   | Grava o resultado no DynamoDB                                           |
+| `Notify`                | Task, Lambda `notify`                    | Publica no SNS e emite `RequestCompleted` no EventBridge                |
 | `SendToDeadLetterQueue` | Task, `arn:aws:states:::sqs:sendMessage` | Envia a entrada do estado que falhou, com o erro em `error`, para a DLQ |
-| `RequestFailed` | Fail | Encerra a execução como `FAILED` com o erro `RequestFailed` |
+| `RequestFailed`         | Fail                                     | Encerra a execução como `FAILED` com o erro `RequestFailed`             |
 
 Os três passos de negócio têm o mesmo `Catch`: qualquer erro (`States.ALL`) é gravado em `$.error`
 e a execução segue para `SendToDeadLetterQueue`.
@@ -231,17 +231,17 @@ existente e publica `ReceiptIssued` mais uma vez. Os contratos estão no
 
 ## Onde cada erro termina
 
-| Situação | Resultado | Onde observar |
-|---|---|---|
-| `Content-Type` diferente de `application/json` | `415` sem corpo | Resposta HTTP |
-| Corpo ausente | `400` sem corpo | Resposta HTTP |
-| Método não mapeado, como `GET /requests` | `403` com `Missing Authentication Token`, devolvido pelo API Gateway | Resposta HTTP |
-| Falha ao gravar no S3 ou iniciar a execução | `500` (não reproduzido nos testes) | Resposta HTTP e log da Lambda `api` |
-| Payload vazio ou acima de 4096 bytes | Execução `FAILED` e mensagem na DLQ | Histórico da execução e fila `dlq` |
-| Erro em `persist` ou `notify` | Execução `FAILED` e mensagem na DLQ | Histórico da execução e fila `dlq` |
-| Falha repetida após 3 tentativas | Mensagem descartada | Log da Lambda `reprocess` (`Discarding request ...`) |
-| Erro em `issue` ou `announce` (receipt-solution) | 2 novas tentativas; depois, execução `FAILED`, sem DLQ no exemplo | Histórico da execução `receipt-flow` |
-| `RequestCompleted` entregue mais de uma vez | Mesmo comprovante; o `announce` pode publicar `ReceiptIssued` de novo | Tabela `receipts` e barramento da receipt-solution |
-| `GET /receipts/{requestId}` sem comprovante | `404` sem corpo | Resposta HTTP |
-| `POST /receipts` com campo ausente ou `payloadBytes` menor que 1 | `400` com a lista de violações, sem iniciar execução | Resposta HTTP |
-| `POST /receipts` com `Content-Type` diferente de `application/json` | `415` sem corpo | Resposta HTTP |
+| Situação                                                            | Resultado                                                             | Onde observar                                        |
+| ------------------------------------------------------------------- | --------------------------------------------------------------------- | ---------------------------------------------------- |
+| `Content-Type` diferente de `application/json`                      | `415` sem corpo                                                       | Resposta HTTP                                        |
+| Corpo ausente                                                       | `400` sem corpo                                                       | Resposta HTTP                                        |
+| Método não mapeado, como `GET /requests`                            | `403` com `Missing Authentication Token`, devolvido pelo API Gateway  | Resposta HTTP                                        |
+| Falha ao gravar no S3 ou iniciar a execução                         | `500` (não reproduzido nos testes)                                    | Resposta HTTP e log da Lambda `api`                  |
+| Payload vazio ou acima de 4096 bytes                                | Execução `FAILED` e mensagem na DLQ                                   | Histórico da execução e fila `dlq`                   |
+| Erro em `persist` ou `notify`                                       | Execução `FAILED` e mensagem na DLQ                                   | Histórico da execução e fila `dlq`                   |
+| Falha repetida após 3 tentativas                                    | Mensagem descartada                                                   | Log da Lambda `reprocess` (`Discarding request ...`) |
+| Erro em `issue` ou `announce` (receipt-solution)                    | 2 novas tentativas; depois, execução `FAILED`, sem DLQ no exemplo     | Histórico da execução `receipt-flow`                 |
+| `RequestCompleted` entregue mais de uma vez                         | Mesmo comprovante; o `announce` pode publicar `ReceiptIssued` de novo | Tabela `receipts` e barramento da receipt-solution   |
+| `GET /receipts/{requestId}` sem comprovante                         | `404` sem corpo                                                       | Resposta HTTP                                        |
+| `POST /receipts` com campo ausente ou `payloadBytes` menor que 1    | `400` com a lista de violações, sem iniciar execução                  | Resposta HTTP                                        |
+| `POST /receipts` com `Content-Type` diferente de `application/json` | `415` sem corpo                                                       | Resposta HTTP                                        |

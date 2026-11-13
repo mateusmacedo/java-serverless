@@ -35,65 +35,65 @@ Histórias: como corretor, quero acompanhar sem reenviar; como operador, quero c
 
 ## 4. Rotas e componentes
 
-| Rota | Responsabilidade |
-|---|---|
-| /login | Início da autenticação, retorno seguro e mensagem de sessão expirada. |
-| /quotes | Lista paginada, filtros, estados vazio/carregando/erro e acesso a detalhes. |
-| /quotes/new | Formulário, revisão, envio e recuperação de resultado desconhecido. |
-| /quotes/{id}/versions/{version} | Snapshot, fases, resultados por seguradora, ofertas, pendências e seleção. |
-| /quotes/{id}/versions/{version}/compare | Comparação de até três ofertas selecionadas para visualização. |
-| /quotes/{id}/versions/{version}/edit | Complementação baseada no snapshot e expectedVersion; cria versão, não edita a anterior. |
-| /operations | Lista filtrável de ocorrências e acompanhamento de reconciliações. |
+| Rota                                    | Responsabilidade                                                                         |
+| --------------------------------------- | ---------------------------------------------------------------------------------------- |
+| /login                                  | Início da autenticação, retorno seguro e mensagem de sessão expirada.                    |
+| /quotes                                 | Lista paginada, filtros, estados vazio/carregando/erro e acesso a detalhes.              |
+| /quotes/new                             | Formulário, revisão, envio e recuperação de resultado desconhecido.                      |
+| /quotes/{id}/versions/{version}         | Snapshot, fases, resultados por seguradora, ofertas, pendências e seleção.               |
+| /quotes/{id}/versions/{version}/compare | Comparação de até três ofertas selecionadas para visualização.                           |
+| /quotes/{id}/versions/{version}/edit    | Complementação baseada no snapshot e expectedVersion; cria versão, não edita a anterior. |
+| /operations                             | Lista filtrável de ocorrências e acompanhamento de reconciliações.                       |
 
 Componentes: QuoteForm, QuoteSummary, PhaseTimeline, InsurerResultList, OfferCard, CoverageComparison, MissingInformationPanel, VersionBanner, SelectionDialog, RecoveryNotice, OperationIssueTable e ReconciliationDialog. Componentes são sugestões de divisão, não obrigação de microcomponentização.
 
 ## 5. Requisitos e critérios de aceite
 
-| ID | Requisito | Critério de aceite |
-|---|---|---|
-| FE01 | Autenticar e respeitar permissões | /v1/me controla navegação; acesso direto sem permissão mostra estado apropriado; backend segue responsável por autorização. |
-| FE02 | Listar e filtrar | Filtros persistem na URL, paginação por cursor funciona e nova combinação reinicia cursor. |
-| FE03 | Coletar entrada válida | Campos obrigatórios identificados, referências escolhidas por rótulo, erro localizado e foco no primeiro campo inválido. |
-| FE04 | Enviar idempotentemente | Duplo clique produz uma intenção; timeout reutiliza chave/body; protocolo confirmado é exibido. |
-| FE05 | Mostrar progresso | Fase e resultados por seguradora atualizam sem recarregar a página e sem porcentagem fictícia. |
-| FE06 | Exibir ofertas parciais | Oferta aparece enquanto outra seguradora está PROCESSING; mensagem informa que mais resultados podem chegar. |
-| FE07 | Comparar | Até três ofertas; preço, parcelas, cobertura, limites e franquias; ausência de informação não é zero. |
-| FE08 | Complementar com versão | Pendência mostra campos; submissão inclui expectedVersion; 409 não sobrescreve dados do servidor. |
-| FE09 | Selecionar | Modal resume oferta; clique só confirma sucesso após resposta; expirada/substituída/seleção anterior são tratadas. |
-| FE10 | Preservar resultado em falha de rede | Dados existentes continuam visíveis com horário e aviso; ação de atualizar não recria cotação. |
-| FE11 | Controlar operações | Apenas autorizado solicita RECONCILE quando permitido, informa motivo e acompanha operationId. |
-| FE12 | Acessibilidade e responsividade | Fluxos completos por teclado, foco previsível, labels e anúncios moderados; sem informação exclusiva por cor. |
-| FE13 | Isolar sessão e organização | Logout limpa caches de dados de negócio; cache é particionado por usuário/organização/recurso. |
-| FE14 | Tratar resultado desconhecido | Tela não declara falha comercial nem inicia outra solicitação após timeout; mantém recuperação da mesma intenção. |
+| ID   | Requisito                            | Critério de aceite                                                                                                          |
+| ---- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| FE01 | Autenticar e respeitar permissões    | /v1/me controla navegação; acesso direto sem permissão mostra estado apropriado; backend segue responsável por autorização. |
+| FE02 | Listar e filtrar                     | Filtros persistem na URL, paginação por cursor funciona e nova combinação reinicia cursor.                                  |
+| FE03 | Coletar entrada válida               | Campos obrigatórios identificados, referências escolhidas por rótulo, erro localizado e foco no primeiro campo inválido.    |
+| FE04 | Enviar idempotentemente              | Duplo clique produz uma intenção; timeout reutiliza chave/body; protocolo confirmado é exibido.                             |
+| FE05 | Mostrar progresso                    | Fase e resultados por seguradora atualizam sem recarregar a página e sem porcentagem fictícia.                              |
+| FE06 | Exibir ofertas parciais              | Oferta aparece enquanto outra seguradora está PROCESSING; mensagem informa que mais resultados podem chegar.                |
+| FE07 | Comparar                             | Até três ofertas; preço, parcelas, cobertura, limites e franquias; ausência de informação não é zero.                       |
+| FE08 | Complementar com versão              | Pendência mostra campos; submissão inclui expectedVersion; 409 não sobrescreve dados do servidor.                           |
+| FE09 | Selecionar                           | Modal resume oferta; clique só confirma sucesso após resposta; expirada/substituída/seleção anterior são tratadas.          |
+| FE10 | Preservar resultado em falha de rede | Dados existentes continuam visíveis com horário e aviso; ação de atualizar não recria cotação.                              |
+| FE11 | Controlar operações                  | Apenas autorizado solicita RECONCILE quando permitido, informa motivo e acompanha operationId.                              |
+| FE12 | Acessibilidade e responsividade      | Fluxos completos por teclado, foco previsível, labels e anúncios moderados; sem informação exclusiva por cor.               |
+| FE13 | Isolar sessão e organização          | Logout limpa caches de dados de negócio; cache é particionado por usuário/organização/recurso.                              |
+| FE14 | Tratar resultado desconhecido        | Tela não declara falha comercial nem inicia outra solicitação após timeout; mantém recuperação da mesma intenção.           |
 
 ## 6. Formulário e validação
 
-| Campo | Controle e regra de interface |
-|---|---|
-| product | AUTO fixo e visível no MVP. |
-| applicantRef | Autocomplete do catálogo autorizado; obrigatório. |
-| risk.vehicleRef | Seleção do veículo sintético; obrigatório. |
-| risk.principalDriverRef | Seleção do condutor; obrigatório. |
-| risk.usage | PERSONAL/COMMERCIAL com rótulos claros; obrigatório. |
-| coverageProfile | Seleção de perfil e resumo de coberturas retornado pelo catálogo. |
-| desiredStartDate | Campo de data no formato de apresentação local, enviado YYYY-MM-DD; obrigatoriedade/formato no cliente, elegibilidade de data no servidor. |
+| Campo                   | Controle e regra de interface                                                                                                              |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| product                 | AUTO fixo e visível no MVP.                                                                                                                |
+| applicantRef            | Autocomplete do catálogo autorizado; obrigatório.                                                                                          |
+| risk.vehicleRef         | Seleção do veículo sintético; obrigatório.                                                                                                 |
+| risk.principalDriverRef | Seleção do condutor; obrigatório.                                                                                                          |
+| risk.usage              | PERSONAL/COMMERCIAL com rótulos claros; obrigatório.                                                                                       |
+| coverageProfile         | Seleção de perfil e resumo de coberturas retornado pelo catálogo.                                                                          |
+| desiredStartDate        | Campo de data no formato de apresentação local, enviado YYYY-MM-DD; obrigatoriedade/formato no cliente, elegibilidade de data no servidor. |
 
 Validação no cliente melhora a interação; não implementa regras de subscrição nem decide seguradoras elegíveis. Erros de contrato usam fieldErrors.path para apontar campos. Catálogo vazio deve explicar indisponibilidade de opções e oferecer atualização, sem aceitar IDs livres. Rascunho fica em memória no MVP; ao sair com alterações não enviadas, avisar sobre perda. Não prometer retomada de rascunho entre dispositivos.
 
 ## 7. Estados apresentados ao usuário
 
-| Código | Texto sugerido e ação |
-|---|---|
-| RECEIVED | Solicitação recebida — protocolo disponível. |
-| VALIDATING | Validando dados. |
-| ENRICHING | Obtendo informações para a cotação. |
-| QUOTING | Consultando seguradoras — resultados podem aparecer gradualmente. |
-| COMPLETED | Consultas concluídas — consultar ofertas e recusas individuais. |
-| PARTIAL | Ofertas disponíveis; algumas consultas não foram concluídas ou precisam de dados. |
-| NEEDS_INFORMATION | Informações adicionais necessárias — complementar quando permitido. |
-| INELIGIBLE | Cotação não pode prosseguir — mostrar motivo seguro. |
-| NO_OFFER | Nenhuma oferta disponível — mostrar motivo; não atribuir a indisponibilidade técnica. |
-| TECHNICAL_FAILURE | Não foi possível concluir as consultas — mostrar protocolo e orientação. |
+| Código            | Texto sugerido e ação                                                                 |
+| ----------------- | ------------------------------------------------------------------------------------- |
+| RECEIVED          | Solicitação recebida — protocolo disponível.                                          |
+| VALIDATING        | Validando dados.                                                                      |
+| ENRICHING         | Obtendo informações para a cotação.                                                   |
+| QUOTING           | Consultando seguradoras — resultados podem aparecer gradualmente.                     |
+| COMPLETED         | Consultas concluídas — consultar ofertas e recusas individuais.                       |
+| PARTIAL           | Ofertas disponíveis; algumas consultas não foram concluídas ou precisam de dados.     |
+| NEEDS_INFORMATION | Informações adicionais necessárias — complementar quando permitido.                   |
+| INELIGIBLE        | Cotação não pode prosseguir — mostrar motivo seguro.                                  |
+| NO_OFFER          | Nenhuma oferta disponível — mostrar motivo; não atribuir a indisponibilidade técnica. |
+| TECHNICAL_FAILURE | Não foi possível concluir as consultas — mostrar protocolo e orientação.              |
 
 Por seguradora: PENDING = aguardando; PROCESSING = em consulta; QUOTED = oferta disponível; DECLINED = risco não aceito; NEEDS_INFORMATION = dados adicionais; UNAVAILABLE = indisponível; TIMED_OUT = prazo de resposta excedido.
 
@@ -139,37 +139,37 @@ Indicadores: conclusão do formulário, tempo até primeira oferta visualizada, 
 
 ## 13. Testes de aceitação frontend
 
-| Caso | Resultado esperado |
-|---|---|
-| FT01 — lista vazia | Mensagem e ação de criar; não mostrar erro. |
-| FT02 — validação | Erros em campos e foco correto; nenhuma chamada inválida disparada. |
-| FT03 — duplo clique/timeout | Uma intenção e recuperação com a mesma chave e body. |
-| FT04 — oferta parcial | Card de A aparece enquanto B está processando. |
-| FT05 — recusa versus indisponibilidade | Textos e estados distintos, sem conversão automática. |
-| FT06 — rede indisponível | Ofertas existentes preservadas; aviso e atualização disponível. |
-| FT07 — respostas fora de ordem | Revision menor não regride o mesmo recurso. |
-| FT08 — aba oculta/retorno | Polling suspenso e refresh ao retornar; sem duplicação de loops. |
-| FT09 — complementação | Nova versão criada; histórico preservado; conflito tratado. |
-| FT10 — expiração durante seleção | 409 apresentado; nenhuma confirmação falsa. |
-| FT11 — seleção durante QUOTING | Permitida apenas quando servidor autoriza; consultas continuam. |
-| FT12 — sessão/permissões | Login/401/403 tratados; operação restrita não aparece nem é aceita pelo backend. |
-| FT13 — troca/logout | Cache anterior removido; dados não atravessam sessões. |
-| FT14 — comparação heterogênea | Limites e franquias distintos destacados; ausência não é zero. |
-| FT15 — acessibilidade/mobile | Formulário, comparação e modal utilizáveis por teclado e tela estreita. |
-| FT16 — reconciliação | 202 mostra operação pendente; acompanha sucesso/falha sem repetir comando. |
-| FT17 — seleção concorrente | VERSION_SUPERSEDED/SELECTION_ALREADY_EXISTS tratados conforme contrato. |
+| Caso                                   | Resultado esperado                                                               |
+| -------------------------------------- | -------------------------------------------------------------------------------- |
+| FT01 — lista vazia                     | Mensagem e ação de criar; não mostrar erro.                                      |
+| FT02 — validação                       | Erros em campos e foco correto; nenhuma chamada inválida disparada.              |
+| FT03 — duplo clique/timeout            | Uma intenção e recuperação com a mesma chave e body.                             |
+| FT04 — oferta parcial                  | Card de A aparece enquanto B está processando.                                   |
+| FT05 — recusa versus indisponibilidade | Textos e estados distintos, sem conversão automática.                            |
+| FT06 — rede indisponível               | Ofertas existentes preservadas; aviso e atualização disponível.                  |
+| FT07 — respostas fora de ordem         | Revision menor não regride o mesmo recurso.                                      |
+| FT08 — aba oculta/retorno              | Polling suspenso e refresh ao retornar; sem duplicação de loops.                 |
+| FT09 — complementação                  | Nova versão criada; histórico preservado; conflito tratado.                      |
+| FT10 — expiração durante seleção       | 409 apresentado; nenhuma confirmação falsa.                                      |
+| FT11 — seleção durante QUOTING         | Permitida apenas quando servidor autoriza; consultas continuam.                  |
+| FT12 — sessão/permissões               | Login/401/403 tratados; operação restrita não aparece nem é aceita pelo backend. |
+| FT13 — troca/logout                    | Cache anterior removido; dados não atravessam sessões.                           |
+| FT14 — comparação heterogênea          | Limites e franquias distintos destacados; ausência não é zero.                   |
+| FT15 — acessibilidade/mobile           | Formulário, comparação e modal utilizáveis por teclado e tela estreita.          |
+| FT16 — reconciliação                   | 202 mostra operação pendente; acompanha sucesso/falha sem repetir comando.       |
+| FT17 — seleção concorrente             | VERSION_SUPERSEDED/SELECTION_ALREADY_EXISTS tratados conforme contrato.          |
 
 Mocks incluem todas as fases/outcomes e códigos 400/401/403/404/409/429/503. Testes de componente para estados; testes de navegador para jornadas e recuperação. Integração final usa backend de desenvolvimento com simuladores, sem depender de fornecedores pagos.
 
 ## 14. Entrega incremental e handoff
 
-| Marco | Estimativa relativa | Entrega |
-|---|---|---|
-| F1 | 1 semana | Shell autenticado, cliente tipado, fixtures e listagem. |
-| F2 | 1 semana | Formulário, envio idempotente e recuperação. |
-| F3 | 1–2 semanas | Acompanhamento, polling e ofertas parciais. |
-| F4 | 1 semana | Comparação, versões e seleção. |
-| F5 | 1 semana | Operações restritas, testes completos e integração. |
+| Marco | Estimativa relativa | Entrega                                                 |
+| ----- | ------------------- | ------------------------------------------------------- |
+| F1    | 1 semana            | Shell autenticado, cliente tipado, fixtures e listagem. |
+| F2    | 1 semana            | Formulário, envio idempotente e recuperação.            |
+| F3    | 1–2 semanas         | Acompanhamento, polling e ofertas parciais.             |
+| F4    | 1 semana            | Comparação, versões e seleção.                          |
+| F5    | 1 semana            | Operações restritas, testes completos e integração.     |
 
 Estimativas indicativas, não compromisso. Frontend pode desenvolver com mocks em paralelo após congelar contrato compartilhado. Alterações de contrato exigem ajuste de fixtures e ambos os PRDs.
 
@@ -198,17 +198,17 @@ Esta seção é reproduzida nos dois PRDs e deve permanecer idêntica. O backend
 
 ### Endpoints e resposta
 
-| Endpoint | Contrato compartilhado |
-|---|---|
-| POST /v1/quotes | Header Idempotency-Key; body acima; 202 com quoteId, version, phase, statusUrl. Repetição idêntica retorna mesma identidade. |
-| GET /v1/quotes | cursor, phase, outcome, createdFrom, createdTo; retorna items e nextCursor; resumo com id, currentVersion, phase, outcome, createdAt e offerCount. |
-| GET /v1/quotes/{id}/versions/{v} | Snapshot autorizado, phase, outcome, outcomeReason, currentVersion, supersededAt, revision, updatedAt, serverTime, retryAfterSeconds, missingFields, insurerResults, selection, allowedActions. |
-| GET /v1/quotes/{id}/versions/{v}/offers | Lista com revision, serverTime, items e nextCursor; item contém id, insurerId/name, premiumTotal, currency, installments, coverages, deductibles, validUntil, selectable e unavailabilityReason. |
-| POST /v1/quotes/{id}/versions | Idempotency-Key, expectedVersion e novo snapshot; 202 com version/statusUrl; divergência de expectedVersion retorna 409. |
-| POST /v1/quotes/{id}/versions/{v}/selection | Idempotency-Key e offerId; 201 com selectionId, offerId, selectedAt e status=INTENT_RECORDED; repetição idêntica retorna seleção existente. |
-| GET /v1/operations/issues | Restrito; cursor, type e status; items com id, queryId opcional, quoteId opcional, type, status, firstSeenAt, lastSeenAt, safeSummary e allowedActions. Sem tokens/payload bruto. |
-| POST /v1/operations/queries/{id}/reconcile | Idempotency-Key e reason obrigatório; 202 com operationId, status=QUEUED e statusUrl. |
-| GET /v1/operations/{operationId} | status QUEUED/RUNNING/SUCCEEDED/FAILED, safeSummary e updatedAt. |
+| Endpoint                                    | Contrato compartilhado                                                                                                                                                                           |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| POST /v1/quotes                             | Header Idempotency-Key; body acima; 202 com quoteId, version, phase, statusUrl. Repetição idêntica retorna mesma identidade.                                                                     |
+| GET /v1/quotes                              | cursor, phase, outcome, createdFrom, createdTo; retorna items e nextCursor; resumo com id, currentVersion, phase, outcome, createdAt e offerCount.                                               |
+| GET /v1/quotes/{id}/versions/{v}            | Snapshot autorizado, phase, outcome, outcomeReason, currentVersion, supersededAt, revision, updatedAt, serverTime, retryAfterSeconds, missingFields, insurerResults, selection, allowedActions.  |
+| GET /v1/quotes/{id}/versions/{v}/offers     | Lista com revision, serverTime, items e nextCursor; item contém id, insurerId/name, premiumTotal, currency, installments, coverages, deductibles, validUntil, selectable e unavailabilityReason. |
+| POST /v1/quotes/{id}/versions               | Idempotency-Key, expectedVersion e novo snapshot; 202 com version/statusUrl; divergência de expectedVersion retorna 409.                                                                         |
+| POST /v1/quotes/{id}/versions/{v}/selection | Idempotency-Key e offerId; 201 com selectionId, offerId, selectedAt e status=INTENT_RECORDED; repetição idêntica retorna seleção existente.                                                      |
+| GET /v1/operations/issues                   | Restrito; cursor, type e status; items com id, queryId opcional, quoteId opcional, type, status, firstSeenAt, lastSeenAt, safeSummary e allowedActions. Sem tokens/payload bruto.                |
+| POST /v1/operations/queries/{id}/reconcile  | Idempotency-Key e reason obrigatório; 202 com operationId, status=QUEUED e statusUrl.                                                                                                            |
+| GET /v1/operations/{operationId}            | status QUEUED/RUNNING/SUCCEEDED/FAILED, safeSummary e updatedAt.                                                                                                                                 |
 
 missingFields contém path, label e reasonCode. allowedActions usa CREATE_VERSION e SELECT_OFFER nas cotações; RECONCILE nos itens operacionais quando queryId existe. Um callback não correlacionado pode ser apenas consultável, sem botão de reconciliação manual indevido.
 

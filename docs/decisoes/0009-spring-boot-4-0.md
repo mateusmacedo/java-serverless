@@ -10,11 +10,11 @@ O [ADR 0003](0003-spring-boot-3-5.md) escolheu o Spring Boot 3.5.16 pela adoçã
 que a linha estava sem correções gratuitas desde 30/06/2026. A decisão foi revista com outro critério:
 ficar numa linha com suporte gratuito. Em 10/11/2026 o quadro era este:
 
-| Linha | Suporte gratuito até | Suporte comercial até | Spring Cloud |
-|---|---|---|---|
-| 3.5 | 30/06/2026 | 30/06/2032 | 2025.0.3, versão final |
-| 4.0 | 31/12/2026 | 31/12/2027 | 2025.1.4, versão final |
-| 4.1 | 31/07/2027 | 31/07/2028 | 2026.0.0-RC2, sem versão final |
+| Linha | Suporte gratuito até | Suporte comercial até | Spring Cloud                   |
+| ----- | -------------------- | --------------------- | ------------------------------ |
+| 3.5   | 30/06/2026           | 30/06/2032            | 2025.0.3, versão final         |
+| 4.0   | 31/12/2026           | 31/12/2027            | 2025.1.4, versão final         |
+| 4.1   | 31/07/2027           | 31/07/2028            | 2026.0.0-RC2, sem versão final |
 
 Nenhuma linha do Spring Boot leva o rótulo LTS ([endoflife.date](https://endoflife.date/spring-boot)).
 O Spring Cloud Function, que executa as Lambdas dos passos, só terá versão final para o Boot 4.1
