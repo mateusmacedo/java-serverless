@@ -23,9 +23,9 @@ const USERS = [
   },
 ];
 
-const password = process.env.BACKOFFICE_PASSWORD ?? '';
+const password = process.env.BACKOFFICE_PASSWORD ?? '!1Admin-local';
 const policy = [
-  [password.length >= 12, '12 ou mais caracteres'],
+  [password.length >= 8, '8 ou mais caracteres'],
   [/[a-z]/.test(password), 'uma letra minúscula'],
   [/[A-Z]/.test(password), 'uma letra maiúscula'],
   [/\d/.test(password), 'um número'],
