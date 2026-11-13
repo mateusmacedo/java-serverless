@@ -725,14 +725,21 @@ O `QuoteFlowE2E` passou nos 26 testes em 793,8 s (13:17 min no Maven), com a má
   teste; o exemplo também não tem DLQ para ele.
 - O T06 do `QuoteFlowE2E` pode falhar com a máquina carregada, como numa rodada da integração do M4 e
   na rodada sob carga da verificação do M5. Mesmo com a máquina ociosa, a folga da espera do
-  enriquecimento caiu para 1,1 s no M5 ([Rodada de fechamento do M5](#rodada-de-fechamento-do-m5)).
+  enriquecimento caiu para 1,1 s no M5 ([Rodada de fechamento do M5](#rodada-de-fechamento-do-m5)). Na
+  validação antes do PR, com carga entre 1,7 e 2,4, ele falhou duas vezes seguidas com N=12 (1 e depois 2
+  das 12 versões em `TECHNICAL_FAILURE/ENRICHMENT_FAILED`) e passou com `-De2e.concurrentQuotes=8`, em
+  38,6 s. Os prazos do stage `local` não mudaram no M6.
 - O T20 do `QuoteFlowE2E` depende do comportamento do Floci depois do `StopExecution`; por isso tenta até
   3 cotações e registra cada tentativa no log. Ele classifica a tentativa só pelo `reasonCode` da beta, e
   isso falha sob carga: na rodada sob carga do M5, a continuação do Floci gravou `STEP_TIMEOUT` na beta,
   mas o `reconciler` finalizou a versão antes do `ConsolidateQuote` (`TERMINAL` e `WORKFLOW_FAILED` no
   mesmo instante). A finalização e o `WORKFLOW_FAILED` são legítimos, e o teste acusou "consolidated before
   the reconciler". Decidir pela transição a `TERMINAL` ou pela presença da ocorrência evitaria o falso
-  negativo.
+  negativo. Há outra corrida no mesmo caso: a finalização grava `TERMINAL` com `gsi2pk = SUMMARY_PENDING`, e
+  o `refreshSummary` só remove o atributo depois do commit. Na validação antes do PR, o teste leu a versão
+  cerca de 600 ms antes dessa remoção e acusou "out of the ACTIVE_VERSION index"; a versão convergiu sem
+  `gsi2pk`, e a reexecução passou. Esperar a remoção com prazo, em vez de afirmar na primeira leitura,
+  evitaria o falso negativo.
 - O disparo dos alarmes e a extração das métricas EMF não têm teste no Floci; ficam para o M6.
 - O `ContractClient` confere a requisição só nos 2xx; nos erros, só a resposta. O T22 afirma o 2xx de 11
   das 14 operações; o de `createQuoteVersion`, `reconcileQuery` e `getOperation` é conferido em outros
