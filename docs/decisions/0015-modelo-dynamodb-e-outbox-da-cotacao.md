@@ -64,3 +64,14 @@ shard e a faixa de sequência, sem o conteúdo, e a divisão reentrega os regist
   índices, e as transações passam a cruzar tabelas sem ganho.
 - Publicação imediata após o commit, com varredura periódica como único backstop: dispensa o stream,
   mas atrasa a recuperação de falhas até a próxima varredura.
+
+## Emenda (M4)
+
+Nos itens `ISSUE#` das duas soluções, o tipo da ocorrência fica no atributo `issueType`. O atributo
+`type` continua sendo o tipo do item, como em todo item da tabela, e vale `ISSUE` nas ocorrências. Por
+isso a listagem de ocorrências usa `issueType` e `status` em `FilterExpression`. Nos eventos
+`OperationIssueRaised` e `OperationIssueUpdated`, o campo `type` do `detail` continua sendo o tipo da
+ocorrência.
+
+O `gsi2` ganhou quatro valores de `gsi2pk` no M4: `WAITER_EXPIRED` e `SUMMARY_PENDING` na quote, e
+`FANOUT_PENDING` e `ISSUE_OPEN` na provider.

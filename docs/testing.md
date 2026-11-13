@@ -8,7 +8,7 @@ convenção de nome, para o build do dia a dia não depender de deploy.
 |---|---|---|---|---|
 | Unitário e contrato | `*Test` | `mvn test` | Nada além do JDK | Segundos |
 | Integração com Floci | `*IT` | `mvn verify` | Docker | Cerca de 30 s |
-| Ponta a ponta | `*E2E` | `pnpm test:e2e` | Docker, Floci do `compose.yaml` no ar e login no Serverless | O `QuoteFlowE2E` leva cerca de 5 min (312,0 s na rodada de fechamento do M3), além do deploy e dos outros módulos |
+| Ponta a ponta | `*E2E` | `pnpm test:e2e` | Docker, Floci do `compose.yaml` no ar e login no Serverless | O `QuoteFlowE2E` leva cerca de 13 min ([rodada de fechamento do M4](#rodada-de-fechamento-do-m4)), além do deploy e dos outros módulos |
 
 O `mvn verify` roda os dois primeiros níveis em todas as soluções. Os módulos `sample-solution/e2e`,
 `receipt-solution/e2e` e `quote-solution/e2e` só entram no build com o perfil `-Pe2e`.
@@ -22,6 +22,16 @@ mvn -B verify -pl provider-solution/domain,provider-solution/api,provider-soluti
 ```
 
 Outra forma é acrescentar `-amd`, que inclui os módulos filhos: `mvn -B verify -pl quote-solution -am -amd`.
+
+Antes de um `verify` que valida um marco, recompile tudo, tocando os fontes ou com `mvn clean verify`. A
+IDE grava classes em `target/`, e uma classe que ela compilou com erro ("Unresolved compilation
+problems") parece em dia para o Maven: o javac não a recompila, e o surefire a pula sem aviso. No
+primeiro `verify` da integração do M4, isso tirou o `QuoteEventsContractTest` da contagem (79 testes
+unitários no `quote-functions` em vez de 85), sem nenhuma falha.
+
+```bash
+find platform/spring-aws provider-solution quote-solution -path '*/src/*' -name '*.java' -exec touch {} +
+```
 
 ## Unitários
 
@@ -51,6 +61,15 @@ Quarkus, nas do BOM do Quarkus, com o AssertJ fixado no `quarkus-parent` na mesm
 | `quote-functions` | `FunctionTimingConfigurationTest` (casos do M3) | O orçamento cobre todas as seguradoras do laboratório, então nenhuma selecionada é cortada pelo limite; o `Map` despacha cada seguradora selecionada e registra a própria falha; timeouts estáticos, porque o Floci ignora `TimeoutSecondsPath` |
 | `quote-functions` | `ProviderEventsConsumptionTest` e `QuoteEventsContractTest` (casos do M3) | Os exemplos de `InsurerResultRecorded` de cada seguradora no AsyncAPI da provider viram `RESULT` e oferta; o `InsurerQuoteRequested` segue o contrato para cada seguradora |
 | `quote-functions` | `EnrichmentEvidenceRecordingTest` | Evidência usada gravada com `evidenceId`, `queryId` e `policyVersion` em `HIT`, `JOIN` e `MISS`; `NOT_FOUND` compartilhado com as referências declaradas; evento fora do contrato devolvido à fila sem evidência, antes e depois do prazo do waiter, sem virar evidência tardia; resultado tardio com a referência da evidência. Os 17 eventos fora do contrato cobrem `reuseDecision` ausente ou desconhecido, `evidenceId`, `queryId` ou `policyVersion` ausentes, `policyVersion` vazio, fora do pattern ou que não é texto, `queryId` e `evidenceId` fora do pattern, `HIT` de resultado `FAILED`, `FOUND` sem `result` e `NOT_FOUND` com `notFoundRefs` ausente, vazio, que não é lista, com referência que o pedido não tem ou que não é texto |
+| `provider-domain` | `OperationsTest` (M4) | Ocorrência aberta observada de novo só muda quando o problema se repete; `issueId` determinístico pelo tipo e pelo alvo; cada revisão é um evento próprio, e só a primeira é `OperationIssueRaised`; só `UNKNOWN_QUERY` com `queryId` é `reconcilable`; `QueryReconciled` só com o resultado, sob `eventId` determinístico; mensagem de DLQ reenviada só abaixo do limite e antes do prazo do pedido |
+| `provider-domain` | `InsurerStatusTest` (M4) | `COMPLETED` da API de situação classificado como o callback; `COMPLETED` sem resultado legível é `UNAVAILABLE`; `PROCESSING`, referência desconhecida e falhas nunca concluem a consulta |
+| `provider-functions` | `ServerlessConfigurationTest` (casos do M4) | Fila `reconcile-requests` com o orçamento das filas de pedidos, DLQ e a regra do `QueryReconcileRequested`; toda fila de trabalho com DLQ que o `reconciler` devolve à origem; idades do `reconciler` acima do timeout da `api`, do ciclo de 1 min e da lápide da liderança; alarmes de idade e volume de cada DLQ e da `stream-failures`; alarmes das métricas próprias no namespace que as funções gravam, com os limiares do stage |
+| `provider-functions` | `ProducedEventSchemaTest` e `EventContractTest` (casos do M4) | `OperationIssueRaised` e `OperationIssueUpdated` de todo tipo e status e `QueryReconciled` de todo resultado seguem o schema; os três eventos novos serializam exatamente como os exemplos do AsyncAPI; o exemplo do `QueryReconcileRequested` no AsyncAPI da quote é lido pelo consumidor da provider |
+| `quote-domain` | `ReconciliationTest` (M4) | Decisões do `reconciler` sem AWS: finalização da execução encerrada sem consolidar, mesmo antes do prazo (T20); `STUCK_VERSION` só depois do prazo com a margem; situação desconhecida ou em andamento nunca finalizada; waiter expirado sem resultado gravado é o timeout normal e não abre ocorrência; resultado gravado só abre `TASK_EXPIRED` quando a execução encerrada não o recebeu; mensagem da `results-dlq` reenviada duas vezes e descartada na terceira chegada (T31), e a que não identifica o resultado, descartada na hora; `issueId` estável por tipo e alvo e separado do da provider |
+| `quote-functions` | `FunctionTimingConfigurationTest` (casos do M4) | Prazo do pedido de seguradora limitado ao que resta da cotação; alarmes de volume e idade da `results-dlq` e da `stream-failures`; alarmes de outbox e de tarefas expiradas sobre as métricas que o `reconciler` publica; limiares e parâmetros do `reconciler` do desenho; papel do `reconciler` com os deveres do M4 e `UpdateItem` no papel da API, para a nova versão |
+| `quote-functions` | `ReconcilerMetricsTest` (M4) | A linha EMF declara `ExpiredTasks` e `OutboxPendingAgeSeconds` no namespace configurado, com a dimensão `Stage` |
+| `quote-functions` | `ExpiredTaskDeliveryTest` (M4) | Saídas de `TaskSucceeded` no formato do histórico do Step Functions: o resultado levado pelo `SendTaskSuccess` e o `Payload` do passo de timeout que leu o resultado gravado contam como entrega, na seguradora e no enriquecimento; o passo de timeout sem o resultado, a saída de outra seguradora e a de outra tarefa, como a consolidação, não contam |
+| `provider-functions` | `StatusReadsTest` (M4) | As leituras da API de situação param no teto do ciclo (`statusReadBudgetSeconds`) e, para a seguradora que não respondeu, até o ciclo seguinte, sem parar as das outras; o `reconcileWorker` não tem teto |
 
 Os testes das functions da `sample-solution` simulam os clients do SDK com
 `Answers.CALLS_REAL_METHODS`: o código chama a sobrecarga com `Consumer`, que monta o request e chama
@@ -78,7 +97,12 @@ como filtro do RestAssured. Ele também pega divergência: com um campo obrigat�
 (`401`, sem chegar à inbox), o envelope inválido e o provedor desconhecido (`400` e `404`), o `result`
 fora do schema que ainda chega à inbox, o corpo grande demais (`413`, sem chegar à inbox) e o pedido sem
 assinatura, que não escreve o caminho no log. Na quote, o `QuoteApiContractTest` ganhou no M3 a versão
-`PARTIAL` com uma seguradora em `TIMED_OUT` (T08).
+`PARTIAL` com uma seguradora em `TIMED_OUT` (T08) e, no M4, o `POST /v1/quotes/{id}/versions` (T17):
+nova versão conforme o contrato, que substitui a atual numa só transação; `expectedVersion` que já não é
+a atual é `409 VERSION_CONFLICT`; nova versão depois de uma seleção é `409 QUOTE_ALREADY_SELECTED`;
+reenvio com a mesma chave e o mesmo body é replay; body inválido é `400 VALIDATION_ERROR`; sem a
+permissão de escrita, `403`; cotação de outra organização, `404`. No M4, o `QuoteEventsContractTest` passou a conferir também o exemplo
+`unknown-query` do `QueryReconcileRequested`, com 5 exemplos contra o schema.
 
 Entre as soluções, `CompletedRequestContractTest`, na `receipt-solution`, lê o exemplo do
 `RequestCompleted` documentado no [AsyncAPI da sample](events/asyncapi.yaml), copiado em
@@ -169,24 +193,26 @@ chega depois do `202` (§13 do desenho).
 | `QuoteFunctionsFlociIT` (casos do M3) | T01 com as duas seguradoras no `Map`, cada oferta com a sua evidência; T07; T08 (oferta visível antes de a outra seguradora expirar, versão `PARTIAL`); pendência da beta com e sem oferta da alpha; T11 (callback duplicado, uma oferta e retomada idempotente); T26 (veículo enriquecido anterior a 2000, `NO_OFFER` sem seguradora); seleção pelo ano enriquecido, e não pelo de entrada |
 | `QuoteApiFlociIT` (casos do M3) | T08 (oferta de uma seguradora visível enquanto a outra espera, e mantida depois do `PARTIAL`) e T07 (motivo da recusa ao lado da oferta da outra seguradora) |
 
-Na rodada de fechamento do M3, o `mvn verify` dos módulos da provider e da quote, com o `spring-aws`
-que entra pelo `-am`, rodou 435 testes: 434 aprovados, nenhuma falha e 1 ignorado, o caso `dev` do
-`ServerlessConfigurationTest` que compara o atraso dos callbacks da beta com a espera da seguradora,
-porque a quote ainda não declara o stage `dev` (entra no M6).
+O M4 acrescenta a reconciliação nas duas soluções. As regras estão no §8 e no §9 do
+[desenho técnico](quotation-platform.md). Os testes do `provider-functions` controlam o relógio e chamam
+o `reconciler` direto, sem esperar o agendamento. No `quote-functions`, o `FlociResource` ganhou a fila
+`results` com a DLQ e duas máquinas de estado que terminam em `FAILED` e em `TIMED_OUT`, e o
+`QuoteFixtures` ganhou a substituição da primeira versão. Nenhuma asserção dos testes do M1 ao M3
+mudou.
 
-| Módulo | Testes |
+| Classe | O que cobre |
 |---|---|
-| `spring-aws` | 5 |
-| `provider-domain` | 63 |
-| `provider-api` | 18 (7 de contrato e 11 de integração) |
-| `provider-functions` | 107 (48 unitários, 1 deles ignorado, e 59 de integração, 17 no `EnrichmentReuseIT`, 9 no `InsurerCallbackIT` e 2 no `QuotaAcrossWorkflowsIT`) |
-| `provider-simulators` | 27 (23 unitários e 4 de integração) |
-| `quote-domain` | 85 (39 no `ConsolidationTest`) |
-| `quote-api` | 33 (22 de contrato e 11 de integração) |
-| `quote-functions` | 97 (79 unitários, 39 deles no `EnrichmentEvidenceRecordingTest`, e 18 no `QuoteFunctionsFlociIT`) |
-| Total | 435 (1 ignorado) |
+| `ReconcilerIT` | T14: consulta da beta aceita e sem callback concluída pela API de situação, sem nova chamada; T16: callback depois da conclusão pela reconciliação guardado como evidência tardia, sem reabrir nada, e callback depois do prazo que conclui a consulta `UNKNOWN` com o próprio resultado; consulta com `202` vencida que refaz a metade do worker e é concluída pelo callback retido, sem ler a situação; `UNKNOWN` sem API de situação abre uma só `UNKNOWN_QUERY` `reconcilable`, resolvida quando a consulta conclui; líder interrompido além do prazo concluído sem chamada, com resposta aos seguidores; caso de borda do M2 (líder `FAILED` que caiu antes do fan-out ainda responde aos seguidores da sua cadeia); callback `RECEIVED` parado processado com o código do worker; callback sem correlação que vira `UNMATCHED` com ocorrência e é processado quando a correlação aparece; outbox além do limiar que abre `STALE_OUTBOX` até ser publicado; evento de ocorrência pendente que não abre outra ocorrência em cadeia; `UNKNOWN` sem API de situação que sai do índice, e as demais tomam a vez; leituras da situação de uma seguradora que não respondeu param no resto do ciclo; `UNKNOWN` concluída pela API de situação que encontra o callback chegado só com o `providerRequestId`; conclusão sem chamada que perde para uma tentativa reservada depois da leitura do `reconciler`; ocorrências abertas e callbacks `UNMATCHED` que nunca se resolvem tomam a vez com os outros; ciclo com todos os deveres e as métricas em EMF |
+| `ReconcileWorkerIT` | `UNKNOWN` de seguradora com API de situação concluída, com o resultado publicado uma só vez; consulta de outra organização respondida como inexistente e intocada; `UNKNOWN` sem API de situação falha a reconciliação e mantém a ocorrência aberta; consulta ainda no prazo não é tocada |
+| `DeadLetterReprocessingIT` | T31: mensagem que sempre falha chega à DLQ pela `RedrivePolicy` e é descartada depois de `dlqMaxAttempts`; reenvio de um pedido de seguradora ou de enriquecimento já respondido não repete chamada nem resultado; mensagem além do prazo do pedido é descartada com ocorrência; reconciliação descartada termina como `FAILED` a operação `RUNNING` |
+| `EnrichmentWorkerIT`, `InsurerWorkerIT` e `FunctionInvokerIT` (casos do M4) | O reenvio adiado preserva o `dlqAttempt` da mensagem; o `dlqAttempt` do evento SQS chega ao reenvio adiado |
+| `CallbackApiFlociIT` (caso do M4) | Callback `UNMATCHED` repetido é associado de novo, em vez de tratado como já processado |
+| `QuoteFunctionsFlociIT` (casos do M4) | T09 (todas recusam: `NO_OFFER`, sem retry na recusa); T10 (todas indisponíveis: `TECHNICAL_FAILURE`, nunca `NO_OFFER`); T16 (resultado depois do prazo final guardado como evidência, sem reabrir a versão terminal); T17 (resultado da versão substituída fica nela e não toca o resumo atual); T13 (resultado gravado cuja retomada falhou retomado pelo `reconciler`, sem pedido novo); T20 (execução `FAILED`, `TIMED_OUT` ou `ABORTED` finalizada com as ofertas gravadas e `WORKFLOW_FAILED`); `STUCK_VERSION` aberta uma vez e resumo perdido reparado; resumo da versão consolidada cujo `refreshSummary` falhou reparado pelo `reconciler`, e resumo lido antes da consolidação que não rebaixa o `META` terminal; waiter ou versão que sempre falha não bloqueia os outros; waiter expirado sem resultado é o timeout normal e não abre ocorrência; resultado gravado que a execução encerrada nunca recebeu abre `TASK_EXPIRED` uma vez, e o resultado entregue não abre; T31 (resultado que sempre falha chega à DLQ, e o reprocessamento não o duplica; resultado reprocessado depois do prazo da versão volta à retomada e fica como `LATE`); ciclo com todos os deveres e o relatório |
+| `QuoteApiFlociIT` (casos do M4) | T17: nova versão substitui a atual e bloqueia a seleção na antiga; nova versão idempotente e serializada pelo `expectedVersion`; cotação de outra organização é 404, e um leitor não cria versão |
 
-No fechamento do M2, eram 341.
+O `mvn verify` dos módulos da provider e da quote roda com o comando abaixo. As contagens da rodada de
+fechamento do M4 estão em [Rodada de fechamento do M4](#rodada-de-fechamento-do-m4). Na integração do
+M4, eram 515; no fechamento do M3, 435; no do M2, 341.
 
 ```bash
 mvn -B verify -pl provider-solution/domain,provider-solution/api,provider-solution/functions,provider-solution/simulators,quote-solution/domain,quote-solution/api,quote-solution/functions -am
@@ -215,9 +241,9 @@ fluxo, e não contagens exatas de reinício.
 
 A regra e a fila que capturam o `ReceiptIssued` são criadas pelo teste e removidas ao final.
 
-`QuoteFlowE2E`, no módulo `quote-solution/e2e`, cobre o M1, o M2 e o M3 da plataforma de cotação, com o
-barramento da plataforma, a `provider-solution` e a `quote-solution` implantados. São 18 testes, os 11 do
-M1 e do M2 e os 7 do M3:
+`QuoteFlowE2E`, no módulo `quote-solution/e2e`, cobre do M1 ao M4 da plataforma de cotação, com o
+barramento da plataforma, a `provider-solution` e a `quote-solution` implantados. São 26 testes: os 11
+do M1 e do M2, os 7 do M3 e os 8 do M4.
 
 - **T01, variante com uma seguradora:** `vehicle-van-2022` com uso `COMMERCIAL` cota só na alpha e
   termina `COMPLETED`, com uma oferta selecionável, a evidência do enriquecimento na quote e na provider
@@ -261,8 +287,8 @@ M1 e do M2 e os 7 do M3:
   uma oferta e o motivo `RISK_NOT_ACCEPTED` no resultado da beta.
 - **T08:** a beta aceita e não responde (`vehicle-beta-silent`); a oferta da alpha aparece no GET com a
   fase `QUOTING` e a beta `PROCESSING`, e a versão termina `PARTIAL`, com a mesma oferta e a beta
-  `TIMED_OUT` (`STEP_TIMEOUT`). A consulta da beta fica `IN_FLIGHT` ou `UNKNOWN`, para a reconciliação do
-  M4.
+  `TIMED_OUT` (`STEP_TIMEOUT`). A consulta da beta fica `IN_FLIGHT` ou `UNKNOWN` até a reconciliação, que
+  o T14 confere.
 - **T11:** a beta entrega o mesmo callback duas vezes (`vehicle-beta-duplicate`); depois da conclusão, o
   harness reenvia o callback assinado (a API responde 200 com `duplicate = true`) e republica o
   `InsurerResultRecorded`. Como o descarte não grava nada, o teste espera a linha
@@ -279,6 +305,47 @@ M1 e do M2 e os 7 do M3:
 - **T26:** o veículo enriquecido anterior a 2000 termina `NO_OFFER` com `NO_APPLICABLE_INSURER`, sem
   oferta, resultado, waiter nem consulta de seguradora; a seleção gravou `selectedInsurers` vazio com o
   `selectionRuleVersion`.
+- **T09:** com uso `COMMERCIAL`, a alpha é a única seguradora aplicável e recusa
+  (`vehicle-alpha-declines`): `NO_OFFER` com `ALL_INSURERS_DECLINED`, motivo `RISK_NOT_ACCEPTED` e uma só
+  tentativa, sem retry na recusa.
+- **T10:** a alpha, única aplicável, fica indisponível (`vehicle-alpha-down`): `TECHNICAL_FAILURE` com
+  `INSURER_TECHNICAL_FAILURE`, nunca `NO_OFFER`, com 1 + `workerRetries` = 3 tentativas, consulta
+  `FAILED` e evidência `UNAVAILABLE`.
+- **T13:** estado fabricado, como o `QUOTA#` do T21. O harness deixa ilegível o token do waiter da beta
+  enquanto ele espera; o `resume` grava `RESUMING`, `resumePayload`, `RESULT`, `OFFER` e `CONSUMED` e cai
+  na decifração; depois, o token volta. A versão termina `COMPLETED` com as duas ofertas, o `reconciler`
+  retoma o waiter, que sai do índice, não abre `TASK_EXPIRED`, não há `LATE`, e cada seguradora teve uma
+  só tentativa.
+- **T14:** a beta aceita e fica em silêncio (`vehicle-beta-silent`); a versão termina `PARTIAL`. O log do
+  `reconciler` da provider mostra a consulta deixada `UNKNOWN` e concluída pela API de situação, sem
+  nova chamada. A consulta fica `COMPLETED`, com 1 tentativa, inbox vazia e a evidência
+  `raw/<queryId>/status-0001.json` no S3. Na quote, entra um `LATE` `QUOTED`, e a versão, os resultados,
+  as ofertas e o GET não mudam.
+- **T16:** o callback da `vehicle-beta-late` chega depois do prazo: a versão termina `PARTIAL`, com a
+  beta `STEP_TIMEOUT`, e o callback vira `LATE` `QUOTED`, com 1 tentativa e 1 evidência, sem reabrir a
+  cotação.
+- **T17:** a v2 é criada com a v1 ainda em andamento: `202`, reenvio idempotente e `409
+  VERSION_CONFLICT`. Os `RESULT` da v1 chegam depois do `createdAt` da v2 e ficam na v1; são 4 consultas,
+  cada uma com a sua versão, e nenhum `LATE`. A v1 tem `supersededAt`, `allowedActions` vazio e ofertas
+  `VERSION_SUPERSEDED`; a v2 oferece `CREATE_VERSION` e `SELECT_OFFER`; as duas execuções terminam
+  `SUCCEEDED`.
+- **T20:** `StopExecution` com a oferta da alpha gravada e a beta em `PROCESSING`. O `reconciler`
+  finaliza a versão: `PARTIAL`, beta `TIMED_OUT` com `WORKFLOW_ABORTED`, ofertas mantidas, versão fora do
+  `ACTIVE_VERSION`, `WORKFLOW_FAILED` aberta e `QuoteCompleted` no outbox. Como o `StopExecution` do
+  Floci não para o interpretador ([desenho técnico](quotation-platform.md), §13), o caso despacha a
+  cotação cerca de 51 s depois de um ciclo do `reconciler` e tenta até 3 cotações, registrando cada
+  tentativa no log. Cada tentativa apaga o reuso do par, para o enriquecimento ser `MISS`. A tentativa
+  descartada, que a continuação do Floci consolidou antes do ciclo, confere as invariantes: as ofertas
+  mantidas, nenhum `WORKFLOW_FAILED` e o `QuoteCompleted` com o `outcome` da versão.
+- **T31:** confere a `RedrivePolicy` implantada nas filas `results`, `insurer-requests` e
+  `reconcile-requests` e põe direto nas DLQs entregas de uma cotação já concluída. Antes de o
+  `InsurerResultRecorded` ir à `results-dlq`, a versão é posta fora do prazo; como o prazo da versão não
+  conta, ele é reenviado como tentativa 2 e descartado pelo `CONSUMED`; o
+  `QueryReconcileRequested` na `reconcile-requests-dlq` é reenviado como tentativa 2, e o
+  `QueryReconciled` sai `SUCCEEDED`; o `InsurerQuoteRequested` vencido na `insurer-requests-dlq` é
+  descartado com `DEAD_LETTER` e `OperationIssueRaised`. A cotação e a consulta não mudam. A passagem
+  real pela `RedrivePolicy`, com as visibilidades do stage, levaria mais de 7 min por mensagem e fica no
+  `QuoteFunctionsFlociIT` e no `DeadLetterReprocessingIT`.
 
 Cada caso de reuso usa um par veículo/condutor próprio: T01 e T02, `vehicle-van-2022` com
 `driver-acme-bruno`; T04, `vehicle-sedan-2019` com `driver-acme-ana`; T05, `vehicle-classic-1998` com
@@ -298,6 +365,17 @@ reenvia. No T21, ele lê o limite da alpha do `serverless.yml` da provider, grav
 os apaga no `finally`, para os casos seguintes terem a quota real da janela. O lado do enriquecimento
 do T21 fica no `QuotaAcrossWorkflowsIT`.
 
+Nos casos do M4, cada um usa um par veículo/condutor próprio e apaga o reuso do par no início e no
+`finally`: T09, `vehicle-alpha-declines` com `driver-acme-bruno` e uso `COMMERCIAL`; T10,
+`vehicle-alpha-down` com `driver-acme-bruno` e uso `COMMERCIAL`; T13, `vehicle-hatch-2021` com
+`driver-acme-bruno`; T14, `vehicle-beta-silent` com `driver-acme-ana`; T16, `vehicle-beta-late` com
+`driver-acme-bruno`; T17, a v1 com `vehicle-sedan-2019` e `driver-acme-bruno` e a v2 com
+`vehicle-beta-declines` e `driver-acme-ana`; T20, `vehicle-beta-late` com `driver-acme-ana`; T31,
+`vehicle-van-2022` com `driver-acme-ana` e uso `COMMERCIAL`. T09 e T10 rodam só com a alpha porque
+nenhum veículo faz as duas seguradoras recusarem e a beta não tem cenário de indisponibilidade. Os casos
+que dependem do `reconciler` esperam os ciclos dele com prazo, sem pausa fixa. O usuário do e2e ganhou o
+grupo `perm_offers_select`, para o T17 conferir que só a versão atual oferece `SELECT_OFFER`.
+
 O usuário de teste é criado pelas APIs administrativas do Cognito (`AdminCreateUser`,
 `AdminSetUserPassword` e `AdminAddUserToGroup`, nos grupos da organização e das permissões), e o
 access token vem de `InitiateAuth` com `USER_PASSWORD_AUTH`. Quem valida o token é a Lambda da API. O
@@ -311,6 +389,26 @@ seguradora mais 1 s por cotação disparada (75 s). O polling segue o `retryAfte
 mais N segundos (62 s com N = 12), porque o worker do Floci recebe cerca de 1 pedido por segundo. O
 T19 depende do agendamento, não da máquina: espera até 3 min, com polling de 5 s. Ele também é coberto
 pela integração do `quote-functions`.
+
+O resultado da rodada de fechamento do M4 está em
+[Rodada de fechamento do M4](#rodada-de-fechamento-do-m4). Na rodada de integração do M4, com a máquina
+ociosa e sem build em paralelo, os 26 testes do `QuoteFlowE2E` passaram em 747,6 s (12:31,84 min no
+comando inteiro). Numa rodada anterior, com a máquina carregada (load de 7,7), 25 de 26 passaram em
+885,2 s: o T06 teve 8 das 12 cotações em
+`TECHNICAL_FAILURE` com `ENRICHMENT_FAILED`, porque os pedidos `HIT` chegaram depois da espera de 20 s
+([desenho técnico](quotation-platform.md), §12). A folga do T06 depende de a máquina estar livre. Tempos
+dos casos do M4 na rodada que passou:
+
+| Teste | Tempo |
+|---|---|
+| T09 | 9,3 s |
+| T10 | 9,4 s |
+| T13 | 55,0 s |
+| T14 | 87,6 s |
+| T16 | 42,4 s |
+| T17 | 16,6 s |
+| T20 | 136,9 s |
+| T31 | 82,6 s |
 
 Na rodada de fechamento do M3, os 18 testes do `QuoteFlowE2E` passaram em 312,0 s (5:15 min no
 Maven), sem build em paralelo e sem aquecer funções antes: a cadeia fria da beta cabe na espera de 20 s
@@ -372,6 +470,44 @@ numa rodada um `HIT` chegou 0,43 s depois do prazo, com 1 das 20 versões em `TE
 ([desenho técnico](quotation-platform.md), §12). O caso de 100 pedidos concorrentes fica no
 `EnrichmentReuseIT`.
 
+## Rodada de fechamento do M4
+
+Números da rodada de fechamento do M4, que substituem os da rodada de integração.
+
+Antes do `verify`, todos os fontes foram recompilados com `touch` (comando no início deste documento).
+Depois dele, as 54 classes de teste dos 7 módulos da provider e da quote tinham relatório novo.
+
+O `mvn verify` dos 7 módulos (comando em [Integração com Floci](#integração-com-floci)), com o
+`spring-aws` que entra pelo `-am`, rodou 538 testes: nenhuma falha e 1 pulado, o caso `dev` do
+`ServerlessConfigurationTest` que compara o atraso dos callbacks da beta com a espera da seguradora,
+porque a quote ainda não declara o stage `dev` (entra no M6).
+
+| Módulo | Testes |
+|---|---|
+| `spring-aws` | 5 |
+| `provider-domain` | 72 |
+| `provider-api` | 19 (7 de contrato e 12 de integração) |
+| `provider-functions` | 150 (61 unitários, 1 deles pulado, e 89 de integração, 18 no `ReconcilerIT`, 4 no `ReconcileWorkerIT` e 5 no `DeadLetterReprocessingIT`) |
+| `provider-simulators` | 27 (23 unitários e 4 de integração) |
+| `quote-domain` | 99 |
+| `quote-api` | 42 (28 de contrato e 14 de integração, 13 no `QuoteApiFlociIT` e 1 no `LambdaZipCatalogIT`) |
+| `quote-functions` | 124 (88 unitários e 36 no `QuoteFunctionsFlociIT`) |
+| Total | 538 (1 pulado) |
+
+Foram feitas 23 provas por mutação: cada correção e cada decisão nova do M4, desfeita no código, fez
+falhar o teste que a protege.
+
+O `QuoteFlowE2E` passou nos 26 testes em 793,8 s (13:17 min no Maven), com a máquina ociosa (load de
+1,87).
+
+| Medida | Valor |
+|---|---|
+| T06 com N = 12 | 1 `MISS` e 11 `HIT` |
+| T06: espera do enriquecimento | Mínimo de 4,4 s, p50 de 10,8 s e máximo de 12,5 s |
+| T06: `POST` até `TERMINAL` | Mínimo de 8,4 s, p50 de 18,4 s e máximo de 22,5 s |
+| T01 com duas seguradoras: `POST` até a primeira oferta | 6,8 s |
+| T01 com duas seguradoras: `POST` até `TERMINAL` | 16,9 s |
+
 ## Limites conhecidos
 
 - A resposta `500` da API não tem teste.
@@ -381,3 +517,7 @@ numa rodada um `HIT` chegou 0,43 s depois do prazo, com 1 das 20 versões em `TE
   stack do exemplo não tem assinante.
 - O caminho de falha da `receipt-solution` (execução `FAILED` depois das novas tentativas) não tem
   teste; o exemplo também não tem DLQ para ele.
+- O T06 do `QuoteFlowE2E` pode falhar com a máquina carregada, como numa rodada da integração do M4.
+- O T20 do `QuoteFlowE2E` depende do comportamento do Floci depois do `StopExecution`; por isso tenta até
+  3 cotações e registra cada tentativa no log.
+- O disparo dos alarmes e a extração das métricas EMF não têm teste no Floci; ficam para o M6.
