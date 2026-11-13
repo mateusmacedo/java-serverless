@@ -33,7 +33,8 @@ provider:
   runtime: java21
   region: us-east-1
   stage: ${opt:stage, 'local'}
-  memorySize: 512
+  # WHY: padrão de todas as funções; 1.769 MB equivale a 1 vCPU na Lambda, que reparte CPU pela memória
+  memorySize: 1769
   timeout: 30
   environment:
     AWS_ENDPOINT_URL: ${param:awsEndpointUrl}
