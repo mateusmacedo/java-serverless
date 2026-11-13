@@ -30,7 +30,8 @@ contracts/openapi.yaml        API de produto; contracts/fixtures/*.json (o catá
 
 Pacotes Java: `com.mmda.serverless.quote.{domain,api,functions}` e
 `com.mmda.serverless.provider.{domain,api,functions,simulators}`. Os `artifactId` levam o prefixo da
-solução, como na receipt.
+solução, porque o `groupId` é o mesmo em todas e o zip de cada módulo leva o `artifactId` no nome
+([ADR 0010](decisoes/0010-raiz-neutra-e-parents-por-framework.md)).
 
 A provider não tem módulo `e2e` próprio: os cenários ponta a ponta das duas soluções ficam no
 `quote-e2e`, que exercita a provider implantada junto com a quote (§14).
@@ -78,7 +79,7 @@ Regras no barramento da plataforma, declaradas por quem consome:
 | provider      | `source: mmda.quote`, `detail-type: [QueryReconcileRequested]`                                         | fila `reconcile-requests` (M4) |
 
 Cada fila alvo tem `QueuePolicy` que libera `sqs:SendMessage` para `events.amazonaws.com` com
-`aws:SourceArn` da regra, como a `AuditQueuePolicy` da sample. Lambdas consomem filas com
+`aws:SourceArn` da regra. Lambdas consomem filas com
 `batchSize: 1`. Isso vale só para filas: o stream da tabela usa lotes de 100 (§7). Toda fila tem
 `VisibilityTimeout` explícito e `maxReceiveCount` próprio, com os valores do §12.
 

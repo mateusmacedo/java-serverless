@@ -2,18 +2,16 @@
 
 Ambiente para projetar soluções serverless com AWS Step Functions e AWS Lambda em Java, com Spring
 ou Quarkus conforme o propósito de cada solução, implantação pelo Serverless Framework e emulação local da
-AWS pelo [Floci](https://github.com/floci-io/floci). As soluções compartilham o ambiente AWS e se
-acionam por eventos: a `receipt-solution` (Quarkus) reage ao que a `sample-solution` (Spring) conclui, e a
-plataforma de cotação de seguros é formada pela `quote-solution` (Quarkus) e pela `provider-solution`
-(Spring), que conversam pelo barramento de `platform/events`, e pelo `backoffice` (Angular), o painel do
-corretor e do operador.
+AWS pelo [Floci](https://github.com/floci-io/floci). A solução de demonstração é a plataforma de cotação
+de seguros: a `quote-solution` (Quarkus) e a `provider-solution` (Spring) compartilham o ambiente AWS e
+conversam pelo barramento de `platform/events`, e o `backoffice` (Angular) é o painel do corretor e do
+operador.
 
 ## Documentação
 
 O índice de toda a documentação, com o desenho de cada solução, os testes, as decisões (ADRs), os PRDs e
 os contratos, está em [docs/README.md](docs/README.md). Cada solução tem um documento principal, com os
-diagramas dela: [sample-solution](sample-solution/docs/README.md),
-[receipt-solution](receipt-solution/docs/README.md), [quote-solution](quote-solution/docs/README.md),
+diagramas dela: [quote-solution](quote-solution/docs/README.md),
 [provider-solution](provider-solution/docs/README.md), [backoffice](backoffice/README.md) e
 [plataforma](platform/docs/README.md); a entrada da plataforma de cotação é [docs/cotacao.md](docs/cotacao.md).
 
@@ -31,7 +29,7 @@ diagramas dela: [sample-solution](sample-solution/docs/README.md),
 | AWS SDK for Java v2, clients síncronos com CRT (Spring / Quarkus) | 2.57.12 / 2.54.13 |
 | Testcontainers / testcontainers-floci-aws | 2.0.5 / 2.17.0 |
 | Serverless Framework | 4.46.0 |
-| serverless-step-functions / serverless-localstack / serverless-offline | 3.31.2 / 1.4.0 / 14.8.4 |
+| serverless-step-functions / serverless-localstack | 3.31.2 / 1.4.0 |
 | Floci / Floci UI | 2.4.0 / 0.7.0 |
 | Backoffice: Node.js / Angular / CoreUI for Angular ([detalhes](backoffice/README.md#stack)) | 24 / 22.2 / 5.7.42 |
 
@@ -47,8 +45,6 @@ platform/
   spring-parent/        Parent das soluções Spring: Spring Boot, Spring Cloud, AWS SDK, exclusões de clients HTTP e zip das Lambdas
   quarkus-parent/       Parent das soluções Quarkus: Quarkus LTS, Quarkus Amazon Services e zip por módulo
   spring-aws/           Spring: autoconfiguração dos clients do AWS SDK v2 (cada client sobe se o SDK estiver no módulo)
-sample-solution/        Spring: api, functions e e2e
-receipt-solution/       Quarkus, acionada pelo RequestCompleted da sample-solution: api, functions e e2e
 quote-solution/         Quarkus, API de produto e workflow da cotação: domain, api, functions e e2e
 provider-solution/      Spring, fornecedores da cotação: domain, api (callbacks), functions e simulators
 backoffice/             Angular, painel da cotação: cotações, ofertas, seleção e ocorrências (pnpm workspace)
@@ -56,9 +52,12 @@ contracts/              API de produto (openapi.yaml e fixtures/) e uma pasta de
 docs/                   Documentação, ADRs, PRDs e o tema dos diagramas
 ```
 
-Os módulos de cada solução estão em [Arquitetura](docs/arquitetura.md#módulos-maven) (sample e receipt) e no
-[desenho técnico da cotação](docs/plataforma-de-cotacao.md#1-módulos) (quote e provider). Uma solução nova
-escolhe o parent do framework em `platform/` e ganha o próprio `serverless.yml`
+Os módulos da raiz e da `platform/` estão em [Arquitetura](docs/arquitetura.md#módulos-maven), e os da
+`quote-solution` e da `provider-solution`, no
+[desenho técnico da cotação](docs/plataforma-de-cotacao.md#1-módulos) e no documento principal de cada uma
+([quote-solution](quote-solution/docs/README.md#módulos-maven) e
+[provider-solution](provider-solution/docs/README.md)). Uma solução nova escolhe o parent do framework em
+`platform/` e ganha o próprio `serverless.yml`
 ([ADR 0010](docs/decisoes/0010-raiz-neutra-e-parents-por-framework.md)).
 
 ## Pré-requisitos
@@ -101,15 +100,13 @@ stacks no stage `local`, nesta ordem:
 | Script | Stack |
 |---|---|
 | `deploy:platform` | Barramento da plataforma (`platform/events`) |
-| `deploy:sample` | `sample-solution` |
-| `deploy:receipt` | `receipt-solution` |
 | `deploy:provider` | `provider-solution` |
 | `deploy:quote` | `quote-solution` |
 
-A ordem importa: a regra que aciona a `receipt-solution` fica no barramento da `sample-solution`, e a
-`provider-solution` e a `quote-solution` chegam pelo nome ao barramento da plataforma, sem referência
-entre stacks ([ADR 0013](docs/decisoes/0013-barramento-da-plataforma.md)). Cada script também roda sozinho,
-como `pnpm deploy:quote`, contra os pacotes já gerados.
+A ordem importa: a plataforma vem primeiro, porque a `provider-solution` e a `quote-solution` chegam pelo
+nome ao barramento dela, sem referência entre stacks
+([ADR 0013](docs/decisoes/0013-barramento-da-plataforma.md)). Cada script também roda sozinho, como
+`pnpm deploy:quote`, contra os pacotes já gerados.
 
 O stage `local` ativa o `serverless-localstack`, que direciona a implantação para `localhost:4566`.
 Ao final, o Serverless mostra o endpoint da API, no formato
@@ -123,86 +120,21 @@ reproduz, siga o [guia de implantação na AWS](docs/implantacao-aws-dev.md).
 O painel roda no dev server do Angular, contra a `quote-solution` implantada no Floci ou no stage `dev`. O
 passo a passo, com a criação dos usuários de exemplo, está em [Rodar no Floci](backoffice/README.md#rodar-no-floci).
 
-## Fluxo de exemplo
+## Exercitar a cotação
 
-`POST /requests` grava o payload no S3 e inicia a máquina de estado `sample-solution-local-request-flow`,
-que valida, persiste e notifica; o `RequestCompleted` emitido no fim inicia a `receipt-flow` da
-`receipt-solution`. Os passos, os caminhos de falha e o reprocessamento estão em [Fluxos](docs/fluxos.md).
-
-A API da `receipt-solution` consulta o comprovante de um pedido e emite um manualmente:
-
-```bash
-RECEIPT_API_ID=$(aws --profile localstack apigateway get-rest-apis \
-  --query "items[?name=='local-receipt-solution'].id" --output text)
-RECEIPTS="http://localhost:4566/restapis/$RECEIPT_API_ID/local/_user_request_/receipts"
-
-curl "$RECEIPTS/<requestId>"                      # 200 com o comprovante ou 404
-curl -X POST -H "Content-Type: application/json" \
-  -d '{"requestId":"manual-1","signature":"abc","payloadBytes":3}' "$RECEIPTS"   # 202
-```
-
-### Testar o caminho de sucesso
-
-```bash
-API_ID=$(aws --profile localstack apigateway get-rest-apis \
-  --query "items[?name=='local-sample-solution'].id" --output text)
-
-curl -X POST -H "Content-Type: application/json" -d '{"customer":"acme","amount":42}' \
-  "http://localhost:4566/restapis/$API_ID/local/_user_request_/requests"
-```
-
-A resposta (`202`) traz o `requestId` e o `executionArn`. Para acompanhar:
-
-```bash
-aws --profile localstack stepfunctions describe-execution --execution-arn <executionArn> --query status
-aws --profile localstack dynamodb get-item --table-name sample-solution-local-requests \
-  --key '{"requestId":{"S":"<requestId>"}}'
-```
-
-### Testar o caminho de falha
-
-Um payload acima de 4096 bytes falha no `validate` e vai para a DLQ:
-
-```bash
-curl -X POST -H "Content-Type: application/json" \
-  -d "$(python3 -c 'import json;print(json.dumps({"data":"x"*5000}))')" \
-  "http://localhost:4566/restapis/$API_ID/local/_user_request_/requests"
-```
-
-Para reprocessar a DLQ sem esperar o agendamento:
-
-```bash
-aws --profile localstack lambda invoke --function-name sample-solution-local-reprocess \
-  --cli-binary-format raw-in-base64-out --payload '{"maxMessages":10}' /dev/stdout
-```
-
-## Rodar a API com o serverless-offline
-
-O offline executa só as Lambdas e a rota HTTP, em container Docker na rede `floci`. A máquina de
-estado e os recursos continuam no Floci, então a implantação acima precisa existir.
-
-```bash
-cd sample-solution
-export AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1
-pnpm sls offline --stage local
-
-curl -X POST -H "Content-Type: application/json" -d '{"origem":"offline"}' \
-  http://localhost:3000/local/requests
-```
+Com as stacks implantadas, o passo a passo para chamar a API da `quote-solution` (usuário no Cognito do
+Floci, token e abertura de uma cotação) está em
+[Rodar localmente no Floci](quote-solution/docs/README.md#rodar-localmente-no-floci). Pela interface, use o
+[backoffice](#backoffice).
 
 ## Remover a implantação do Floci
 
-A `receipt-solution` sai antes da `sample-solution`, porque a regra dela fica no barramento da sample. A
-`quote-solution` e a `provider-solution` saem antes da plataforma (`platform/events`), porque as regras
+A `quote-solution` e a `provider-solution` saem antes da plataforma (`platform/events`), porque as regras
 delas ficam no barramento da plataforma; entre as duas, a ordem não importa
-([ADR 0013](docs/decisoes/0013-barramento-da-plataforma.md)). Os dois grupos são independentes. O bucket
-de payloads da sample e o da provider precisam estar vazios antes da remoção de cada uma:
+([ADR 0013](docs/decisoes/0013-barramento-da-plataforma.md)). O bucket de payloads da provider precisa
+estar vazio antes da remoção dela:
 
 ```bash
-(cd receipt-solution && pnpm sls remove --stage local)
-aws --profile localstack s3 rm s3://sample-solution-local-payloads --recursive
-(cd sample-solution && pnpm sls remove --stage local)
-
 (cd quote-solution && pnpm sls remove --stage local)
 aws --profile localstack s3 rm s3://provider-solution-local-payloads --recursive
 (cd provider-solution && pnpm sls remove --stage local)
@@ -226,22 +158,23 @@ aws configure set aws_secret_access_key test --profile localstack
 - O Floci roda em modo persistente, com os dados no volume `floci-data`: os recursos sobrevivem a
   reinícios do container. Para começar do zero, use `docker compose down -v` e refaça a implantação.
 - Quando o `serverless-localstack` está ativo, o Serverless v4 exporta `AWS_ENDPOINT_URL_S3` apontando
-  para o host do LocalStack, e o `serverless-offline` repassa essa variável ao container. Por isso o
-  `serverless.yml` da `sample-solution` e o da `provider-solution` declaram `AWS_ENDPOINT_URL_S3` apontando
-  para o Floci ([ADR 0008](docs/decisoes/0008-aws-endpoint-url-s3-no-offline.md)).
-- Na `sample-solution` e na `receipt-solution`, os parâmetros de ambiente (`params`) do `serverless.yml`
-  existem só para o stage `local`. Na `quote-solution` e na `provider-solution`, o `params.default` traz os
-  valores da AWS, o `local` sobrescreve só o que difere no Floci, e as variáveis de endpoint
-  (`AWS_ENDPOINT_URL` e, na provider, `AWS_ENDPOINT_URL_S3`) só existem quando o param `awsEndpointUrl` não
-  é vazio, pela condição `HasAwsEndpointUrl`
+  para o host do LocalStack, e a variável específica do serviço tem prioridade sobre `AWS_ENDPOINT_URL` no
+  AWS SDK. Por isso o `serverless.yml` da `provider-solution` declara `AWS_ENDPOINT_URL_S3` apontando para o
+  Floci ([ADR 0008](docs/decisoes/0008-aws-endpoint-url-s3-no-offline.md)).
+- Na `quote-solution` e na `provider-solution`, os parâmetros de ambiente (`params`) do `serverless.yml`
+  têm o `params.default` com os valores da AWS, e o `local` sobrescreve só o que difere no Floci. As
+  variáveis de endpoint (`AWS_ENDPOINT_URL` e, na provider, `AWS_ENDPOINT_URL_S3`) só existem quando o param
+  `awsEndpointUrl` não é vazio, pela condição `HasAwsEndpointUrl`
   ([parâmetros por stage](docs/plataforma-de-cotacao.md#12-parâmetros-por-stage)).
 - O `pnpm-workspace.yaml` nega os scripts de instalação de `serverless`, `aws-sdk`, `es5-ext` e
   `esbuild`; nenhum deles é necessário para o uso atual.
-- Os pacotes das Lambdas têm entre 21 e 41 MiB. O `aws-crt` entra só com os nativos de Linux, para
+- Os pacotes das Lambdas têm entre 24 e 38 MiB. O `aws-crt` entra só com os nativos de Linux, para
   x86_64 e arm64; os testes usam o jar completo, com os nativos de todas as plataformas
   ([ADR 0012](docs/decisoes/0012-aws-crt-com-nativos-linux-no-pacote.md)).
-- O EventBridge Scheduler dispara o `reprocess` no Floci a cada 5 minutos (observado nos logs da
-  função às 20:08:56 e 20:14:02 de 10/11/2026); para testar sem esperar, invoque a função direto.
+- O EventBridge Scheduler dispara o `reconciler` da `quote-solution` e o da `provider-solution` a cada
+  minuto (`rate(1 minute)`), em intervalos de 60 a 70 s no Floci
+  ([limites do Floci](docs/plataforma-de-cotacao.md#13-limites-do-floci-240)); para testar sem esperar,
+  invoque a função direto.
 - O servidor Java do VS Code (m2e) compila em `target-ide/`, pelo perfil `ide` do `pom.xml` raiz, que a
   propriedade `m2e.version` ativa. Assim ele não reescreve o `target/classes` no meio de um `mvn verify`; o
   `mvn` da linha de comando continua em `target/`.

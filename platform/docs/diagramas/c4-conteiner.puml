@@ -24,8 +24,6 @@ System_Boundary(build, "Parents e biblioteca Maven") {
 
 System_Ext(quote, "quote-solution", "Quarkus; source mmda.quote", $sprite="cubes")
 System_Ext(provider, "provider-solution", "Spring; source mmda.provider", $sprite="leaf")
-System_Ext(sample, "sample-solution", "Spring; barramento próprio (ADR 0011)", $sprite="leaf")
-System_Ext(receipt, "receipt-solution", "Quarkus; barramento próprio (ADR 0011)", $sprite="cubes")
 
 Rel(quote, bus, "PutEvents: QuoteAccepted, EnrichmentRequested, InsurerQuoteRequested, QuoteCompleted, OfferSelected, QueryReconcileRequested", "outboxRelay e reconciler", $tags="evento")
 Rel(bus, provider, "Regras da provider: EnrichmentRequested, InsurerQuoteRequested e QueryReconcileRequested para as filas -enrichment-requests, -insurer-requests e -reconcile-requests", $tags="evento")
@@ -33,11 +31,8 @@ Rel(provider, bus, "PutEvents: EnrichmentResolved, InsurerResultRecorded, QueryR
 Rel(bus, quote, "Regras da quote: resultados para -results e ocorrências para -issues", $tags="evento")
 
 Rel(springaws, springparent, "Herda", $tags="build")
-Rel(sample, springparent, "Herda", $tags="build")
 Rel(provider, springparent, "Herda", $tags="build")
-Rel(sample, springaws, "Depende (api e functions)", $tags="build")
 Rel(provider, springaws, "Depende (api, functions e simulators)", $tags="build")
-Rel(receipt, quarkusparent, "Herda", $tags="build")
 Rel(quote, quarkusparent, "Herda", $tags="build")
 
 SHOW_LEGEND()
