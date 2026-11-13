@@ -3,6 +3,7 @@ package com.mmda.serverless.sample.functions;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -19,6 +20,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import software.amazon.awssdk.services.sfn.SfnClient;
+import software.amazon.awssdk.services.sfn.model.ExecutionAlreadyExistsException;
 import software.amazon.awssdk.services.sfn.model.StartExecutionRequest;
 import software.amazon.awssdk.services.sfn.model.StartExecutionResponse;
 import software.amazon.awssdk.services.sqs.SqsClient;
@@ -98,6 +100,21 @@ class ReprocessFunctionTest {
 
         assertThat(result).isEqualTo(new ReprocessResult(1, 1));
         verify(sqs, times(2)).deleteMessage(any(DeleteMessageRequest.class));
+    }
+
+    @Test
+    void deletesARedeliveredMessageWhoseRestartAlreadyExists() {
+        givenMessages(deadLetter("receipt-1", 1), deadLetter("receipt-2", 3));
+        doThrow(ExecutionAlreadyExistsException.builder().message("Execution req-1-2 already exists").build())
+                .when(sfn).startExecution(any(StartExecutionRequest.class));
+
+        ReprocessResult result = function.apply(new ReprocessCommand(10));
+
+        assertThat(result).isEqualTo(new ReprocessResult(0, 1));
+        ArgumentCaptor<DeleteMessageRequest> deleted = ArgumentCaptor.forClass(DeleteMessageRequest.class);
+        verify(sqs, times(2)).deleteMessage(deleted.capture());
+        assertThat(deleted.getAllValues()).extracting(DeleteMessageRequest::receiptHandle)
+                .containsExactly("receipt-1", "receipt-2");
     }
 
     @Test
