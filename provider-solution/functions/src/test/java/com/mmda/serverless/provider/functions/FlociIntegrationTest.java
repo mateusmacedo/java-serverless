@@ -25,10 +25,13 @@ import software.amazon.awssdk.services.sqs.SqsClient;
 import software.amazon.awssdk.services.sqs.model.QueueAttributeName;
 
 /**
- * Um único Floci e os recursos da provider, com o mesmo esquema do serverless.yml, para todos os testes de
- * integração do módulo. Os fornecedores são o {@link ProviderStub}, em processo.
+ * Um único Floci e os recursos da provider, com o mesmo esquema do
+ * serverless.yml, para todos os testes de
+ * integração do módulo. Os fornecedores são o {@link ProviderStub}, em
+ * processo.
  * <p>
- * WHY: endpoint, região e credenciais vão para as propriedades de sistema que o AWS SDK lê nas cadeias
+ * WHY: endpoint, região e credenciais vão para as propriedades de sistema que o
+ * AWS SDK lê nas cadeias
  * padrão, então os testes passam pela autoconfiguração real do spring-aws.
  */
 @SpringBootTest(classes = FunctionsApplication.class)
@@ -42,7 +45,10 @@ abstract class FlociIntegrationTest {
     static final String QUERY_KEY_SECRET = "it/provider/query-key-secret";
     static final String ENRICHMENT_PROVIDER = "enrichment-sim";
     static final String CAPPED_PROVIDER = "capped";
-    /** Provedores com quota pequena, só do T21: nenhum outro teste gasta a janela deles. */
+    /**
+     * Provedores com quota pequena, só do T21: nenhum outro teste gasta a janela
+     * deles.
+     */
     static final String T21_INSURER = "t21-insurer";
     static final String T21_ENRICHMENT = "t21-enrichment";
     static final int T21_QUOTA_PER_MINUTE = 3;
@@ -64,7 +70,7 @@ abstract class FlociIntegrationTest {
         SQS = SqsClient.create();
         createQueriesTable();
         try (S3Client s3 = S3Client.builder().forcePathStyle(true).build();
-             SecretsManagerClient secrets = SecretsManagerClient.create()) {
+                SecretsManagerClient secrets = SecretsManagerClient.create()) {
             s3.createBucket(builder -> builder.bucket(BUCKET));
             secrets.createSecret(builder -> builder.name(QUERY_KEY_SECRET).secretString("it-query-key-secret"));
         }
@@ -108,9 +114,9 @@ abstract class FlociIntegrationTest {
 
     static Map<String, AttributeValue> item(String pk, String sk) {
         return DYNAMO_DB.getItem(builder -> builder
-                        .tableName(TABLE)
-                        .consistentRead(true)
-                        .key(Map.of("pk", AttributeValue.fromS(pk), "sk", AttributeValue.fromS(sk))))
+                .tableName(TABLE)
+                .consistentRead(true)
+                .key(Map.of("pk", AttributeValue.fromS(pk), "sk", AttributeValue.fromS(sk))))
                 .item();
     }
 
@@ -122,22 +128,25 @@ abstract class FlociIntegrationTest {
         return Optional.ofNullable(value.s() != null ? value.s() : value.n());
     }
 
-    /** Itens da partição {@code QUERY#<queryId>} cujo {@code sk} começa com o prefixo, em ordem. */
+    /**
+     * Itens da partição {@code QUERY#<queryId>} cujo {@code sk} começa com o
+     * prefixo, em ordem.
+     */
     static List<Map<String, AttributeValue>> queryItems(String queryId, String skPrefix) {
         return DYNAMO_DB.query(builder -> builder
-                        .tableName(TABLE)
-                        .consistentRead(true)
-                        .keyConditionExpression("pk = :pk AND begins_with(sk, :prefix)")
-                        .expressionAttributeValues(Map.of(
-                                ":pk", AttributeValue.fromS("QUERY#" + queryId),
-                                ":prefix", AttributeValue.fromS(skPrefix))))
+                .tableName(TABLE)
+                .consistentRead(true)
+                .keyConditionExpression("pk = :pk AND begins_with(sk, :prefix)")
+                .expressionAttributeValues(Map.of(
+                        ":pk", AttributeValue.fromS("QUERY#" + queryId),
+                        ":prefix", AttributeValue.fromS(skPrefix))))
                 .items();
     }
 
     static String queueArn(String queueUrl) {
         return SQS.getQueueAttributes(builder -> builder
-                        .queueUrl(queueUrl)
-                        .attributeNames(QueueAttributeName.QUEUE_ARN))
+                .queueUrl(queueUrl)
+                .attributeNames(QueueAttributeName.QUEUE_ARN))
                 .attributes().get(QueueAttributeName.QUEUE_ARN);
     }
 

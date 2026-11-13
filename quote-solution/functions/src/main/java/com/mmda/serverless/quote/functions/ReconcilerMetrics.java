@@ -10,8 +10,10 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Métricas do {@code reconciler} em CloudWatch Embedded Metric Format (§9 do desenho, "Alarmes (M4)"). Os
- * alarmes do {@code serverless.yml} usam o mesmo namespace, os mesmos nomes e a dimensão {@code Stage}.
+ * Métricas do {@code reconciler} em CloudWatch Embedded Metric Format (§9 do
+ * desenho, "Alarmes (M4)"). Os
+ * alarmes do {@code serverless.yml} usam o mesmo namespace, os mesmos nomes e a
+ * dimensão {@code Stage}.
  */
 @ApplicationScoped
 public class ReconcilerMetrics {
@@ -29,8 +31,10 @@ public class ReconcilerMetrics {
     }
 
     /**
-     * Uma linha EMF por execução, com os dois valores sempre presentes. WHY: vai direto ao {@code stdout}, sem o
-     * prefixo do log do Quarkus, porque o CloudWatch só extrai a métrica de uma linha que é um objeto JSON.
+     * Uma linha EMF por execução, com os dois valores sempre presentes. WHY: vai
+     * direto ao {@code stdout}, sem o
+     * prefixo do log do Quarkus, porque o CloudWatch só extrai a métrica de uma
+     * linha que é um objeto JSON.
      */
     void emit(Instant now, long expiredTasks, long outboxPendingAgeSeconds) {
         System.out.println(document(now, expiredTasks, outboxPendingAgeSeconds));

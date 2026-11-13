@@ -29,7 +29,10 @@ final class Attr {
         return value == null || value.s() == null ? null : value.s();
     }
 
-    /** Instante ISO-8601; nulo quando falta ou está fora do formato, para um item malformado não parar a varredura. */
+    /**
+     * Instante ISO-8601; nulo quando falta ou está fora do formato, para um item
+     * malformado não parar a varredura.
+     */
     static Instant instant(Map<String, AttributeValue> item, String name) {
         String value = string(item, name);
         if (value == null) {
@@ -47,7 +50,10 @@ final class Attr {
         return value == null || value.n() == null ? fallback : Long.parseLong(value.n());
     }
 
-    /** Lista de strings; nula quando o atributo não existe, o que distingue "não rodou" de "vazia". */
+    /**
+     * Lista de strings; nula quando o atributo não existe, o que distingue "não
+     * rodou" de "vazia".
+     */
     static List<String> strings(Map<String, AttributeValue> item, String name) {
         AttributeValue value = item == null ? null : item.get(name);
         if (value == null || !value.hasL()) {

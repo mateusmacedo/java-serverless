@@ -29,8 +29,10 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * Deveres do {@code reconciler} da provider no Floci (desenho, §9; PRD, T14 e T16), inclusive a pendência do M2.
- * Nenhum caso repete a chamada ao fornecedor: o {@link ProviderStub} conta as chamadas e as leituras da situação, e
+ * Deveres do {@code reconciler} da provider no Floci (desenho, §9; PRD, T14 e
+ * T16), inclusive a pendência do M2.
+ * Nenhum caso repete a chamada ao fornecedor: o {@link ProviderStub} conta as
+ * chamadas e as leituras da situação, e
  * o {@link TestClock} vence prazos e leases sem espera real.
  */
 class ReconcilerIT extends FlociIntegrationTest {
@@ -184,7 +186,10 @@ class ReconcilerIT extends FlociIntegrationTest {
         assertThat(PROVIDERS.calls(request.queryId())).isEqualTo(1);
     }
 
-    /** A entrega que gravou o {@code 202} caiu antes da metade do worker no {@code CORR#}, com o callback retido. */
+    /**
+     * A entrega que gravou o {@code 202} caiu antes da metade do worker no
+     * {@code CORR#}, com o callback retido.
+     */
     @Test
     void expiredAcceptedQueryRedoesTheWorkerHalfAndIsConcludedByTheHeldCallbackWithoutReadingTheStatus() {
         TestRequests.Request request = TestRequests.insurer("vehicle-lost-half", deadline(), BETA);
@@ -240,7 +245,10 @@ class ReconcilerIT extends FlociIntegrationTest {
         assertThat(updated.path("firstSeenAt")).isEqualTo(raised.path("firstSeenAt"));
     }
 
-    /** Lease vencida: o líder caiu no HTTP e o prazo passou; a liderança conclui {@code FAILED} sem nova chamada. */
+    /**
+     * Lease vencida: o líder caiu no HTTP e o prazo passou; a liderança conclui
+     * {@code FAILED} sem nova chamada.
+     */
     @Test
     void interruptedLeaderPastItsDeadlineIsConcludedWithoutACallAndAnswersItsFollowers() {
         String vehicle = "vehicle-lease-" + UUID.randomUUID().toString().substring(0, 8);
@@ -268,8 +276,10 @@ class ReconcilerIT extends FlociIntegrationTest {
     }
 
     /**
-     * Pendência do M2: o líder conclui {@code FAILED} e cai antes do fan-out; outra cadeia começa antes da reentrega
-     * dele, que por isso não alcança os seguidores. O reconciler os responde pela cadeia gravada na conclusão.
+     * Pendência do M2: o líder conclui {@code FAILED} e cai antes do fan-out; outra
+     * cadeia começa antes da reentrega
+     * dele, que por isso não alcança os seguidores. O reconciler os responde pela
+     * cadeia gravada na conclusão.
      */
     @Test
     void m2_failedLeaderThatFellBeforeTheFanOutStillAnswersTheFollowersOfItsChain() {
@@ -600,10 +610,14 @@ class ReconcilerIT extends FlociIntegrationTest {
         return item("ISSUE#" + Identities.issueId(type, target), "META");
     }
 
-    /** Situação da beta como o {@code GET /sim/insurers/beta/quotes/{ref}} do simulador a devolve. */
+    /**
+     * Situação da beta como o {@code GET /sim/insurers/beta/quotes/{ref}} do
+     * simulador a devolve.
+     */
     private static String status(String providerRequestId, String clientReference, String status, String result) {
-        String completed = result == null ? "" : ",\"completedAt\":\"%s\",\"result\":%s"
-                .formatted(Timestamps.format(Instant.now()), result);
+        String completed = result == null ? ""
+                : ",\"completedAt\":\"%s\",\"result\":%s"
+                        .formatted(Timestamps.format(Instant.now()), result);
         return """
                 {"providerRequestId":"%s","clientReference":"%s","status":"%s","receivedAt":"%s"%s}"""
                 .formatted(providerRequestId, clientReference, status, Timestamps.format(Instant.now()), completed);
@@ -620,14 +634,17 @@ class ReconcilerIT extends FlociIntegrationTest {
     }
 
     private static String callback(String externalEventId, String providerRequestId, String clientReference,
-                                   String result) {
+            String result) {
         String reference = clientReference == null ? "" : ",\"clientReference\":\"" + clientReference + "\"";
         return """
                 {"externalEventId":"%s","providerRequestId":"%s"%s,"sentAt":"%s","result":%s}"""
                 .formatted(externalEventId, providerRequestId, reference, Timestamps.format(Instant.now()), result);
     }
 
-    /** Callback gravado pela {@code api}, que caiu antes do encontro, recebido há {@code age}. */
+    /**
+     * Callback gravado pela {@code api}, que caiu antes do encontro, recebido há
+     * {@code age}.
+     */
     private static String givenInbox(String providerRequestId, String clientReference, Duration age) {
         String externalEventId = "bev_" + UUID.randomUUID();
         String receivedAt = Timestamps.format(TestClock.INSTANCE.instant().minus(age));
@@ -650,7 +667,10 @@ class ReconcilerIT extends FlociIntegrationTest {
         return externalEventId;
     }
 
-    /** Líder caído no HTTP, com a lease vencida e o prazo do pedido já passado, como o worker o gravou. */
+    /**
+     * Líder caído no HTTP, com a lease vencida e o prazo do pedido já passado, como
+     * o worker o gravou.
+     */
     private static void givenInterruptedLeader(String queryKey, TestRequests.Request leader) {
         Instant now = TestClock.INSTANCE.instant();
         String startedAt = Timestamps.format(now.minusSeconds(200));
@@ -690,7 +710,10 @@ class ReconcilerIT extends FlociIntegrationTest {
                 "leaseUntil", AttributeValue.fromS(Timestamps.format(now.minusSeconds(170))))));
     }
 
-    /** Consulta da beta com o {@code 202} gravado, como o worker a deixa, mas sem a metade dele no {@code CORR#}. */
+    /**
+     * Consulta da beta com o {@code 202} gravado, como o worker a deixa, mas sem a
+     * metade dele no {@code CORR#}.
+     */
     private static void givenAcceptedWithoutTheWorkerHalf(TestRequests.Request request, String providerRequestId) {
         String startedAt = Timestamps.format(TestClock.INSTANCE.instant());
         String deadlineAt = Timestamps.format(deadline());
@@ -734,7 +757,10 @@ class ReconcilerIT extends FlociIntegrationTest {
                 "fencingVersion", AttributeValue.fromN(Long.toString(fencingVersion)))));
     }
 
-    /** O estado de um líder que caiu entre a conclusão e o fan-out: o item do fan-out continua pendente. */
+    /**
+     * O estado de um líder que caiu entre a conclusão e o fan-out: o item do
+     * fan-out continua pendente.
+     */
     private static void givenFanOutPending(String queryId, String concludedAt) {
         DYNAMO_DB.updateItem(builder -> builder.tableName(TABLE)
                 .key(Map.of("pk", AttributeValue.fromS("QUERY#" + queryId), "sk", AttributeValue.fromS("FANOUT")))
@@ -752,7 +778,10 @@ class ReconcilerIT extends FlociIntegrationTest {
                 .expressionAttributeValues(Map.of(":completed", AttributeValue.fromS("COMPLETED"))));
     }
 
-    /** Consulta da beta que ficou {@code UNKNOWN} com a API de situação ainda em {@code PROCESSING}. */
+    /**
+     * Consulta da beta que ficou {@code UNKNOWN} com a API de situação ainda em
+     * {@code PROCESSING}.
+     */
     private TestRequests.Request unknownBetaQuery() {
         TestRequests.Request request = acceptedBetaQuery("vehicle-beta-late");
         String providerRequestId = ProviderStub.betaRequestId(request.queryId());
@@ -762,7 +791,10 @@ class ReconcilerIT extends FlociIntegrationTest {
         return request;
     }
 
-    /** Põe o item na posição dada do seu índice {@code gsi2}, para o teste controlar a ordem do lote. */
+    /**
+     * Põe o item na posição dada do seu índice {@code gsi2}, para o teste controlar
+     * a ordem do lote.
+     */
     private static void indexedAt(String pk, String gsi2sk) {
         DYNAMO_DB.updateItem(builder -> builder.tableName(TABLE)
                 .key(Map.of("pk", AttributeValue.fromS(pk), "sk", AttributeValue.fromS("META")))
@@ -770,7 +802,10 @@ class ReconcilerIT extends FlociIntegrationTest {
                 .expressionAttributeValues(Map.of(":at", AttributeValue.fromS(gsi2sk))));
     }
 
-    /** O {@code 202} da beta se perdeu: a tentativa ficou aberta, sem {@code providerRequestId}, e a consulta UNKNOWN. */
+    /**
+     * O {@code 202} da beta se perdeu: a tentativa ficou aberta, sem
+     * {@code providerRequestId}, e a consulta UNKNOWN.
+     */
     private static void givenUnknownWithoutTheProviderRequestId(TestRequests.Request request) {
         String startedAt = Timestamps.format(TestClock.INSTANCE.instant().minusSeconds(120));
         Map<String, AttributeValue> query = new HashMap<>(Map.of(
@@ -798,7 +833,10 @@ class ReconcilerIT extends FlociIntegrationTest {
                 "startedAt", AttributeValue.fromS(startedAt))));
     }
 
-    /** Evento de ocorrência pendente, ainda fora da hora de republicar, como no barramento fora do ar. */
+    /**
+     * Evento de ocorrência pendente, ainda fora da hora de republicar, como no
+     * barramento fora do ar.
+     */
     private static void givenPendingIssueEvent(String eventId, Instant createdAt) {
         DYNAMO_DB.putItem(builder -> builder.tableName(TABLE).item(Map.of(
                 "pk", AttributeValue.fromS("OUTBOX#" + eventId),

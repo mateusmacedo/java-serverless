@@ -4,9 +4,12 @@ import com.mmda.serverless.provider.domain.EventIds;
 import java.util.Objects;
 
 /**
- * {@code detail} do {@code QueryReconciled} (desenho, §3): o resultado de uma reconciliação manual, com
- * {@code eventId} UUIDv5 de {@code operationId|revision}. O {@code revision} é o do {@code OPERATION#} da
- * provider, que conta também o {@code RUNNING}, então o resultado nunca sai com a revisão 1.
+ * {@code detail} do {@code QueryReconciled} (desenho, §3): o resultado de uma
+ * reconciliação manual, com
+ * {@code eventId} UUIDv5 de {@code operationId|revision}. O {@code revision} é
+ * o do {@code OPERATION#} da
+ * provider, que conta também o {@code RUNNING}, então o resultado nunca sai com
+ * a revisão 1.
  */
 public record QueryReconciled(
         String eventId,
@@ -36,7 +39,7 @@ public record QueryReconciled(
     }
 
     public static QueryReconciled of(QueryReconcileRequest request, ReconcileStatus status, String safeSummary,
-                                     long revision, String occurredAt) {
+            long revision, String occurredAt) {
         return new QueryReconciled(EventIds.queryReconciled(request.operationId(), revision), occurredAt,
                 SCHEMA_VERSION, request.operationId(), request.organizationId(), request.queryId(), status,
                 safeSummary, revision);

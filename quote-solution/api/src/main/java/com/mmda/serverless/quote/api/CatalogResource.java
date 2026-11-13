@@ -16,9 +16,12 @@ import java.util.Locale;
 import java.util.function.Function;
 
 /**
- * Catálogo do laboratório (contrato compartilhado, "Identidade, dados de entrada e permissões"): as fixtures
- * autorizadas de {@code contracts/fixtures/catalog.json}, as mesmas do frontend. Clientes, veículos e condutores são
- * só os da organização de quem chama; os perfis de cobertura valem para todas. Exige {@code quotes:write}, porque o
+ * Catálogo do laboratório (contrato compartilhado, "Identidade, dados de
+ * entrada e permissões"): as fixtures
+ * autorizadas de {@code contracts/fixtures/catalog.json}, as mesmas do
+ * frontend. Clientes, veículos e condutores são
+ * só os da organização de quem chama; os perfis de cobertura valem para todas.
+ * Exige {@code quotes:write}, porque o
  * catálogo existe para preencher a cotação.
  */
 @Path("/v1/catalog")
@@ -78,14 +81,18 @@ public class CatalogResource {
     @GET
     @Path("/coverage-profiles")
     public CoverageProfilesPage coverageProfiles(@QueryParam("search") String search,
-            @QueryParam("cursor") String cursor, @QueryParam("limit") @DefaultValue(Paging.DEFAULT_LIMIT) String limit) {
+            @QueryParam("cursor") String cursor,
+            @QueryParam("limit") @DefaultValue(Paging.DEFAULT_LIMIT) String limit) {
         organization();
         Selected<QuoteSnapshot.CoverageProfile> selected = select(catalog.coverageProfiles(),
                 QuoteSnapshot.CoverageProfile::code, QuoteSnapshot.CoverageProfile::label, search, cursor, limit);
         return new CoverageProfilesPage(selected.items(), selected.nextCursor());
     }
 
-    /** Organização do catálogo; nula quando a organização do token não tem fixtures, e as listas ficam vazias. */
+    /**
+     * Organização do catálogo; nula quando a organização do token não tem fixtures,
+     * e as listas ficam vazias.
+     */
     private Catalog.Organization organization() {
         return catalog.organization(caller.require(Permission.QUOTES_WRITE)).orElse(null);
     }
@@ -101,8 +108,10 @@ public class CatalogResource {
     }
 
     /**
-     * Busca sem diferença de maiúsculas e acentos no rótulo e no id, na ordem do catálogo. O cursor é o id do
-     * último item devolvido; um id que não está no resultado da busca atual responde 400, para o cliente recomeçar.
+     * Busca sem diferença de maiúsculas e acentos no rótulo e no id, na ordem do
+     * catálogo. O cursor é o id do
+     * último item devolvido; um id que não está no resultado da busca atual
+     * responde 400, para o cliente recomeçar.
      */
     private static <T> Selected<T> select(List<T> entries, Function<T, String> id, Function<T, String> label,
             String search, String cursor, String limit) {

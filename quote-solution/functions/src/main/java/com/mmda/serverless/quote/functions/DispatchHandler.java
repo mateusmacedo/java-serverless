@@ -36,9 +36,12 @@ import software.amazon.awssdk.services.sfn.model.InvalidTokenException;
 import software.amazon.awssdk.services.sfn.model.TaskTimedOutException;
 
 /**
- * Tarefa {@code waitForTaskToken} da máquina (§8 do desenho): grava o waiter com o token cifrado e o
- * outbox do pedido numa transação. É idempotente: a nova tentativa da tarefa só troca o token, e um
- * resultado que já chegou é entregue com {@code SendTaskSuccess} no token novo. O token nunca sai da
+ * Tarefa {@code waitForTaskToken} da máquina (§8 do desenho): grava o waiter
+ * com o token cifrado e o
+ * outbox do pedido numa transação. É idempotente: a nova tentativa da tarefa só
+ * troca o token, e um
+ * resultado que já chegou é entregue com {@code SendTaskSuccess} no token novo.
+ * O token nunca sai da
  * quote-solution: o pedido leva só o {@code workRef}.
  */
 @Singleton
@@ -105,7 +108,8 @@ public class DispatchHandler implements RequestHandler<DispatchHandler.DispatchR
                 : QuoteEvents.insurerQuoteRequested(now, workRef, organizationId, quoteId, version,
                         request.insurerId(), snapshot, enrichmentSummary(quoteId, version), deadlineAt);
         String detailType = request.kind() == WorkRef.Kind.ENRICHMENT
-                ? QuoteEvents.ENRICHMENT_REQUESTED : QuoteEvents.INSURER_QUOTE_REQUESTED;
+                ? QuoteEvents.ENRICHMENT_REQUESTED
+                : QuoteEvents.INSURER_QUOTE_REQUESTED;
 
         Map<String, AttributeValue> waiter = new HashMap<>();
         waiter.put(QuoteKeys.PK, s(QuoteKeys.waiterPk(workRef)));
@@ -133,7 +137,8 @@ public class DispatchHandler implements RequestHandler<DispatchHandler.DispatchR
             writes.add(table.update(QuoteKeys.quotePk(quoteId), QuoteKeys.resultSk(version, request.insurerId()),
                     "SET #status = :processing, revision = revision + :one, updatedAt = :now",
                     "#status = :pending", Map.of("#status", "status"),
-                    Map.of(":processing", s(InsurerStatus.PROCESSING.name()), ":pending", s(InsurerStatus.PENDING.name()),
+                    Map.of(":processing", s(InsurerStatus.PROCESSING.name()), ":pending",
+                            s(InsurerStatus.PENDING.name()),
                             ":one", n(1), ":now", s(now.toString()))));
         }
         table.transact(writes);
@@ -143,7 +148,8 @@ public class DispatchHandler implements RequestHandler<DispatchHandler.DispatchR
         LOG.infof("dispatched %s workRef=%s quoteId=%s version=%d", detailType, workRef, quoteId, version);
     }
 
-    private Map<String, Object> redispatch(DispatchRequest request, WorkRef workRef, Map<String, AttributeValue> waiter) {
+    private Map<String, Object> redispatch(DispatchRequest request, WorkRef workRef,
+            Map<String, AttributeValue> waiter) {
         String resumePayload = Attr.string(waiter, "resumePayload");
         if (resumePayload == null && "WAITING".equals(Attr.string(waiter, "status"))) {
             Instant now = Instant.now(clock);
@@ -173,7 +179,10 @@ public class DispatchHandler implements RequestHandler<DispatchHandler.DispatchR
         return output(workRef, "RESUMED");
     }
 
-    /** Resumo do enriquecimento enviado à seguradora: a evidência usada, sem resposta bruta. */
+    /**
+     * Resumo do enriquecimento enviado à seguradora: a evidência usada, sem
+     * resposta bruta.
+     */
     private Map<String, Object> enrichmentSummary(String quoteId, int version) {
         WorkRef enrichment = WorkRef.of(quoteId, version, WorkRef.Kind.ENRICHMENT, null);
         Map<String, Object> summary = new LinkedHashMap<>();

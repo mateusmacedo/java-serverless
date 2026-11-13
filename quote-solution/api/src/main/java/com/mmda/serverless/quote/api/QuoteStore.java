@@ -44,11 +44,12 @@ import software.amazon.awssdk.services.dynamodb.model.Update;
 public class QuoteStore {
 
     private static final String NOT_EXISTS = "attribute_not_exists(" + QuoteKeys.PK + ")";
-    private static final String SELECTION_UNAVAILABLE =
-            "Não foi possível registrar a seleção agora; reenvie com a mesma Idempotency-Key.";
-    /** Prefixo de segundo de um instante, que limita o período no {@code gsi1sk}. */
-    private static final DateTimeFormatter SECOND =
-            DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
+    private static final String SELECTION_UNAVAILABLE = "Não foi possível registrar a seleção agora; reenvie com a mesma Idempotency-Key.";
+    /**
+     * Prefixo de segundo de um instante, que limita o período no {@code gsi1sk}.
+     */
+    private static final DateTimeFormatter SECOND = DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss")
+            .withZone(ZoneOffset.UTC);
 
     private final DynamoDbClient dynamoDb;
     private final ObjectMapper objectMapper;
@@ -67,7 +68,10 @@ public class QuoteStore {
         this.retries = retries;
     }
 
-    /** Dados da cotação nova; o {@code snapshot} já foi resolvido no catálogo da organização. */
+    /**
+     * Dados da cotação nova; o {@code snapshot} já foi resolvido no catálogo da
+     * organização.
+     */
     public record NewQuote(
             Idempotency.Key idempotencyKey,
             String requestHash,
@@ -80,13 +84,16 @@ public class QuoteStore {
             Instant deadlineAt) {
     }
 
-    /** Identidade devolvida ao cliente: a criada agora ou a de um reenvio idêntico. */
+    /**
+     * Identidade devolvida ao cliente: a criada agora ou a de um reenvio idêntico.
+     */
     public record CreatedQuote(String quoteId, int version, String phase) {
     }
 
     /**
      * Grava, numa transação, idempotência, {@code META}, {@code V#0001} e o outbox
-     * {@code StartQuoteRequested} e {@code QuoteAccepted}. Conflito da chave relê o registro e compara o
+     * {@code StartQuoteRequested} e {@code QuoteAccepted}. Conflito da chave relê o
+     * registro e compara o
      * hash (§8 do desenho).
      */
     public CreatedQuote create(NewQuote quote) {
@@ -97,7 +104,8 @@ public class QuoteStore {
                     && service.statusCode() < 500) {
                 throw failure;
             }
-            // WHY: a gravação pode ter acontecido (timeout depois do envio); o reenvio com a mesma chave relê o
+            // WHY: a gravação pode ter acontecido (timeout depois do envio); o reenvio com
+            // a mesma chave relê o
             // registro de idempotência e devolve a mesma cotação
             throw unavailable();
         }
@@ -110,12 +118,14 @@ public class QuoteStore {
             retries.run(() -> dynamoDb.transactWriteItems(request), QuoteStore::isTransactionConflict);
             return new CreatedQuote(quote.quoteId(), 1, Phase.RECEIVED.name());
         } catch (TransactionCanceledException canceled) {
-            // INVARIANT: a transação cancelada não gravou nada e, sem o registro de idempotência, nenhuma outra
-            // criação com a chave foi aceita: é indisponibilidade antes da aceitação durável (503)
+            // INVARIANT: a transação cancelada não gravou nada e, sem o registro de
+            // idempotência, nenhuma outra
+            // criação com a chave foi aceita: é indisponibilidade antes da aceitação
+            // durável (503)
             Map<String, AttributeValue> existing = idempotencyRecord(quote.idempotencyKey())
                     .orElseThrow(QuoteStore::unavailable);
-            if (Idempotency.compare(Items.string(existing, "requestHash"), quote.requestHash())
-                    == Idempotency.Decision.CONFLICT) {
+            if (Idempotency.compare(Items.string(existing, "requestHash"),
+                    quote.requestHash()) == Idempotency.Decision.CONFLICT) {
                 throw new ApiException(409, "IDEMPOTENCY_CONFLICT",
                         "A Idempotency-Key já foi usada com outro conteúdo.");
             }
@@ -168,7 +178,10 @@ public class QuoteStore {
         return writes;
     }
 
-    /** Dados da nova versão; o {@code snapshot} já foi resolvido no catálogo da organização. */
+    /**
+     * Dados da nova versão; o {@code snapshot} já foi resolvido no catálogo da
+     * organização.
+     */
     public record NewVersion(
             Idempotency.Key idempotencyKey,
             String requestHash,
@@ -186,9 +199,12 @@ public class QuoteStore {
     }
 
     /**
-     * Nova versão (§8 do desenho, T17): uma transação grava a idempotência, troca o {@code currentVersion} do
-     * {@code META}, marca {@code supersededAt} na versão substituída e grava {@code V#n} com o outbox de início.
-     * A condição do {@code META} serializa a nova versão com a seleção (T29); a versão antiga segue até o fim.
+     * Nova versão (§8 do desenho, T17): uma transação grava a idempotência, troca o
+     * {@code currentVersion} do
+     * {@code META}, marca {@code supersededAt} na versão substituída e grava
+     * {@code V#n} com o outbox de início.
+     * A condição do {@code META} serializa a nova versão com a seleção (T29); a
+     * versão antiga segue até o fim.
      */
     public CreatedQuote createVersion(NewVersion version) {
         try {
@@ -226,7 +242,10 @@ public class QuoteStore {
         }
     }
 
-    /** Mesmo hash devolve a identidade gravada; hash diferente é 409 {@code IDEMPOTENCY_CONFLICT} (§8). */
+    /**
+     * Mesmo hash devolve a identidade gravada; hash diferente é 409
+     * {@code IDEMPOTENCY_CONFLICT} (§8).
+     */
     private CreatedQuote replay(Map<String, AttributeValue> existing, String requestHash) {
         if (Idempotency.compare(Items.string(existing, "requestHash"), requestHash) == Idempotency.Decision.CONFLICT) {
             throw new ApiException(409, "IDEMPOTENCY_CONFLICT", "A Idempotency-Key já foi usada com outro conteúdo.");
@@ -241,7 +260,8 @@ public class QuoteStore {
 
     /** A condição do {@code META} é a segunda ação da transação da nova versão. */
     private static boolean metaConditionFailed(TransactionCanceledException canceled) {
-        List<CancellationReason> reasons = canceled.hasCancellationReasons() ? canceled.cancellationReasons() : List.of();
+        List<CancellationReason> reasons = canceled.hasCancellationReasons() ? canceled.cancellationReasons()
+                : List.of();
         return reasons.size() > 1 && "ConditionalCheckFailed".equals(reasons.get(1).code());
     }
 
@@ -274,18 +294,25 @@ public class QuoteStore {
                 Map.of(":now", s(now), ":one", n(1))));
         writes.add(put(versionItem(version.quoteId(), version.version(), version.snapshotJson(), version.inputHash(),
                 version.acceptedAt(), version.deadlineAt())));
-        writes.addAll(startOutbox(version.quoteId(), version.version(), version.organizationId(), version.acceptedAt()));
+        writes.addAll(
+                startOutbox(version.quoteId(), version.version(), version.organizationId(), version.acceptedAt()));
         return writes;
     }
 
-    /** Filtros da listagem; nulos são ignorados. O período é inclusivo nos dois extremos. */
+    /**
+     * Filtros da listagem; nulos são ignorados. O período é inclusivo nos dois
+     * extremos.
+     */
     public record QuoteFilter(Phase phase, Outcome outcome, Instant createdFrom, Instant createdTo) {
     }
 
     /**
-     * Cotações da organização pelo {@code gsi1} ({@code ORG#<organizationId>}), as mais novas primeiro, com
-     * {@code phase} e {@code outcome} do resumo do {@code META} em {@code FilterExpression} (§4 do desenho).
-     * WHY: o {@code createdAt} tem precisão variável no {@code gsi1sk}; a chave limita o período ao segundo e o
+     * Cotações da organização pelo {@code gsi1} ({@code ORG#<organizationId>}), as
+     * mais novas primeiro, com
+     * {@code phase} e {@code outcome} do resumo do {@code META} em
+     * {@code FilterExpression} (§4 do desenho).
+     * WHY: o {@code createdAt} tem precisão variável no {@code gsi1sk}; a chave
+     * limita o período ao segundo e o
      * instante exato é conferido no código.
      */
     public IndexPages.Page listQuotes(String organizationId, QuoteFilter filter, String afterPosition, int limit) {
@@ -310,7 +337,8 @@ public class QuoteStore {
             values.put(":to", s(to));
             sortKey = sortKey == null ? "#gsk <= :to" : "#gsk BETWEEN :from AND :to";
         }
-        // WHY: o DynamoDB recusa com ValidationException o ExclusiveStartKey fora da condição da chave; o cursor de
+        // WHY: o DynamoDB recusa com ValidationException o ExclusiveStartKey fora da
+        // condição da chave; o cursor de
         // outra combinação de filtros responde 400, como o contrato prevê
         if (afterPosition != null && ((from != null && afterPosition.compareTo(from) < 0)
                 || (to != null && afterPosition.compareTo(to) > 0))) {
@@ -321,7 +349,8 @@ public class QuoteStore {
                 meta -> createdWithin(meta, filter));
         return IndexPages.read(dynamoDb, config.tableName(), QuoteKeys.organizationIndexPk(organizationId), indexFilter,
                 afterPosition, position -> Map.of(QuoteKeys.PK, s(QuoteKeys.quotePk(IndexPages.idOf(position))),
-                        QuoteKeys.SK, s(QuoteKeys.META)), limit);
+                        QuoteKeys.SK, s(QuoteKeys.META)),
+                limit);
     }
 
     private static boolean createdWithin(Map<String, AttributeValue> meta, QuoteFilter filter) {
@@ -334,19 +363,27 @@ public class QuoteStore {
                 && (filter.createdTo() == null || !created.isAfter(filter.createdTo()));
     }
 
-    /** Pedido de seleção, depois da permissão e da organização conferidas pela API. */
+    /**
+     * Pedido de seleção, depois da permissão e da organização conferidas pela API.
+     */
     public record NewSelection(Idempotency.Key idempotencyKey, String requestHash, String quoteId, int version,
             String offerId, String organizationId, String selectedBy, Instant selectedAt) {
     }
 
-    /** Seleção devolvida ao cliente: a gravada agora, a de um reenvio ou a existente com a mesma oferta. */
+    /**
+     * Seleção devolvida ao cliente: a gravada agora, a de um reenvio ou a existente
+     * com a mesma oferta.
+     */
     public record RecordedSelection(String selectionId, String offerId, String selectedAt) {
     }
 
     /**
-     * Seleção definitiva (§8 do desenho, RN13, T18, T28 e T29). A decisão sai do {@code META} e da oferta lidos agora;
-     * a transação grava idempotência, {@code SELECTION}, {@code META} e outbox {@code OfferSelected} e confere a
-     * oferta. A condição do {@code META} é a mesma da nova versão, então só uma das duas vence.
+     * Seleção definitiva (§8 do desenho, RN13, T18, T28 e T29). A decisão sai do
+     * {@code META} e da oferta lidos agora;
+     * a transação grava idempotência, {@code SELECTION}, {@code META} e outbox
+     * {@code OfferSelected} e confere a
+     * oferta. A condição do {@code META} é a mesma da nova versão, então só uma das
+     * duas vence.
      */
     public RecordedSelection select(NewSelection selection, Map<String, AttributeValue> meta) {
         try {
@@ -383,9 +420,11 @@ public class QuoteStore {
                 return replaySelection(recorded.get(), selection.requestHash());
             }
             List<String> reasons = canceled.hasCancellationReasons()
-                    ? canceled.cancellationReasons().stream().map(CancellationReason::code).toList() : List.of();
+                    ? canceled.cancellationReasons().stream().map(CancellationReason::code).toList()
+                    : List.of();
             if (failed(reasons, 1) || failed(reasons, 2)) {
-                // NOTE: outra seleção ou uma nova versão venceu a corrida (T29); a decisão relê o META
+                // NOTE: outra seleção ou uma nova versão venceu a corrida (T29); a decisão relê
+                // o META
                 Map<String, AttributeValue> current = meta(selection.quoteId()).orElseThrow(ApiException::notFound);
                 Selections.Decision after = decide(selection, current, offer);
                 if (after != Selections.Decision.RECORD) {
@@ -426,7 +465,10 @@ public class QuoteStore {
         };
     }
 
-    /** Mesmo hash devolve a seleção gravada pela chave; hash diferente é 409 {@code IDEMPOTENCY_CONFLICT}. */
+    /**
+     * Mesmo hash devolve a seleção gravada pela chave; hash diferente é 409
+     * {@code IDEMPOTENCY_CONFLICT}.
+     */
     private static RecordedSelection replaySelection(Map<String, AttributeValue> recorded, String requestHash) {
         if (Idempotency.compare(Items.string(recorded, "requestHash"), requestHash) == Idempotency.Decision.CONFLICT) {
             throw new ApiException(409, "IDEMPOTENCY_CONFLICT", "A Idempotency-Key já foi usada com outro conteúdo.");
@@ -439,7 +481,10 @@ public class QuoteStore {
         return reasons.size() > action && "ConditionalCheckFailed".equals(reasons.get(action));
     }
 
-    /** Ordem das ações: idempotência, {@code SELECTION}, {@code META}, conferência da oferta e outbox. */
+    /**
+     * Ordem das ações: idempotência, {@code SELECTION}, {@code META}, conferência
+     * da oferta e outbox.
+     */
     private List<TransactWriteItem> selectionWrites(NewSelection selection) {
         String now = selection.selectedAt().toString();
         String pk = QuoteKeys.quotePk(selection.quoteId());
@@ -516,8 +561,12 @@ public class QuoteStore {
         return version;
     }
 
-    /** Outbox {@code StartQuoteRequested}, que inicia a execução, e {@code QuoteAccepted} da versão. */
-    private List<TransactWriteItem> startOutbox(String quoteId, int version, String organizationId, Instant acceptedAt) {
+    /**
+     * Outbox {@code StartQuoteRequested}, que inicia a execução, e
+     * {@code QuoteAccepted} da versão.
+     */
+    private List<TransactWriteItem> startOutbox(String quoteId, int version, String organizationId,
+            Instant acceptedAt) {
         String startEventId = UUID.randomUUID().toString();
         String acceptedEventId = UUID.randomUUID().toString();
         return List.of(
@@ -580,7 +629,10 @@ public class QuoteStore {
         return getItem(QuoteKeys.quotePk(quoteId), QuoteKeys.versionSk(version));
     }
 
-    /** Itens da versão ({@code V#n} e filhos), com leitura consistente para a revisão (§4 do desenho). */
+    /**
+     * Itens da versão ({@code V#n} e filhos), com leitura consistente para a
+     * revisão (§4 do desenho).
+     */
     public List<Map<String, AttributeValue>> versionItems(String quoteId, int version) {
         List<Map<String, AttributeValue>> items = new ArrayList<>();
         Map<String, AttributeValue> startKey = null;
@@ -596,7 +648,8 @@ public class QuoteStore {
                     .exclusiveStartKey(startKey)
                     .build());
             items.addAll(page.items());
-            startKey = page.hasLastEvaluatedKey() && !page.lastEvaluatedKey().isEmpty() ? page.lastEvaluatedKey() : null;
+            startKey = page.hasLastEvaluatedKey() && !page.lastEvaluatedKey().isEmpty() ? page.lastEvaluatedKey()
+                    : null;
         } while (startKey != null);
         return items;
     }

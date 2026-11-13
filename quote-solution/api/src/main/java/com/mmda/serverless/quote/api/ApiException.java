@@ -2,7 +2,10 @@ package com.mmda.serverless.quote.api;
 
 import java.util.List;
 
-/** Erro de negócio da API, respondido no formato do contrato ({@link ErrorResponse}). */
+/**
+ * Erro de negócio da API, respondido no formato do contrato
+ * ({@link ErrorResponse}).
+ */
 public class ApiException extends RuntimeException {
 
     private final int status;

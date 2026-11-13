@@ -7,7 +7,10 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import org.junit.jupiter.api.Test;
 
-/** Teto das leituras da API de situação num ciclo do {@code reconciler} (desenho, §9). */
+/**
+ * Teto das leituras da API de situação num ciclo do {@code reconciler}
+ * (desenho, §9).
+ */
 class StatusReadsTest {
 
     private static final Instant START = Instant.parse("2026-11-12T10:00:00Z");
@@ -25,8 +28,8 @@ class StatusReadsTest {
 
     @Test
     void readsOfAnInsurerThatDidNotAnswerStopUntilTheNextCycle() {
-        QueryReconciliation.StatusReads reads =
-                QueryReconciliation.StatusReads.until(Clock.fixed(START, ZoneOffset.UTC), START.plusSeconds(30));
+        QueryReconciliation.StatusReads reads = QueryReconciliation.StatusReads
+                .until(Clock.fixed(START, ZoneOffset.UTC), START.plusSeconds(30));
 
         reads.unreachable("beta");
 

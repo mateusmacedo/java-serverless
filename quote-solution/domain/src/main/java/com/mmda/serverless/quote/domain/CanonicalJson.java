@@ -11,14 +11,19 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Canonicalização JSON da RFC 8785 (JCS): propriedades ordenadas por unidades UTF-16, sem espaços,
- * strings escapadas como no {@code JSON.stringify} e números no formato do ECMAScript. Base do
- * {@code requestHash} da idempotência, para que a mesma intenção com outra formatação não vire 409.
+ * Canonicalização JSON da RFC 8785 (JCS): propriedades ordenadas por unidades
+ * UTF-16, sem espaços,
+ * strings escapadas como no {@code JSON.stringify} e números no formato do
+ * ECMAScript. Base do
+ * {@code requestHash} da idempotência, para que a mesma intenção com outra
+ * formatação não vire 409.
  */
 public final class CanonicalJson {
 
-    // WHY: a RFC 8785 exige rejeitar nomes repetidos; o Jackson ficaria com o último sem avisar. Conteúdo
-    // depois do primeiro valor também é rejeitado, senão ficaria fora do hash da idempotência
+    // WHY: a RFC 8785 exige rejeitar nomes repetidos; o Jackson ficaria com o
+    // último sem avisar. Conteúdo
+    // depois do primeiro valor também é rejeitado, senão ficaria fora do hash da
+    // idempotência
     private static final JsonMapper STRICT = JsonMapper.builder()
             .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
@@ -112,8 +117,10 @@ public final class CanonicalJson {
     }
 
     /**
-     * Número no formato do {@code Number.prototype.toString} do ECMAScript, sobre o double IEEE 754.
-     * WHY: desde o JDK 19 o {@code Double.toString} devolve os dígitos mais curtos que identificam o valor,
+     * Número no formato do {@code Number.prototype.toString} do ECMAScript, sobre o
+     * double IEEE 754.
+     * WHY: desde o JDK 19 o {@code Double.toString} devolve os dígitos mais curtos
+     * que identificam o valor,
      * os mesmos que o ECMAScript usa; falta só o formato.
      */
     static String formatNumber(double value) {
@@ -145,7 +152,10 @@ public final class CanonicalJson {
         return out.toString();
     }
 
-    /** JSON malformado, com nome repetido ou com valor que a RFC 8785 não representa. */
+    /**
+     * JSON malformado, com nome repetido ou com valor que a RFC 8785 não
+     * representa.
+     */
     public static final class InvalidJsonException extends RuntimeException {
 
         public InvalidJsonException(String message) {

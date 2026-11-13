@@ -34,7 +34,8 @@ class SelectionsTest {
 
     @Test
     void t18_expiredOfferIsRejectedAtTheExactInstantToo() {
-        assertThat(Selections.decide(1, 1, null, "of_a", true, NOW.minusSeconds(1), NOW)).isEqualTo(Decision.OFFER_EXPIRED);
+        assertThat(Selections.decide(1, 1, null, "of_a", true, NOW.minusSeconds(1), NOW))
+                .isEqualTo(Decision.OFFER_EXPIRED);
         assertThat(Selections.decide(1, 1, null, "of_a", true, NOW, NOW)).isEqualTo(Decision.OFFER_EXPIRED);
         assertThat(Selections.decide(1, 1, null, "of_a", true, null, NOW)).isEqualTo(Decision.OFFER_EXPIRED);
     }

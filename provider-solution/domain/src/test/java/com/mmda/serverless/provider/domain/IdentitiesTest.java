@@ -7,7 +7,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
-/** Vetores calculados à parte com hashlib, hmac e uuid do Python, para conferir a implementação. */
+/**
+ * Vetores calculados à parte com hashlib, hmac e uuid do Python, para conferir
+ * a implementação.
+ */
 class IdentitiesTest {
 
     private static final String WORK_REF = "wr_c211b7c4e930ee39e2224cc9b7d8d93f";

@@ -24,8 +24,10 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * Relay registro a registro e republicador, com o barramento e a tabela no Floci (desenho, §7 e §14). O
- * erro transitório, que o Floci não provoca, está no {@code OutboxRelayFunctionTest}.
+ * Relay registro a registro e republicador, com o barramento e a tabela no
+ * Floci (desenho, §7 e §14). O
+ * erro transitório, que o Floci não provoca, está no
+ * {@code OutboxRelayFunctionTest}.
  */
 class OutboxRelayIT extends FlociIntegrationTest {
 
@@ -108,7 +110,10 @@ class OutboxRelayIT extends FlociIntegrationTest {
         assertThat(attribute(item("OUTBOX#" + recent, "META"), "gsi2pk")).contains("OUTBOX_PENDING");
     }
 
-    /** Item como o {@code OutboxStore} grava; {@code complete = false} deixa o item sem {@code detail}. */
+    /**
+     * Item como o {@code OutboxStore} grava; {@code complete = false} deixa o item
+     * sem {@code detail}.
+     */
     private String givenOutbox(Instant createdAt, boolean complete) {
         String eventId = UUID.randomUUID().toString();
         String created = Timestamps.format(createdAt);
@@ -129,13 +134,15 @@ class OutboxRelayIT extends FlociIntegrationTest {
         return eventId;
     }
 
-    /** Registros de {@code INSERT} com o {@code NewImage} lido da tabela, como o stream entrega. */
+    /**
+     * Registros de {@code INSERT} com o {@code NewImage} lido da tabela, como o
+     * stream entrega.
+     */
     private static DynamodbEvent streamEvent(String... eventIds) {
         List<DynamodbEvent.DynamodbStreamRecord> records = new ArrayList<>();
         long sequence = System.nanoTime();
         for (String eventId : eventIds) {
-            Map<String, com.amazonaws.services.lambda.runtime.events.models.dynamodb.AttributeValue> image =
-                    new HashMap<>();
+            Map<String, com.amazonaws.services.lambda.runtime.events.models.dynamodb.AttributeValue> image = new HashMap<>();
             item("OUTBOX#" + eventId, "META").forEach((name, value) -> image.put(name,
                     value.s() != null
                             ? new com.amazonaws.services.lambda.runtime.events.models.dynamodb.AttributeValue()
@@ -162,7 +169,8 @@ class OutboxRelayIT extends FlociIntegrationTest {
                     .waitTimeSeconds(1)).messages()) {
                 JsonNode event = objectMapper.readTree(message.body());
                 CAPTURED.put(event.path("detail").path("eventId").asString(), event);
-                SQS.deleteMessage(builder -> builder.queueUrl(CAPTURE_QUEUE_URL).receiptHandle(message.receiptHandle()));
+                SQS.deleteMessage(
+                        builder -> builder.queueUrl(CAPTURE_QUEUE_URL).receiptHandle(message.receiptHandle()));
             }
             assertThat(CAPTURED.keySet()).containsAll(expected);
         });

@@ -38,9 +38,12 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 /**
- * T22, lado do backend: as fixtures de {@code contracts/fixtures}, que o frontend usa como mocks, seguem
- * {@code contracts/openapi.yaml} em cada requisição e resposta, cobrem os casos que o contrato compartilhado pede
- * (progresso, oferta parcial, recusa, indisponibilidade, pendência, expiração, conflito e os erros padrão) e os
+ * T22, lado do backend: as fixtures de {@code contracts/fixtures}, que o
+ * frontend usa como mocks, seguem
+ * {@code contracts/openapi.yaml} em cada requisição e resposta, cobrem os casos
+ * que o contrato compartilhado pede
+ * (progresso, oferta parcial, recusa, indisponibilidade, pendência, expiração,
+ * conflito e os erros padrão) e os
  * enums do contrato são os mesmos do backend.
  */
 class ContractFixturesTest {
@@ -83,7 +86,8 @@ class ContractFixturesTest {
             assertThat(fixture.getValue().path("description").asText()).as(fixture.getKey()).isNotBlank();
             for (JsonNode exchange : fixture.getValue().get("exchanges")) {
                 Request request = request(exchange.get("request"));
-                // NOTE: o 400 de validação nasce de um body inválido de propósito; só a resposta é conferida nele
+                // NOTE: o 400 de validação nasce de um body inválido de propósito; só a
+                // resposta é conferida nele
                 ValidationReport report = exchange.path("invalidRequest").asBoolean(false)
                         ? validator.validateResponse(request.getPath(), request.getMethod(),
                                 response(exchange.get("response")))

@@ -25,7 +25,8 @@ class StreamImagesTest {
                 "m", new AttributeValue().withM(Map.of("inner", new AttributeValue().withS("x"))),
                 "l", new AttributeValue().withL(new AttributeValue().withN("7")));
 
-        Map<String, software.amazon.awssdk.services.dynamodb.model.AttributeValue> converted = StreamImages.toSdk(image);
+        Map<String, software.amazon.awssdk.services.dynamodb.model.AttributeValue> converted = StreamImages
+                .toSdk(image);
 
         assertThat(converted.get("s").s()).isEqualTo("text");
         assertThat(converted.get("n").n()).isEqualTo("42");

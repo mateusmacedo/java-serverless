@@ -13,9 +13,12 @@ import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 
 /**
- * Eventos de SQS e de DynamoDB Streams no formato que a Lambda recebe, e a resposta de falha parcial.
- * WHY: os modelos do aws-lambda-java-events usam nomes de propriedade que o Jackson do Quarkus não mapeia
- * sem mixins (por exemplo, {@code Records} e {@code NewImage}); records próprios evitam a dependência.
+ * Eventos de SQS e de DynamoDB Streams no formato que a Lambda recebe, e a
+ * resposta de falha parcial.
+ * WHY: os modelos do aws-lambda-java-events usam nomes de propriedade que o
+ * Jackson do Quarkus não mapeia
+ * sem mixins (por exemplo, {@code Records} e {@code NewImage}); records
+ * próprios evitam a dependência.
  */
 public final class LambdaEvents {
 
@@ -52,7 +55,9 @@ public final class LambdaEvents {
             @JsonProperty("SequenceNumber") String sequenceNumber) {
     }
 
-    /** Resposta com {@code ReportBatchItemFailures}: só os itens listados voltam. */
+    /**
+     * Resposta com {@code ReportBatchItemFailures}: só os itens listados voltam.
+     */
     public record BatchResponse(List<ItemFailure> batchItemFailures) {
 
         public static BatchResponse of(List<String> failedIdentifiers) {
@@ -63,7 +68,10 @@ public final class LambdaEvents {
     public record ItemFailure(String itemIdentifier) {
     }
 
-    /** Converte a imagem do stream (JSON tipado do DynamoDB) para os atributos do SDK v2. */
+    /**
+     * Converte a imagem do stream (JSON tipado do DynamoDB) para os atributos do
+     * SDK v2.
+     */
     public static Map<String, AttributeValue> toItem(Map<String, JsonNode> image) {
         Map<String, AttributeValue> item = new HashMap<>();
         image.forEach((name, value) -> item.put(name, toAttribute(value)));

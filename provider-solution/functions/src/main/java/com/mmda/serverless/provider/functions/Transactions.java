@@ -12,8 +12,10 @@ import software.amazon.awssdk.services.dynamodb.model.TransactWriteItem;
 import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledException;
 
 /**
- * {@code TransactWriteItems} com o tratamento por motivo de cancelamento. {@code TransactionConflict} é
- * repetido aqui, com backoff e jitter, porque o SDK não repete esse caso e o Floci não o emula (§9).
+ * {@code TransactWriteItems} com o tratamento por motivo de cancelamento.
+ * {@code TransactionConflict} é
+ * repetido aqui, com backoff e jitter, porque o SDK não repete esse caso e o
+ * Floci não o emula (§9).
  */
 @Component
 class Transactions {
@@ -35,9 +37,12 @@ class Transactions {
         this.jitter = jitter;
     }
 
-    /** Grava tudo ou nada; um cancelamento por condição volta como resultado, não como exceção. */
+    /**
+     * Grava tudo ou nada; um cancelamento por condição volta como resultado, não
+     * como exceção.
+     */
     Result write(List<TransactWriteItem> items) {
-        for (int conflicts = 0; ; conflicts++) {
+        for (int conflicts = 0;; conflicts++) {
             try {
                 dynamoDb.transactWriteItems(builder -> builder.transactItems(items));
                 return Result.COMMITTED;
@@ -58,7 +63,10 @@ class Transactions {
         }
     }
 
-    /** @param reasons motivo de cada item, na ordem da transação, quando ela foi cancelada */
+    /**
+     * @param reasons motivo de cada item, na ordem da transação, quando ela foi
+     *                cancelada
+     */
     record Result(boolean committed, List<String> reasons) {
 
         static final Result COMMITTED = new Result(true, List.of());

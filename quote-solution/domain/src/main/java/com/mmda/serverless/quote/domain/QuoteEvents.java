@@ -6,7 +6,8 @@ import java.util.Map;
 
 /**
  * Eventos da quote-solution (§3 do desenho). Os schemas estão em
- * {@code contracts/quote-solution/asyncapi.yaml}; os {@code detail} são montados só aqui, para a API
+ * {@code contracts/quote-solution/asyncapi.yaml}; os {@code detail} são
+ * montados só aqui, para a API
  * e as functions gravarem o mesmo formato no outbox.
  */
 public final class QuoteEvents {
@@ -20,7 +21,10 @@ public final class QuoteEvents {
     public static final String INSURER_QUOTE_REQUESTED = "InsurerQuoteRequested";
     public static final String QUOTE_COMPLETED = "QuoteCompleted";
 
-    /** Evento interno do outbox: a relay inicia a execução em vez de publicar no barramento. */
+    /**
+     * Evento interno do outbox: a relay inicia a execução em vez de publicar no
+     * barramento.
+     */
     public static final String START_QUOTE_REQUESTED = "StartQuoteRequested";
 
     public static final String ENRICHMENT_RESOLVED = "EnrichmentResolved";
@@ -39,7 +43,10 @@ public final class QuoteEvents {
     private QuoteEvents() {
     }
 
-    /** {@code eventId} do {@code QuoteCompleted}: a consolidação repetida não cria outro evento. */
+    /**
+     * {@code eventId} do {@code QuoteCompleted}: a consolidação repetida não cria
+     * outro evento.
+     */
     public static String completedEventId(String quoteId, int version) {
         return Hashes.uuidV5(quoteId + "|" + version + "|COMPLETED").toString();
     }
@@ -53,7 +60,10 @@ public final class QuoteEvents {
         return detail;
     }
 
-    /** Entrada da execução: a relay usa {@code quoteId}, {@code version} e o nome determinístico. */
+    /**
+     * Entrada da execução: a relay usa {@code quoteId}, {@code version} e o nome
+     * determinístico.
+     */
     public static Map<String, Object> startQuoteRequested(String eventId, Instant occurredAt, String quoteId,
             int version, String organizationId) {
         Map<String, Object> detail = quoteAccepted(eventId, occurredAt, quoteId, version, organizationId);
@@ -80,7 +90,8 @@ public final class QuoteEvents {
     }
 
     /**
-     * Pedido de cotação: leva a cópia autorizada do snapshot e o resumo do enriquecimento, nunca o token
+     * Pedido de cotação: leva a cópia autorizada do snapshot e o resumo do
+     * enriquecimento, nunca o token
      * nem dado do aplicante.
      */
     public static Map<String, Object> insurerQuoteRequested(Instant occurredAt, WorkRef workRef, String organizationId,
@@ -116,7 +127,10 @@ public final class QuoteEvents {
         return detail;
     }
 
-    /** Intenção de proposta registrada; o {@code eventId} é o UUIDv5 do {@code selectionId}. */
+    /**
+     * Intenção de proposta registrada; o {@code eventId} é o UUIDv5 do
+     * {@code selectionId}.
+     */
     public static Map<String, Object> offerSelected(Instant occurredAt, String quoteId, int version, String offerId,
             String selectionId) {
         Map<String, Object> detail = envelope(Hashes.uuidV5(selectionId).toString(), occurredAt);
@@ -128,7 +142,8 @@ public final class QuoteEvents {
     }
 
     /**
-     * Pedido de reconciliação manual de uma consulta da provider. O {@code eventId} é aleatório: a provider
+     * Pedido de reconciliação manual de uma consulta da provider. O {@code eventId}
+     * é aleatório: a provider
      * deduplica pelo {@code operationId}.
      */
     public static Map<String, Object> queryReconcileRequested(String eventId, Instant occurredAt, String operationId,

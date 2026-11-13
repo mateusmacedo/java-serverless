@@ -11,8 +11,10 @@ import java.util.Map;
 import org.yaml.snakeyaml.Yaml;
 
 /**
- * Parâmetros do stage (§12 do desenho) lidos do bloco {@code params} do {@code serverless.yml} da quote, para o
- * e2e esperar exatamente o orçamento que a máquina de estado tem, e não um número próprio.
+ * Parâmetros do stage (§12 do desenho) lidos do bloco {@code params} do
+ * {@code serverless.yml} da quote, para o
+ * e2e esperar exatamente o orçamento que a máquina de estado tem, e não um
+ * número próprio.
  */
 record StageParameters(int enrichmentTimeoutSeconds, int insurerTimeoutSeconds, int mapConcurrency,
         int stepsMarginSeconds, int retryAfterSeconds) {
@@ -27,20 +29,30 @@ record StageParameters(int enrichmentTimeoutSeconds, int insurerTimeoutSeconds, 
                 number(values, "retryAfterSeconds"));
     }
 
-    /** Parâmetro numérico de outro {@code serverless.yml} no stage, como a quota de um provedor na provider (T21). */
+    /**
+     * Parâmetro numérico de outro {@code serverless.yml} no stage, como a quota de
+     * um provedor na provider (T21).
+     */
     static int number(Path serverlessYml, String stage, String name) {
         return number(valuesOf(serverlessYml, stage), name);
     }
 
-    /** Orçamento sem esperas externas: a versão termina nos passos simples (T23, T24). */
+    /**
+     * Orçamento sem esperas externas: a versão termina nos passos simples (T23,
+     * T24).
+     */
     Duration withoutExternalWaits() {
         return Duration.ofSeconds(stepsMarginSeconds);
     }
 
-    /** Invariante do §9 para {@code insurers} seguradoras: enriquecimento, rodadas do Map e margem dos passos. */
+    /**
+     * Invariante do §9 para {@code insurers} seguradoras: enriquecimento, rodadas
+     * do Map e margem dos passos.
+     */
     Duration withInsurers(int insurers) {
         int rounds = (insurers + mapConcurrency - 1) / mapConcurrency;
-        return Duration.ofSeconds(enrichmentTimeoutSeconds + (long) rounds * insurerTimeoutSeconds + stepsMarginSeconds);
+        return Duration
+                .ofSeconds(enrichmentTimeoutSeconds + (long) rounds * insurerTimeoutSeconds + stepsMarginSeconds);
     }
 
     Duration pollInterval() {
@@ -54,7 +66,8 @@ record StageParameters(int enrichmentTimeoutSeconds, int insurerTimeoutSeconds, 
         return values;
     }
 
-    // WHY: o resto do arquivo usa tags do CloudFormation (!Ref, !GetAtt) que o SnakeYAML não conhece; o bloco
+    // WHY: o resto do arquivo usa tags do CloudFormation (!Ref, !GetAtt) que o
+    // SnakeYAML não conhece; o bloco
     // params é YAML simples
     @SuppressWarnings("unchecked")
     private static Map<String, Object> paramsOf(Path serverlessYml) {

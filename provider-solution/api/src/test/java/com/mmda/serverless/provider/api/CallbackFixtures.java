@@ -15,7 +15,8 @@ import java.util.UUID;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 
 /**
- * Consultas da beta como o {@code insurerWorker} as grava e callbacks assinados como o {@code simCallbackSender}
+ * Consultas da beta como o {@code insurerWorker} as grava e callbacks assinados
+ * como o {@code simCallbackSender}
  * os envia.
  */
 final class CallbackFixtures {
@@ -33,7 +34,10 @@ final class CallbackFixtures {
     private CallbackFixtures() {
     }
 
-    /** Consulta da beta em voo; {@code providerRequestId} nulo quando o {@code 202} ainda não foi gravado. */
+    /**
+     * Consulta da beta em voo; {@code providerRequestId} nulo quando o {@code 202}
+     * ainda não foi gravado.
+     */
     record Query(String workRef, String queryId, String requestEventId, String providerRequestId) {
     }
 
@@ -81,7 +85,9 @@ final class CallbackFixtures {
         return query;
     }
 
-    /** Metade do worker no {@code CORR#}, como ele a grava depois do {@code 202}. */
+    /**
+     * Metade do worker no {@code CORR#}, como ele a grava depois do {@code 202}.
+     */
     static void givenWorkerHalf(String providerRequestId, String queryId) {
         DYNAMO_DB.updateItem(builder -> builder
                 .tableName(TABLE)

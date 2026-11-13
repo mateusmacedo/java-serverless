@@ -8,7 +8,10 @@ public sealed interface EnrichmentVerdict {
     record Found(EnrichmentProfile profile) implements EnrichmentVerdict {
     }
 
-    /** {@code NOT_FOUND} declarado pelo provedor, com as referências que ele não encontrou. */
+    /**
+     * {@code NOT_FOUND} declarado pelo provedor, com as referências que ele não
+     * encontrou.
+     */
     record NotFound(List<String> notFoundRefs) implements EnrichmentVerdict {
 
         public NotFound {
@@ -16,7 +19,10 @@ public sealed interface EnrichmentVerdict {
         }
     }
 
-    /** Erro que permite repetir com segurança; esgotado o orçamento, vira {@code FAILED}. */
+    /**
+     * Erro que permite repetir com segurança; esgotado o orçamento, vira
+     * {@code FAILED}.
+     */
     record Transient(String errorClass) implements EnrichmentVerdict {
     }
 
@@ -24,7 +30,10 @@ public sealed interface EnrichmentVerdict {
     record Failed(String errorClass) implements EnrichmentVerdict {
     }
 
-    /** Pedido possivelmente enviado sem resposta: {@code FAILED} para a quote e a consulta fica {@code UNKNOWN}. */
+    /**
+     * Pedido possivelmente enviado sem resposta: {@code FAILED} para a quote e a
+     * consulta fica {@code UNKNOWN}.
+     */
     record Unknown(String errorClass) implements EnrichmentVerdict {
     }
 }

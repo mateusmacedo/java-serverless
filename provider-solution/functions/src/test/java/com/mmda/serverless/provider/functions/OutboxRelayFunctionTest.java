@@ -33,7 +33,8 @@ class OutboxRelayFunctionTest {
         when(publisher.publish(entry("e2"))).thenReturn(OutboxPublisher.Result.TRANSIENT_FAILURE);
         OutboxRelayFunction relay = new OutboxRelayFunction(publisher, outbox, Clock.systemUTC());
 
-        StreamsEventResponse response = relay.apply(event(record("e1", "100"), record("e2", "200"), record("e3", "300")));
+        StreamsEventResponse response = relay
+                .apply(event(record("e1", "100"), record("e2", "200"), record("e3", "300")));
 
         assertThat(response.getBatchItemFailures())
                 .extracting(StreamsEventResponse.BatchItemFailure::getItemIdentifier)

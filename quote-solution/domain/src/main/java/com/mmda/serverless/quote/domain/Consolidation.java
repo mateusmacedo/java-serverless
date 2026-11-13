@@ -7,8 +7,10 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Precedência da consolidação do PRD §8. Lê o que a versão já gravou e decide {@code outcome},
- * {@code outcomeReason} e {@code missingFields}; não depende do estado da execução, então serve também à
+ * Precedência da consolidação do PRD §8. Lê o que a versão já gravou e decide
+ * {@code outcome},
+ * {@code outcomeReason} e {@code missingFields}; não depende do estado da
+ * execução, então serve também à
  * reconciliação de versões cujo workflow terminou sem consolidar (M4).
  */
 public final class Consolidation {
@@ -17,7 +19,8 @@ public final class Consolidation {
     }
 
     /**
-     * Argumentos nulos indicam etapa que não rodou; seguradora selecionada sem resultado conta como falha
+     * Argumentos nulos indicam etapa que não rodou; seguradora selecionada sem
+     * resultado conta como falha
      * técnica.
      */
     public static ConsolidationResult consolidate(
@@ -77,7 +80,8 @@ public final class Consolidation {
                 case NEEDS_INFORMATION -> {
                     needsInformation = true;
                     result.missingFields().stream()
-                            .filter(field -> missingFields.stream().noneMatch(known -> known.path().equals(field.path())))
+                            .filter(field -> missingFields.stream()
+                                    .noneMatch(known -> known.path().equals(field.path())))
                             .forEach(missingFields::add);
                 }
                 case DECLINED -> {

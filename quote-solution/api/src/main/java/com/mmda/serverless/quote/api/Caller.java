@@ -7,7 +7,8 @@ import java.util.List;
 import org.eclipse.microprofile.jwt.JsonWebToken;
 
 /**
- * Usuário autenticado: organização e permissões vêm dos grupos do Cognito ({@code cognito:groups}), nunca
+ * Usuário autenticado: organização e permissões vêm dos grupos do Cognito
+ * ({@code cognito:groups}), nunca
  * do body. Sem grupo de organização, todo endpoint responde 403.
  */
 @RequestScoped
@@ -29,7 +30,9 @@ public class Caller {
         return Permission.fromGroups(identity.getRoles());
     }
 
-    /** Organização do usuário, depois de conferir a permissão exigida pelo endpoint. */
+    /**
+     * Organização do usuário, depois de conferir a permissão exigida pelo endpoint.
+     */
     public String require(Permission permission) {
         String organizationId = organizationId();
         if (!permissions().contains(permission)) {

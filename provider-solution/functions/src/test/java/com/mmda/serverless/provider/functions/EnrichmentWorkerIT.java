@@ -24,7 +24,10 @@ import software.amazon.awssdk.services.sqs.model.QueueAttributeName;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
-/** {@code enrichmentWorker} contra o Floci e o provedor simulado em processo (desenho, §8 e §9). */
+/**
+ * {@code enrichmentWorker} contra o Floci e o provedor simulado em processo
+ * (desenho, §8 e §9).
+ */
 class EnrichmentWorkerIT extends FlociIntegrationTest {
 
     private static final Duration DEADLINE = Duration.ofMinutes(4);
@@ -102,7 +105,8 @@ class EnrichmentWorkerIT extends FlociIntegrationTest {
 
     @Test
     void flakyProviderIsRetriedByTheWorkerUntilFound() {
-        TestRequests.Request request = TestRequests.enrichment(ProviderStub.VEHICLE_FLAKY, Instant.now().plus(DEADLINE));
+        TestRequests.Request request = TestRequests.enrichment(ProviderStub.VEHICLE_FLAKY,
+                Instant.now().plus(DEADLINE));
 
         worker.apply(sqsEvent(request.body()));
 
@@ -132,7 +136,8 @@ class EnrichmentWorkerIT extends FlociIntegrationTest {
 
     @Test
     void declaredNotFoundIsNotFoundWithTheReferences() {
-        TestRequests.Request request = TestRequests.enrichment(ProviderStub.VEHICLE_UNKNOWN, Instant.now().plus(DEADLINE));
+        TestRequests.Request request = TestRequests.enrichment(ProviderStub.VEHICLE_UNKNOWN,
+                Instant.now().plus(DEADLINE));
 
         worker.apply(sqsEvent(request.body()));
 
@@ -290,13 +295,17 @@ class EnrichmentWorkerIT extends FlociIntegrationTest {
         return detail;
     }
 
-    /** Consulta em voo cuja entrega já morreu: a tentativa aberta é mais antiga que o timeout do worker. */
+    /**
+     * Consulta em voo cuja entrega já morreu: a tentativa aberta é mais antiga que
+     * o timeout do worker.
+     */
     static void givenInFlightQueryWithOpenAttempt(TestRequests.Request request) {
         givenInFlightQuery(request, Instant.now().minusSeconds(200), false);
     }
 
     /**
-     * Consulta em voo com uma tentativa iniciada em {@code startedAt}; {@code finished} a encerra como
+     * Consulta em voo com uma tentativa iniciada em {@code startedAt};
+     * {@code finished} a encerra como
      * transitória, como no backoff entre tentativas.
      */
     static void givenInFlightQuery(TestRequests.Request request, Instant startedAt, boolean finished) {
@@ -324,16 +333,17 @@ class EnrichmentWorkerIT extends FlociIntegrationTest {
     /** Mensagens visíveis e adiadas na fila. */
     static int queuedMessages(String queueUrl) {
         Map<QueueAttributeName, String> queue = SQS.getQueueAttributes(builder -> builder
-                        .queueUrl(queueUrl)
-                        .attributeNames(QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES_DELAYED,
-                                QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES))
+                .queueUrl(queueUrl)
+                .attributeNames(QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES_DELAYED,
+                        QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES))
                 .attributes();
         return Integer.parseInt(queue.get(QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES_DELAYED))
                 + Integer.parseInt(queue.get(QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES));
     }
 
     /**
-     * Prazo na virada da janela da quota: o reenvio adiado nunca cabe nele. Com menos de 3 s até a virada,
+     * Prazo na virada da janela da quota: o reenvio adiado nunca cabe nele. Com
+     * menos de 3 s até a virada,
      * espera a próxima janela, para o prazo não vencer antes da conferência.
      */
     static Instant deadlineAtTheWindowTurn() {
@@ -349,7 +359,10 @@ class EnrichmentWorkerIT extends FlociIntegrationTest {
         return window.end();
     }
 
-    /** Esgota a janela corrente e a seguinte, para a virada do minuto não mudar o resultado. */
+    /**
+     * Esgota a janela corrente e a seguinte, para a virada do minuto não mudar o
+     * resultado.
+     */
     static void givenExhaustedQuota(String provider) {
         Instant now = Instant.now();
         for (Instant instant : List.of(now, now.plusSeconds(60))) {
@@ -362,7 +375,10 @@ class EnrichmentWorkerIT extends FlociIntegrationTest {
         }
     }
 
-    /** Pedido reenviado da DLQ pelo reconciler (ADR 0007), com a tentativa no atributo {@code dlqAttempt}. */
+    /**
+     * Pedido reenviado da DLQ pelo reconciler (ADR 0007), com a tentativa no
+     * atributo {@code dlqAttempt}.
+     */
     static SQSEvent sqsEvent(String body, String dlqAttempt) {
         SQSEvent.MessageAttribute attempt = new SQSEvent.MessageAttribute();
         attempt.setDataType("Number");
@@ -372,7 +388,10 @@ class EnrichmentWorkerIT extends FlociIntegrationTest {
         return event;
     }
 
-    /** Início de tentativa que deixa a outra entrega viva por mais um segundo, para o adiamento ser curto. */
+    /**
+     * Início de tentativa que deixa a outra entrega viva por mais um segundo, para
+     * o adiamento ser curto.
+     */
     static Instant startedSoThatTheDeliveryEndsInASecond(ProviderProperties properties) {
         return Instant.now().minus(properties.workerTimeout()).minus(QueryRecord.CLOCK_SKEW).plusSeconds(1);
     }
@@ -380,7 +399,7 @@ class EnrichmentWorkerIT extends FlociIntegrationTest {
     /** Espera o reenvio adiado ficar visível e o recebe com os atributos. */
     static Message receiveDelayed(String queueUrl) {
         return await().atMost(Duration.ofSeconds(20)).until(() -> SQS.receiveMessage(builder -> builder
-                        .queueUrl(queueUrl).maxNumberOfMessages(1).waitTimeSeconds(1).messageAttributeNames("All"))
+                .queueUrl(queueUrl).maxNumberOfMessages(1).waitTimeSeconds(1).messageAttributeNames("All"))
                 .messages(), messages -> !messages.isEmpty()).getFirst();
     }
 

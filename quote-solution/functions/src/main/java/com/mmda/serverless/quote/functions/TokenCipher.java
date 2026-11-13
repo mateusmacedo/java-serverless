@@ -16,8 +16,10 @@ import javax.crypto.spec.SecretKeySpec;
 import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
 
 /**
- * Cifra os task tokens guardados nos waiters (AES-256-GCM, §8 do desenho). A chave é derivada do segredo
- * {@code token-key} por HMAC-SHA256 com um rótulo de uso, e o {@code workRef} entra como dado associado:
+ * Cifra os task tokens guardados nos waiters (AES-256-GCM, §8 do desenho). A
+ * chave é derivada do segredo
+ * {@code token-key} por HMAC-SHA256 com um rótulo de uso, e o {@code workRef}
+ * entra como dado associado:
  * um token cifrado só decifra no waiter que o guardou.
  */
 @ApplicationScoped
@@ -34,7 +36,8 @@ public class TokenCipher {
 
     @Inject
     TokenCipher(SecretsManagerClient secretsManager, QuoteFunctionsConfig config) {
-        this(() -> secretsManager.getSecretValue(builder -> builder.secretId(config.tokenKeySecretId())).secretString());
+        this(() -> secretsManager.getSecretValue(builder -> builder.secretId(config.tokenKeySecretId()))
+                .secretString());
     }
 
     TokenCipher(Supplier<String> secret) {

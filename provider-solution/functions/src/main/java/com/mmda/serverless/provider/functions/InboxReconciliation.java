@@ -9,9 +9,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
- * Inbox parada (desenho, §8 e §9): o callback {@code RECEIVED} refaz o encontro com o código do worker e, sem
- * correlação depois de {@code unmatchedCallbackAfterSeconds}, vira {@code UNMATCHED} com
- * {@code UNMATCHED_CALLBACK}. WHY: o {@code UNMATCHED} tenta de novo a cada ciclo, porque a metade do worker no
+ * Inbox parada (desenho, §8 e §9): o callback {@code RECEIVED} refaz o encontro
+ * com o código do worker e, sem
+ * correlação depois de {@code unmatchedCallbackAfterSeconds}, vira
+ * {@code UNMATCHED} com
+ * {@code UNMATCHED_CALLBACK}. WHY: o {@code UNMATCHED} tenta de novo a cada
+ * ciclo, porque a metade do worker no
  * {@code CORR#} pode chegar depois.
  */
 @Component
@@ -26,7 +29,7 @@ class InboxReconciliation {
     private final OperationsProperties operations;
 
     InboxReconciliation(CallbackLedger callbacks, PendingCallbacks pendingCallbacks, QueryLedger ledger,
-                        OperationIssues issues, OperationsProperties operations) {
+            OperationIssues issues, OperationsProperties operations) {
         this.callbacks = callbacks;
         this.pendingCallbacks = pendingCallbacks;
         this.ledger = ledger;
@@ -34,7 +37,10 @@ class InboxReconciliation {
         this.operations = operations;
     }
 
-    /** @param unmatched callbacks {@code UNMATCHED} ao fim do ciclo, que viram a métrica {@code UnmatchedCallbacks} */
+    /**
+     * @param unmatched callbacks {@code UNMATCHED} ao fim do ciclo, que viram a
+     *                  métrica {@code UnmatchedCallbacks}
+     */
     record Report(int processed, int newlyUnmatched, int unmatched) {
     }
 
@@ -71,12 +77,18 @@ class InboxReconciliation {
         return new Report(processed, newlyUnmatched, unmatched);
     }
 
-    /** Alvo do {@code UNMATCHED_CALLBACK}: o callback, identificado pelo provedor e pelo {@code externalEventId}. */
+    /**
+     * Alvo do {@code UNMATCHED_CALLBACK}: o callback, identificado pelo provedor e
+     * pelo {@code externalEventId}.
+     */
     static String target(CallbackLedger.InboxEntry entry) {
         return entry.provider() + "#" + entry.externalEventId();
     }
 
-    /** O encontro do §8, na mesma ordem da {@code api}: o {@code clientReference}, depois o {@code CORR#}. */
+    /**
+     * O encontro do §8, na mesma ordem da {@code api}: o {@code clientReference},
+     * depois o {@code CORR#}.
+     */
     private boolean matched(CallbackLedger.InboxEntry entry) {
         if (entry.provider() == null) {
             return false;
@@ -107,6 +119,6 @@ class InboxReconciliation {
     private static boolean belongs(QueryRecord query, CallbackLedger.InboxEntry entry) {
         return entry.provider().equals(query.insurerId())
                 && (query.providerRequestId() == null || entry.providerRequestId() == null
-                || query.providerRequestId().equals(entry.providerRequestId()));
+                        || query.providerRequestId().equals(entry.providerRequestId()));
     }
 }

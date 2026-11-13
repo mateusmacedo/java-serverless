@@ -11,10 +11,14 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
- * Reconciler agendado (desenho, §7 e §9), a cada minuto: republica o {@code OUTBOX_PENDING} (M1) e abre
- * {@code STALE_OUTBOX}; refaz o fan-out que um líder interrompido não terminou; trata as consultas em voo além do
- * prazo e as {@code UNKNOWN}; processa a inbox parada e marca {@code UNMATCHED}; reprocessa as DLQs; e resolve as
- * ocorrências cujo problema sumiu. Cada dever roda isolado: a falha de um não impede os outros no ciclo.
+ * Reconciler agendado (desenho, §7 e §9), a cada minuto: republica o
+ * {@code OUTBOX_PENDING} (M1) e abre
+ * {@code STALE_OUTBOX}; refaz o fan-out que um líder interrompido não terminou;
+ * trata as consultas em voo além do
+ * prazo e as {@code UNKNOWN}; processa a inbox parada e marca
+ * {@code UNMATCHED}; reprocessa as DLQs; e resolve as
+ * ocorrências cujo problema sumiu. Cada dever roda isolado: a falha de um não
+ * impede os outros no ciclo.
  */
 @Component("reconciler")
 class ReconcilerFunction implements Function<ReconcileCommand, ReconcileResult> {
@@ -31,8 +35,8 @@ class ReconcilerFunction implements Function<ReconcileCommand, ReconcileResult> 
     private final Clock clock;
 
     ReconcilerFunction(OutboxReconciliation outbox, FanOutRecovery fanOuts, QueryReconciliation queries,
-                       InboxReconciliation inbox, DeadLetterReprocessor deadLetters, IssueReview issueReview,
-                       Metrics metrics, Clock clock) {
+            InboxReconciliation inbox, DeadLetterReprocessor deadLetters, IssueReview issueReview,
+            Metrics metrics, Clock clock) {
         this.outbox = outbox;
         this.fanOuts = fanOuts;
         this.queries = queries;

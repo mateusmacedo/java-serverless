@@ -7,9 +7,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
- * Resolve as ocorrências abertas cujo problema sumiu (desenho, §9): a consulta deixou de ser {@code UNKNOWN}, o
- * callback foi processado ou o evento foi publicado. WHY: a consulta {@code UNKNOWN} também é concluída por um
- * callback tardio, e o outbox, pela relay, caminhos que não conhecem as ocorrências.
+ * Resolve as ocorrências abertas cujo problema sumiu (desenho, §9): a consulta
+ * deixou de ser {@code UNKNOWN}, o
+ * callback foi processado ou o evento foi publicado. WHY: a consulta
+ * {@code UNKNOWN} também é concluída por um
+ * callback tardio, e o outbox, pela relay, caminhos que não conhecem as
+ * ocorrências.
  */
 @Component
 class IssueReview {
@@ -54,7 +57,7 @@ class IssueReview {
             case UNMATCHED_CALLBACK -> {
                 int separator = issue.target().indexOf('#');
                 boolean waiting = separator > 0 && callbacks.loadInbox(issue.target().substring(0, separator),
-                                issue.target().substring(separator + 1))
+                        issue.target().substring(separator + 1))
                         .filter(CallbackLedger.InboxEntry::received)
                         .isPresent();
                 yield waiting ? null : "O callback foi processado";

@@ -18,12 +18,17 @@ import tools.jackson.core.json.JsonWriteFeature;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Entrega um callback agendado à API de callbacks da própria stack, como o fornecedor faria: monta o corpo,
- * assina com o {@code callback-secret} ({@code X-Signature: sha256=<hex do HMAC-SHA256 do corpo>}) e faz o POST.
- * Uma resposta fora de 2xx falha a mensagem, que volta à fila e, depois do limite, vai para a DLQ.
+ * Entrega um callback agendado à API de callbacks da própria stack, como o
+ * fornecedor faria: monta o corpo,
+ * assina com o {@code callback-secret}
+ * ({@code X-Signature: sha256=<hex do HMAC-SHA256 do corpo>}) e faz o POST.
+ * Uma resposta fora de 2xx falha a mensagem, que volta à fila e, depois do
+ * limite, vai para a DLQ.
  * <p>
- * WHY: o corpo sai em ASCII, com o resto escapado em JSON, para os bytes assinados serem os mesmos que a API
- * recebe depois do API Gateway, qualquer que seja o charset que cada salto suponha.
+ * WHY: o corpo sai em ASCII, com o resto escapado em JSON, para os bytes
+ * assinados serem os mesmos que a API
+ * recebe depois do API Gateway, qualquer que seja o charset que cada salto
+ * suponha.
  */
 class SimCallbackSender {
 
@@ -51,7 +56,8 @@ class SimCallbackSender {
     }
 
     /**
-     * @param message corpo da mensagem da fila {@code sim-callbacks}, um {@link CallbackOrder}
+     * @param message corpo da mensagem da fila {@code sim-callbacks}, um
+     *                {@link CallbackOrder}
      * @throws CallbackRejectedException se a API não responder 2xx
      */
     void send(String message) {

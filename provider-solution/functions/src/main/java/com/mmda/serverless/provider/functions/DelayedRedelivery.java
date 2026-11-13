@@ -6,8 +6,10 @@ import software.amazon.awssdk.services.sqs.SqsClient;
 import software.amazon.awssdk.services.sqs.model.MessageAttributeValue;
 
 /**
- * Sem quota, o worker reenvia o pedido com {@code DelaySeconds} até a virada da janela e deixa a original
- * ser apagada, para não gastar {@code maxReceiveCount} (§9). O reenvio preserva o {@code dlqAttempt}.
+ * Sem quota, o worker reenvia o pedido com {@code DelaySeconds} até a virada da
+ * janela e deixa a original
+ * ser apagada, para não gastar {@code maxReceiveCount} (§9). O reenvio preserva
+ * o {@code dlqAttempt}.
  */
 @Component
 class DelayedRedelivery {

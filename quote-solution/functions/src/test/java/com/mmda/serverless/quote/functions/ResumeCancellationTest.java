@@ -35,8 +35,10 @@ import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledExcepti
 import software.amazon.awssdk.services.sfn.SfnClient;
 
 /**
- * Cancelamentos que o Floci não emula (§9 e §13 do desenho): só a falha de condição leva a resultado tardio
- * ou repetido; throttling e {@code TransactionConflict} que sobrou das repetições devolvem a mensagem à fila.
+ * Cancelamentos que o Floci não emula (§9 e §13 do desenho): só a falha de
+ * condição leva a resultado tardio
+ * ou repetido; throttling e {@code TransactionConflict} que sobrou das
+ * repetições devolvem a mensagem à fila.
  */
 class ResumeCancellationTest {
 
@@ -67,13 +69,15 @@ class ResumeCancellationTest {
     @Test
     void throttledResumeIsRedeliveredInsteadOfBecomingLate() {
         when(dynamoDb.transactWriteItems(any(TransactWriteItemsRequest.class))).thenThrow(canceled("ThrottlingError"));
-        String message = QuoteFixtures.insurerResult(WORK_REF.value(), QUOTE_ID, "QUOTED", UUID.randomUUID().toString());
+        String message = QuoteFixtures.insurerResult(WORK_REF.value(), QUOTE_ID, "QUOTED",
+                UUID.randomUUID().toString());
 
         assertThatThrownBy(() -> resumer.handle(message)).isInstanceOf(TransactionCanceledException.class);
 
         verify(dynamoDb, times(1)).transactWriteItems(any(TransactWriteItemsRequest.class));
         verifyNoInteractions(sfn);
-        LambdaEvents.BatchResponse response = new ResumeHandler(resumer).handleRequest(QuoteFixtures.sqs(message), null);
+        LambdaEvents.BatchResponse response = new ResumeHandler(resumer).handleRequest(QuoteFixtures.sqs(message),
+                null);
         assertThat(response.batchItemFailures()).hasSize(1);
     }
 
@@ -81,11 +85,13 @@ class ResumeCancellationTest {
     void transactionConflictLeftAfterTheRetriesIsRedeliveredWithoutLateEvidence() {
         when(dynamoDb.transactWriteItems(any(TransactWriteItemsRequest.class)))
                 .thenThrow(canceled("TransactionConflict"));
-        String message = QuoteFixtures.insurerResult(WORK_REF.value(), QUOTE_ID, "QUOTED", UUID.randomUUID().toString());
+        String message = QuoteFixtures.insurerResult(WORK_REF.value(), QUOTE_ID, "QUOTED",
+                UUID.randomUUID().toString());
 
         assertThatThrownBy(() -> resumer.handle(message)).isInstanceOf(TransactionCanceledException.class);
 
-        ArgumentCaptor<TransactWriteItemsRequest> transactions = ArgumentCaptor.forClass(TransactWriteItemsRequest.class);
+        ArgumentCaptor<TransactWriteItemsRequest> transactions = ArgumentCaptor
+                .forClass(TransactWriteItemsRequest.class);
         verify(dynamoDb, times(4)).transactWriteItems(transactions.capture());
         assertThat(transactions.getAllValues()).flatExtracting(TransactWriteItemsRequest::transactItems)
                 .extracting(TransactWriteItem::put)
@@ -99,7 +105,8 @@ class ResumeCancellationTest {
         when(dynamoDb.transactWriteItems(any(TransactWriteItemsRequest.class)))
                 .thenThrow(canceled("ConditionalCheckFailed"))
                 .thenReturn(TransactWriteItemsResponse.builder().build());
-        String message = QuoteFixtures.insurerResult(WORK_REF.value(), QUOTE_ID, "QUOTED", UUID.randomUUID().toString());
+        String message = QuoteFixtures.insurerResult(WORK_REF.value(), QUOTE_ID, "QUOTED",
+                UUID.randomUUID().toString());
 
         assertThat(resumer.handle(message)).isEqualTo(ResultResumer.Disposition.LATE);
     }
@@ -109,7 +116,8 @@ class ResumeCancellationTest {
         when(dynamoDb.transactWriteItems(any(TransactWriteItemsRequest.class)))
                 .thenThrow(canceled("ConditionalCheckFailed"))
                 .thenThrow(canceled("ThrottlingError"));
-        String message = QuoteFixtures.insurerResult(WORK_REF.value(), QUOTE_ID, "QUOTED", UUID.randomUUID().toString());
+        String message = QuoteFixtures.insurerResult(WORK_REF.value(), QUOTE_ID, "QUOTED",
+                UUID.randomUUID().toString());
 
         assertThatThrownBy(() -> resumer.handle(message)).isInstanceOf(TransactionCanceledException.class);
     }

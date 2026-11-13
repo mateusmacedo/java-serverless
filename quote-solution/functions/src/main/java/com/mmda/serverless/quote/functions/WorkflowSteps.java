@@ -41,8 +41,10 @@ import software.amazon.awssdk.services.dynamodb.model.TransactWriteItem;
 import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledException;
 
 /**
- * Passos simples da máquina (§6 do desenho). Cada passo é idempotente: escreve com condição e, numa nova
- * tentativa, relê e devolve o que já gravou. Depois da escrita, atualiza o resumo do {@code META}.
+ * Passos simples da máquina (§6 do desenho). Cada passo é idempotente: escreve
+ * com condição e, numa nova
+ * tentativa, relê e devolve o que já gravou. Depois da escrita, atualiza o
+ * resumo do {@code META}.
  */
 @ApplicationScoped
 public class WorkflowSteps {
@@ -65,7 +67,10 @@ public class WorkflowSteps {
         this.clock = clock;
     }
 
-    /** {@code load-snapshot}: fase {@code VALIDATING}; devolve organização e prazo da versão. */
+    /**
+     * {@code load-snapshot}: fase {@code VALIDATING}; devolve organização e prazo
+     * da versão.
+     */
     public Map<String, Object> loadSnapshot(String quoteId, int version) {
         Map<String, AttributeValue> versionItem = versionItem(quoteId, version);
         Map<String, AttributeValue> meta = table.get(QuoteKeys.quotePk(quoteId), QuoteKeys.META)
@@ -86,7 +91,10 @@ public class WorkflowSteps {
         return context;
     }
 
-    /** {@code evaluate-eligibility}: aplica {@code elig-1} uma vez e grava a decisão com a versão da regra. */
+    /**
+     * {@code evaluate-eligibility}: aplica {@code elig-1} uma vez e grava a decisão
+     * com a versão da regra.
+     */
     public Map<String, Object> evaluateEligibility(String quoteId, int version) {
         Map<String, AttributeValue> versionItem = versionItem(quoteId, version);
         EligibilityResult stored = storedEligibility(versionItem);
@@ -125,9 +133,12 @@ public class WorkflowSteps {
     }
 
     /**
-     * {@code select-insurers}: aplica {@code sel-1} com o ano do veículo do enriquecimento e grava, numa
-     * transação, a fase {@code QUOTING} e um {@code RESULT} {@code PENDING} por seguradora. Sem evidência
-     * {@code FOUND}, devolve a lista vazia sem gravar: nenhuma seguradora é consultada (PRD §8), e a
+     * {@code select-insurers}: aplica {@code sel-1} com o ano do veículo do
+     * enriquecimento e grava, numa
+     * transação, a fase {@code QUOTING} e um {@code RESULT} {@code PENDING} por
+     * seguradora. Sem evidência
+     * {@code FOUND}, devolve a lista vazia sem gravar: nenhuma seguradora é
+     * consultada (PRD §8), e a
      * consolidação decide pela evidência.
      */
     public Map<String, Object> selectInsurers(String quoteId, int version) {
@@ -186,9 +197,12 @@ public class WorkflowSteps {
     }
 
     /**
-     * {@code record-insurer-outcome}: o {@code Catch} da espera registra {@code TIMED_OUT} ou
-     * {@code UNAVAILABLE}. WHY: o waiter é marcado {@code EXPIRED} antes do {@code RESULT}; se um resultado
-     * chegou no mesmo instante, a transação do {@code resume} ou esta condição perde, nunca as duas.
+     * {@code record-insurer-outcome}: o {@code Catch} da espera registra
+     * {@code TIMED_OUT} ou
+     * {@code UNAVAILABLE}. WHY: o waiter é marcado {@code EXPIRED} antes do
+     * {@code RESULT}; se um resultado
+     * chegou no mesmo instante, a transação do {@code resume} ou esta condição
+     * perde, nunca as duas.
      */
     public Map<String, Object> recordInsurerOutcome(String quoteId, int version, String insurerId, String outcome,
             String errorName) {
@@ -203,7 +217,8 @@ public class WorkflowSteps {
             table.updateIf(table.update(QuoteKeys.quotePk(quoteId), QuoteKeys.resultSk(version, insurerId))
                     .updateExpression("SET #status = :status, reasonCode = :reason, revision = revision + :one, "
                             + "updatedAt = :now")
-                    .conditionExpression("attribute_exists(" + QuoteKeys.PK + ") AND #status IN (:pending, :processing)")
+                    .conditionExpression(
+                            "attribute_exists(" + QuoteKeys.PK + ") AND #status IN (:pending, :processing)")
                     .expressionAttributeNames(Map.of("#status", "status"))
                     .expressionAttributeValues(Map.of(":status", s(status.name()), ":reason", s(reason), ":one", n(1),
                             ":now", s(now.toString()), ":pending", s(InsurerStatus.PENDING.name()),
@@ -222,13 +237,14 @@ public class WorkflowSteps {
     }
 
     /**
-     * {@code record-enrichment-outcome}: usa o {@code resumePayload} quando o resultado já chegou; senão
+     * {@code record-enrichment-outcome}: usa o {@code resumePayload} quando o
+     * resultado já chegou; senão
      * devolve {@code FAILED} e marca o waiter {@code EXPIRED}.
      */
     public Map<String, Object> recordEnrichmentOutcome(String quoteId, int version, String errorName) {
         WorkRef workRef = WorkRef.of(quoteId, version, WorkRef.Kind.ENRICHMENT, null);
-        Optional<String> resumePayload =
-                expireWaiter(workRef, quoteId, version, WorkRef.Kind.ENRICHMENT, null, Instant.now(clock));
+        Optional<String> resumePayload = expireWaiter(workRef, quoteId, version, WorkRef.Kind.ENRICHMENT, null,
+                Instant.now(clock));
         if (resumePayload.isPresent()) {
             return readMap(resumePayload.get());
         }
@@ -239,8 +255,10 @@ public class WorkflowSteps {
     }
 
     /**
-     * {@code consolidate}: aplica a precedência do PRD §8 sobre o que a versão gravou e grava
-     * {@code TERMINAL} com o outbox {@code QuoteCompleted}, condicionado à {@code revision} lida.
+     * {@code consolidate}: aplica a precedência do PRD §8 sobre o que a versão
+     * gravou e grava
+     * {@code TERMINAL} com o outbox {@code QuoteCompleted}, condicionado à
+     * {@code revision} lida.
      */
     public Map<String, Object> consolidate(String quoteId, int version) {
         ConsolidationResult result = consolidateVersion(quoteId, version, null);
@@ -253,8 +271,10 @@ public class WorkflowSteps {
     }
 
     /**
-     * Finaliza a versão cuja execução terminou sem consolidar (T20, §9 do desenho), pelo mesmo caminho do passo
-     * {@code consolidate}: os {@code RESULT} abertos viram {@code TIMED_OUT} e a ocorrência entra na mesma
+     * Finaliza a versão cuja execução terminou sem consolidar (T20, §9 do desenho),
+     * pelo mesmo caminho do passo
+     * {@code consolidate}: os {@code RESULT} abertos viram {@code TIMED_OUT} e a
+     * ocorrência entra na mesma
      * transação, sem apagar ofertas. Vazio quando a versão já era {@code TERMINAL}.
      */
     Optional<ConsolidationResult> finalizeEndedExecution(String quoteId, int version, ExecutionState state,
@@ -267,20 +287,25 @@ public class WorkflowSteps {
         return Optional.ofNullable(consolidateVersion(quoteId, version, new Ending(state, issue)));
     }
 
-    /** Fim de execução sem consolidação, para a finalização pelo {@code reconciler}. */
+    /**
+     * Fim de execução sem consolidação, para a finalização pelo {@code reconciler}.
+     */
     private record Ending(ExecutionState state, QuoteIssue issue) {
     }
 
-    /** Consolida e grava {@code TERMINAL}; nulo quando outra escrita já deixou a versão {@code TERMINAL}. */
+    /**
+     * Consolida e grava {@code TERMINAL}; nulo quando outra escrita já deixou a
+     * versão {@code TERMINAL}.
+     */
     private ConsolidationResult consolidateVersion(String quoteId, int version, Ending ending) {
-        for (int attempt = 1; ; attempt++) {
+        for (int attempt = 1;; attempt++) {
             Map<String, AttributeValue> versionItem = versionItem(quoteId, version);
             if (Phase.TERMINAL.name().equals(Attr.string(versionItem, "phase"))) {
                 return null;
             }
             Instant now = Instant.now(clock);
-            List<Map<String, AttributeValue>> resultItems =
-                    table.query(QuoteKeys.quotePk(quoteId), QuoteKeys.resultPrefix(version));
+            List<Map<String, AttributeValue>> resultItems = table.query(QuoteKeys.quotePk(quoteId),
+                    QuoteKeys.resultPrefix(version));
             List<TransactWriteItem> endingWrites = new ArrayList<>();
             List<InsurerResultView> results = new ArrayList<>();
             for (Map<String, AttributeValue> item : resultItems) {
@@ -311,7 +336,8 @@ public class WorkflowSteps {
                 values.put(":reason", s(result.outcomeReason().name()));
                 expression += ", outcomeReason = :reason";
             }
-            // WHY: o marcador sai do ACTIVE_VERSION e leva ao reconciler a versão cujo resumo no META falhar
+            // WHY: o marcador sai do ACTIVE_VERSION e leva ao reconciler a versão cujo
+            // resumo no META falhar
             values.put(":summaryPending", s(QuoteKeys.SUMMARY_PENDING));
             expression += ", " + QuoteKeys.GSI2_PK + " = :summaryPending, " + QuoteKeys.GSI2_SK + " = :now";
             Map<String, Object> completed = QuoteEvents.quoteCompleted(now, quoteId, version, result.outcome(),
@@ -335,7 +361,10 @@ public class WorkflowSteps {
         }
     }
 
-    /** {@code RESULT} ainda aberto de uma execução encerrada: {@code TIMED_OUT}, só se continuar aberto. */
+    /**
+     * {@code RESULT} ainda aberto de uma execução encerrada: {@code TIMED_OUT}, só
+     * se continuar aberto.
+     */
     private TransactWriteItem timedOutResult(Map<String, AttributeValue> item, String reasonCode, Instant now) {
         return table.update(Attr.string(item, QuoteKeys.PK), Attr.string(item, QuoteKeys.SK),
                 "SET #status = :timedOut, reasonCode = :reason, revision = revision + :one, updatedAt = :now",
@@ -346,16 +375,20 @@ public class WorkflowSteps {
     }
 
     /**
-     * Fecha os waiters da versão que ainda esperam. WHY: depois disso, a transação do {@code resume} falha na
-     * condição {@code status = WAITING} e um resultado que chegue vira evidência tardia, sem gravar evidência
-     * usada nem oferta numa versão finalizada (RN10). Não entram no índice {@code WAITER_EXPIRED}: a
+     * Fecha os waiters da versão que ainda esperam. WHY: depois disso, a transação
+     * do {@code resume} falha na
+     * condição {@code status = WAITING} e um resultado que chegue vira evidência
+     * tardia, sem gravar evidência
+     * usada nem oferta numa versão finalizada (RN10). Não entram no índice
+     * {@code WAITER_EXPIRED}: a
      * ocorrência da versão é o {@code WORKFLOW_FAILED}.
      */
     private void closeOpenWaiters(String quoteId, int version, List<String> selectedInsurers, Instant now) {
         List<WorkRef> workRefs = new ArrayList<>();
         workRefs.add(WorkRef.of(quoteId, version, WorkRef.Kind.ENRICHMENT, null));
         if (selectedInsurers != null) {
-            selectedInsurers.forEach(insurerId -> workRefs.add(WorkRef.of(quoteId, version, WorkRef.Kind.INSURER, insurerId)));
+            selectedInsurers
+                    .forEach(insurerId -> workRefs.add(WorkRef.of(quoteId, version, WorkRef.Kind.INSURER, insurerId)));
         }
         for (WorkRef workRef : workRefs) {
             table.updateIf(table.update(QuoteKeys.waiterPk(workRef), QuoteKeys.META)
@@ -369,7 +402,8 @@ public class WorkflowSteps {
     }
 
     /**
-     * Marca o waiter {@code EXPIRED} só se ele ainda espera, criando-o se a {@code dispatch} nunca o gravou.
+     * Marca o waiter {@code EXPIRED} só se ele ainda espera, criando-o se a
+     * {@code dispatch} nunca o gravou.
      * Devolve o {@code resumePayload} quando um resultado chegou antes.
      */
     private Optional<String> expireWaiter(WorkRef workRef, String quoteId, int version, WorkRef.Kind kind,
@@ -379,7 +413,8 @@ public class WorkflowSteps {
                 ":type", s(QuoteKeys.TYPE_WAITER), ":quoteId", s(quoteId), ":version", n(version),
                 ":kind", s(kind.name())));
         values.put(":expiredIndex", s(QuoteKeys.WAITER_EXPIRED));
-        // WHY: o índice WAITER_EXPIRED leva o waiter ao reconciler, que confere a entrega antes do TASK_EXPIRED
+        // WHY: o índice WAITER_EXPIRED leva o waiter ao reconciler, que confere a
+        // entrega antes do TASK_EXPIRED
         String expression = "SET #status = :expired, updatedAt = :now, #type = :type, quoteId = :quoteId, "
                 + "version = :version, kind = :kind, " + QuoteKeys.GSI2_PK + " = :expiredIndex, "
                 + QuoteKeys.GSI2_SK + " = :now";
@@ -407,14 +442,15 @@ public class WorkflowSteps {
         WorkRef workRef = WorkRef.of(quoteId, version, WorkRef.Kind.ENRICHMENT, null);
         Optional<Map<String, AttributeValue>> evidence = enrichmentEvidence(quoteId, version);
         if (evidence.isPresent()) {
-            EnrichmentOutcome.ResultType type =
-                    EnrichmentOutcome.ResultType.valueOf(Attr.string(evidence.get(), "resultType"));
+            EnrichmentOutcome.ResultType type = EnrichmentOutcome.ResultType
+                    .valueOf(Attr.string(evidence.get(), "resultType"));
             List<String> notFoundRefs = new ArrayList<>();
             readTree(Attr.string(evidence.get(), "summary")).path("notFoundRefs")
                     .forEach(ref -> notFoundRefs.add(ref.asText()));
             return new EnrichmentOutcome(type, notFoundRefs);
         }
-        // WHY: sem evidência, um waiter existente significa espera encerrada sem resultado (timeout ou falha)
+        // WHY: sem evidência, um waiter existente significa espera encerrada sem
+        // resultado (timeout ou falha)
         return table.get(QuoteKeys.waiterPk(workRef), QuoteKeys.META).isPresent() ? EnrichmentOutcome.failed() : null;
     }
 
@@ -423,7 +459,10 @@ public class WorkflowSteps {
                 missingFields(Attr.string(item, "missingFields")));
     }
 
-    /** Evidência usada pela versão ({@code V#n#EVIDENCE#<workRef>}), gravada pelo {@code resume}. */
+    /**
+     * Evidência usada pela versão ({@code V#n#EVIDENCE#<workRef>}), gravada pelo
+     * {@code resume}.
+     */
     private Optional<Map<String, AttributeValue>> enrichmentEvidence(String quoteId, int version) {
         WorkRef workRef = WorkRef.of(quoteId, version, WorkRef.Kind.ENRICHMENT, null);
         return table.get(QuoteKeys.quotePk(quoteId), QuoteKeys.evidenceSk(version, workRef));

@@ -7,7 +7,8 @@ import java.util.Optional;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 
 /**
- * Chaves e atributos da tabela {@code provider-solution-<stage>-queries} (desenho, §5). Todo item tem
+ * Chaves e atributos da tabela {@code provider-solution-<stage>-queries}
+ * (desenho, §5). Todo item tem
  * {@code type}; o filtro do stream depende dele (ADR 0015).
  */
 final class Items {
@@ -69,8 +70,10 @@ final class Items {
     }
 
     /**
-     * {@code FOLLOWER#<fencingVersion>#<workRef>}. WHY: a versão vai com zeros à esquerda, como a sequência do
-     * {@code ATTEMPT#}, para o fan-out ler só a faixa de versões da cadeia por intervalo de {@code sk}.
+     * {@code FOLLOWER#<fencingVersion>#<workRef>}. WHY: a versão vai com zeros à
+     * esquerda, como a sequência do
+     * {@code ATTEMPT#}, para o fan-out ler só a faixa de versões da cadeia por
+     * intervalo de {@code sk}.
      */
     static String followerSk(long fencingVersion, String workRef) {
         return followerPrefix(fencingVersion) + workRef;

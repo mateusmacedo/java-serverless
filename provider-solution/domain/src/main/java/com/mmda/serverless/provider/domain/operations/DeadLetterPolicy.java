@@ -3,9 +3,12 @@ package com.mmda.serverless.provider.domain.operations;
 import java.time.Instant;
 
 /**
- * Reprocessamento das DLQs no padrão do ADR 0007 (desenho, §9): abaixo de {@code dlqMaxAttempts}, a mensagem
- * volta à fila de origem, mas só antes do {@code deadlineAt} do pedido; depois do limite ou do prazo, é
- * descartada com uma ocorrência {@code DEAD_LETTER}. A primeira passagem pela fila de origem é a tentativa 1.
+ * Reprocessamento das DLQs no padrão do ADR 0007 (desenho, §9): abaixo de
+ * {@code dlqMaxAttempts}, a mensagem
+ * volta à fila de origem, mas só antes do {@code deadlineAt} do pedido; depois
+ * do limite ou do prazo, é
+ * descartada com uma ocorrência {@code DEAD_LETTER}. A primeira passagem pela
+ * fila de origem é a tentativa 1.
  */
 public record DeadLetterPolicy(int maxAttempts) {
 
@@ -33,7 +36,8 @@ public record DeadLetterPolicy(int maxAttempts) {
 
     /**
      * @param attempt    tentativa que terminou na DLQ; 1 para a mensagem original
-     * @param deadlineAt prazo do pedido, ou {@code null} quando a mensagem não tem prazo
+     * @param deadlineAt prazo do pedido, ou {@code null} quando a mensagem não tem
+     *                   prazo
      */
     public Decision decide(int attempt, Instant deadlineAt, Instant now) {
         if (attempt >= maxAttempts) {

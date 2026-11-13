@@ -7,13 +7,17 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 
 /**
- * Configuração das funções, vinda das variáveis de ambiente do serverless.yml (desenho, §12).
+ * Configuração das funções, vinda das variáveis de ambiente do serverless.yml
+ * (desenho, §12).
  *
- * @param quotaPerMinute       limite de chamadas por minuto, por provedor ({@code enrichment-sim}, {@code alpha},
+ * @param quotaPerMinute       limite de chamadas por minuto, por provedor
+ *                             ({@code enrichment-sim}, {@code alpha},
  *                             {@code beta}), comum a todos os workflows (T21)
- * @param supportedInsurers    seguradoras com rota no simulador, síncronas ou com callback; outra vira
+ * @param supportedInsurers    seguradoras com rota no simulador, síncronas ou
+ *                             com callback; outra vira
  *                             {@code UNAVAILABLE}
- * @param workerTimeoutSeconds timeout das funções dos workers; limita quanto tempo outra entrega do mesmo pedido
+ * @param workerTimeoutSeconds timeout das funções dos workers; limita quanto
+ *                             tempo outra entrega do mesmo pedido
  *                             pode estar viva
  */
 @ConfigurationProperties(prefix = "provider")

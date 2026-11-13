@@ -8,7 +8,8 @@ import java.util.function.Supplier;
 
 /**
  * Repetição com backoff exponencial e jitter completo. WHY: o SDK não repete
- * {@code TransactionConflict} e o Floci não emula o conflito (§9 e §13 do desenho), então o caminho é
+ * {@code TransactionConflict} e o Floci não emula o conflito (§9 e §13 do
+ * desenho), então o caminho é
  * coberto por teste unitário com um {@link Sleeper} falso.
  */
 public final class Retries {
@@ -32,9 +33,12 @@ public final class Retries {
         return new Retries(4, Duration.ofMillis(50), Duration.ofMillis(800), Sleeper.THREAD);
     }
 
-    /** Executa {@code action}; repete só as falhas aceitas por {@code retryable}, até o limite. */
+    /**
+     * Executa {@code action}; repete só as falhas aceitas por {@code retryable},
+     * até o limite.
+     */
     public <T> T run(Supplier<T> action, Predicate<RuntimeException> retryable) {
-        for (int attempt = 1; ; attempt++) {
+        for (int attempt = 1;; attempt++) {
             try {
                 return action.get();
             } catch (RuntimeException failure) {

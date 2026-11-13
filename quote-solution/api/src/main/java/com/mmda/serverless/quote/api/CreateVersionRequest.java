@@ -6,14 +6,20 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Corpo do {@code POST /v1/quotes/{id}/versions}: o pedido completo da nova versão, com os campos da criação, e
- * o {@code expectedVersion}, a versão atual que o cliente leu. WHY: o servidor só aceita a nova versão se ela
- * continua atual, então duas edições concorrentes não se sobrescrevem (409 {@code VERSION_CONFLICT}).
+ * Corpo do {@code POST /v1/quotes/{id}/versions}: o pedido completo da nova
+ * versão, com os campos da criação, e
+ * o {@code expectedVersion}, a versão atual que o cliente leu. WHY: o servidor
+ * só aceita a nova versão se ela
+ * continua atual, então duas edições concorrentes não se sobrescrevem (409
+ * {@code VERSION_CONFLICT}).
  */
 record CreateVersionRequest(int expectedVersion, CreateQuoteRequest quote) {
 
     static final String EXPECTED_VERSION = "expectedVersion";
-    /** A versão nova é {@code expectedVersion + 1}, e o {@code sk} da versão tem quatro dígitos. */
+    /**
+     * A versão nova é {@code expectedVersion + 1}, e o {@code sk} da versão tem
+     * quatro dígitos.
+     */
     static final int MAX_EXPECTED_VERSION = 9998;
 
     static CreateVersionRequest parse(JsonNode body) {

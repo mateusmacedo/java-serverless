@@ -45,9 +45,12 @@ import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsResponse
 import software.amazon.awssdk.services.dynamodb.model.Update;
 
 /**
- * A quote consome os eventos da provider-solution como o {@code contracts/provider-solution/asyncapi.yaml}
- * os documenta, e a provider confere esses exemplos contra o próprio código. Cada exemplo passa pelo
- * {@code resume}, com DynamoDB simulado, até a evidência usada pela versão ou o resultado e a oferta da
+ * A quote consome os eventos da provider-solution como o
+ * {@code contracts/provider-solution/asyncapi.yaml}
+ * os documenta, e a provider confere esses exemplos contra o próprio código.
+ * Cada exemplo passa pelo
+ * {@code resume}, com DynamoDB simulado, até a evidência usada pela versão ou o
+ * resultado e a oferta da
  * seguradora, alpha ou beta.
  */
 class ProviderEventsConsumptionTest {
@@ -73,9 +76,11 @@ class ProviderEventsConsumptionTest {
             assertCommonFields(detail);
             assertThat(detail.path("evidenceId").asText()).isNotBlank();
             decisions.add(ReuseDecision.valueOf(detail.path("reuseDecision").asText()));
-            assertThat(detail.path("policyVersion").isTextual()).as("policyVersion of the provider reuse policy").isTrue();
+            assertThat(detail.path("policyVersion").isTextual()).as("policyVersion of the provider reuse policy")
+                    .isTrue();
             assertThat(detail.path("policyVersion").asText()).isNotBlank();
-            EnrichmentOutcome.ResultType resultType = EnrichmentOutcome.ResultType.valueOf(detail.path("resultType").asText());
+            EnrichmentOutcome.ResultType resultType = EnrichmentOutcome.ResultType
+                    .valueOf(detail.path("resultType").asText());
             seen.add(resultType);
             switch (resultType) {
                 case FOUND -> assertThat(detail.at("/result/vehicle/year").canConvertToInt())
@@ -85,14 +90,16 @@ class ProviderEventsConsumptionTest {
                     detail.path("notFoundRefs").forEach(ref -> refs.add(ref.asText()));
                     assertThat(refs).isNotEmpty();
                     for (MissingField field : EnrichmentOutcome.notFound(refs).missingFields()) {
-                        assertThat(MissingFieldLabels.labelOf(field.path())).as(field.path()).isNotEqualTo(field.path());
+                        assertThat(MissingFieldLabels.labelOf(field.path())).as(field.path())
+                                .isNotEqualTo(field.path());
                     }
                 }
                 case FAILED -> assertThat(detail.path("errorClass").asText()).isNotBlank();
             }
         }
         assertThat(seen).containsExactlyInAnyOrder(EnrichmentOutcome.ResultType.values());
-        assertThat(decisions).as("HIT, JOIN and MISS reach the quote").containsExactlyInAnyOrder(ReuseDecision.values());
+        assertThat(decisions).as("HIT, JOIN and MISS reach the quote")
+                .containsExactlyInAnyOrder(ReuseDecision.values());
     }
 
     @Test
@@ -100,7 +107,8 @@ class ProviderEventsConsumptionTest {
         for (JsonNode example : asyncApi.at("/components/messages/" + QuoteEvents.ENRICHMENT_RESOLVED + "/examples")) {
             JsonNode detail = example.at("/payload/detail");
             WorkRef workRef = new WorkRef(detail.path("workRef").asText());
-            ResumeProbe probe = new ResumeProbe(workRef, detail.path("quoteId").asText(), detail.path("version").asInt(),
+            ResumeProbe probe = new ResumeProbe(workRef, detail.path("quoteId").asText(),
+                    detail.path("version").asInt(),
                     ResumeProbe.NOW.plusSeconds(20));
 
             assertThat(probe.resume(example.path("payload").toString()))
@@ -116,7 +124,8 @@ class ProviderEventsConsumptionTest {
             JsonNode summary = ResumeProbe.summary(evidence);
             assertThat(present(summary, "result")).isEqualTo(present(detail, "result"));
             assertThat(present(summary, "notFoundRefs")).isEqualTo(present(detail, "notFoundRefs"));
-            assertThat(probe.resumePayload().get("reuseDecision").asText()).isEqualTo(detail.path("reuseDecision").asText());
+            assertThat(probe.resumePayload().get("reuseDecision").asText())
+                    .isEqualTo(detail.path("reuseDecision").asText());
         }
     }
 
@@ -151,13 +160,16 @@ class ProviderEventsConsumptionTest {
     }
 
     /**
-     * A alpha responde na chamada e a beta por callback, mas as duas publicam o mesmo contrato: cada exemplo passa
-     * pelo {@code resume} até o {@code RESULT} da sua seguradora e, com {@code QUOTED}, até a {@code OFFER}.
+     * A alpha responde na chamada e a beta por callback, mas as duas publicam o
+     * mesmo contrato: cada exemplo passa
+     * pelo {@code resume} até o {@code RESULT} da sua seguradora e, com
+     * {@code QUOTED}, até a {@code OFFER}.
      */
     @Test
     void insurerResultRecordedExamplesOfEveryInsurerBecomeTheirResultAndOffer() {
         Set<String> insurers = new HashSet<>();
-        for (JsonNode example : asyncApi.at("/components/messages/" + QuoteEvents.INSURER_RESULT_RECORDED + "/examples")) {
+        for (JsonNode example : asyncApi
+                .at("/components/messages/" + QuoteEvents.INSURER_RESULT_RECORDED + "/examples")) {
             JsonNode detail = example.at("/payload/detail");
             String name = example.path("name").asText();
             String insurerId = detail.path("insurerId").asText();
@@ -193,14 +205,19 @@ class ProviderEventsConsumptionTest {
             assertThat(offer.get("queryId").s()).isEqualTo(detail.path("queryId").asText());
             assertThat(probe.resumePayload().get("offerId").asText()).isEqualTo(QuoteKeys.offerId(workRef));
         }
-        assertThat(insurers).as("alpha and beta publish the same contract").containsExactlyInAnyOrderElementsOf(Insurers.all());
+        assertThat(insurers).as("alpha and beta publish the same contract")
+                .containsExactlyInAnyOrderElementsOf(Insurers.all());
     }
 
     /**
-     * Os eventos operacionais da provider chegam pela fila {@code issues}: cada exemplo passa pelo
-     * {@code issue-projector}, com a tabela simulada, até o {@code ISSUE#} ou o {@code OPERATION#}, com o
-     * {@code CONSUMED#} na mesma transação. Só o par de uma ocorrência grava o {@code QUERYREF#}; o do
-     * {@code QueryReconciled} é o do pedido e não prova que a consulta é da organização.
+     * Os eventos operacionais da provider chegam pela fila {@code issues}: cada
+     * exemplo passa pelo
+     * {@code issue-projector}, com a tabela simulada, até o {@code ISSUE#} ou o
+     * {@code OPERATION#}, com o
+     * {@code CONSUMED#} na mesma transação. Só o par de uma ocorrência grava o
+     * {@code QUERYREF#}; o do
+     * {@code QueryReconciled} é o do pedido e não prova que a consulta é da
+     * organização.
      */
     @Test
     void operationalExamplesBecomeTheirIssueOrOperationAndOnlyAnIssueMakesItsQueryKnown() {
@@ -221,8 +238,8 @@ class ProviderEventsConsumptionTest {
                 assertThat(projector.handle(example.path("payload").toString())).as(name)
                         .isEqualTo(IssueProjector.Disposition.PROJECTED);
 
-                ArgumentCaptor<TransactWriteItemsRequest> transaction =
-                        ArgumentCaptor.forClass(TransactWriteItemsRequest.class);
+                ArgumentCaptor<TransactWriteItemsRequest> transaction = ArgumentCaptor
+                        .forClass(TransactWriteItemsRequest.class);
                 verify(dynamoDb).transactWriteItems(transaction.capture());
                 List<TransactWriteItem> writes = transaction.getValue().transactItems();
                 boolean operation = QuoteEvents.QUERY_RECONCILED.equals(detailType);

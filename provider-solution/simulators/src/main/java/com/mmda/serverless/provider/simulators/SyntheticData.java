@@ -12,25 +12,30 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Dados sintéticos e determinísticos pela referência, para o que o catálogo do laboratório não tem (valor de
- * mercado, sinistros e prêmio) e para referências fora dele, como as dos testes da provider: a mesma referência
+ * Dados sintéticos e determinísticos pela referência, para o que o catálogo do
+ * laboratório não tem (valor de
+ * mercado, sinistros e prêmio) e para referências fora dele, como as dos testes
+ * da provider: a mesma referência
  * sempre gera o mesmo perfil e a mesma oferta.
  */
 final class SyntheticData {
 
     private static final Pattern YEAR = Pattern.compile("(?<!\\d)(19[5-9]\\d|20[0-4]\\d)(?!\\d)");
     private static final List<String[]> MODELS = List.of(
-            new String[] {"Fiat", "Argo"},
-            new String[] {"Volkswagen", "Polo"},
-            new String[] {"Chevrolet", "Onix"},
-            new String[] {"Toyota", "Corolla"},
-            new String[] {"Hyundai", "HB20"},
-            new String[] {"Honda", "Civic"});
+            new String[] { "Fiat", "Argo" },
+            new String[] { "Volkswagen", "Polo" },
+            new String[] { "Chevrolet", "Onix" },
+            new String[] { "Toyota", "Corolla" },
+            new String[] { "Hyundai", "HB20" },
+            new String[] { "Honda", "Civic" });
 
     private SyntheticData() {
     }
 
-    /** Referência que o provedor declara não conhecer: contém {@code unknown} ou {@code not-found}. */
+    /**
+     * Referência que o provedor declara não conhecer: contém {@code unknown} ou
+     * {@code not-found}.
+     */
     static boolean isUnknown(String ref) {
         String normalized = ref.toLowerCase(Locale.ROOT);
         return normalized.contains("unknown") || normalized.contains("not-found");
@@ -54,7 +59,8 @@ final class SyntheticData {
     static BigDecimal basePremium(String vehicleRef, String usage) {
         BigDecimal base = BigDecimal.valueOf(1_800 + Math.floorMod(hash(vehicleRef), 1_500)).setScale(2,
                 RoundingMode.UNNECESSARY);
-        return "COMMERCIAL".equals(usage) ? base.multiply(new BigDecimal("1.35")).setScale(2, RoundingMode.HALF_UP) : base;
+        return "COMMERCIAL".equals(usage) ? base.multiply(new BigDecimal("1.35")).setScale(2, RoundingMode.HALF_UP)
+                : base;
     }
 
     static String shortCode(String value) {

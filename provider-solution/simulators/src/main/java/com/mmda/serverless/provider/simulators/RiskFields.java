@@ -3,8 +3,10 @@ package com.mmda.serverless.provider.simulators;
 import java.util.Map;
 
 /**
- * Leitura tolerante do {@code risk} que a seguradora recebe, cópia do snapshot da quote. O veículo pode vir
- * resolvido ({@code risk.vehicle.ref} ou {@code risk.vehicle.id}) ou só como referência ({@code risk.vehicleRef}).
+ * Leitura tolerante do {@code risk} que a seguradora recebe, cópia do snapshot
+ * da quote. O veículo pode vir
+ * resolvido ({@code risk.vehicle.ref} ou {@code risk.vehicle.id}) ou só como
+ * referência ({@code risk.vehicleRef}).
  */
 final class RiskFields {
 
@@ -16,7 +18,7 @@ final class RiskFields {
             return null;
         }
         if (risk.get("vehicle") instanceof Map<?, ?> vehicle) {
-            for (String field : new String[] {"ref", "id", "vehicleRef"}) {
+            for (String field : new String[] { "ref", "id", "vehicleRef" }) {
                 if (vehicle.get(field) instanceof String value && !value.isBlank()) {
                     return value;
                 }
@@ -30,8 +32,10 @@ final class RiskFields {
     }
 
     /**
-     * Código do perfil de cobertura: {@code risk.coverageProfile.code}, como o snapshot da quote o envia, ou
-     * {@code risk.coverageProfile} só com o código. Sem perfil, o padrão do catálogo.
+     * Código do perfil de cobertura: {@code risk.coverageProfile.code}, como o
+     * snapshot da quote o envia, ou
+     * {@code risk.coverageProfile} só com o código. Sem perfil, o padrão do
+     * catálogo.
      */
     static String coverageProfile(Map<String, Object> risk) {
         Object profile = risk == null ? null : risk.get("coverageProfile");

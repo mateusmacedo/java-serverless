@@ -26,22 +26,35 @@ import software.amazon.awssdk.services.sfn.model.ExecutionAlreadyExistsException
 import software.amazon.awssdk.services.sfn.model.StartExecutionRequest;
 
 /**
- * Publica um item de outbox: {@code StartQuoteRequested} inicia a execução com o nome determinístico; os
- * demais vão para o barramento da plataforma. É o mesmo código na {@code outbox-relay} e no
- * {@code reconciler} (§7 do desenho). Publicar de novo não tem efeito: o {@code eventId} vai no
- * {@code detail}, a execução repetida conta como sucesso e o {@code publishedAt} é gravado com {@code SET}.
+ * Publica um item de outbox: {@code StartQuoteRequested} inicia a execução com
+ * o nome determinístico; os
+ * demais vão para o barramento da plataforma. É o mesmo código na
+ * {@code outbox-relay} e no
+ * {@code reconciler} (§7 do desenho). Publicar de novo não tem efeito: o
+ * {@code eventId} vai no
+ * {@code detail}, a execução repetida conta como sucesso e o
+ * {@code publishedAt} é gravado com {@code SET}.
  */
 @ApplicationScoped
 public class OutboxPublisher {
 
     private static final Logger LOG = Logger.getLogger(OutboxPublisher.class);
 
-    /** Resultado por item, que decide entre seguir, reentregar o registro ou só registrar a falha. */
+    /**
+     * Resultado por item, que decide entre seguir, reentregar o registro ou só
+     * registrar a falha.
+     */
     public enum Result {
         PUBLISHED,
-        /** Falha que passa sozinha: o registro volta pelo stream ou pelo próximo ciclo do reconciler. */
+        /**
+         * Falha que passa sozinha: o registro volta pelo stream ou pelo próximo ciclo
+         * do reconciler.
+         */
         TRANSIENT_FAILURE,
-        /** Falha que não passa repetindo: grava {@code attempts} e {@code lastError}; o item segue pendente. */
+        /**
+         * Falha que não passa repetindo: grava {@code attempts} e {@code lastError}; o
+         * item segue pendente.
+         */
         PERMANENT_FAILURE
     }
 
@@ -85,7 +98,8 @@ public class OutboxPublisher {
             return Result.TRANSIENT_FAILURE;
         } catch (AwsServiceException failure) {
             if (failure.isThrottlingException() || failure.statusCode() >= 500) {
-                LOG.warnf("outbox %s (%s) will be retried: %s", item.eventId(), item.detailType(), failure.getMessage());
+                LOG.warnf("outbox %s (%s) will be retried: %s", item.eventId(), item.detailType(),
+                        failure.getMessage());
                 return Result.TRANSIENT_FAILURE;
             }
             recordFailure(item, failure.awsErrorDetails() == null ? failure.getMessage()
@@ -113,7 +127,8 @@ public class OutboxPublisher {
                     .input(objectMapper.writeValueAsString(input))
                     .build()).executionArn();
         } catch (ExecutionAlreadyExistsException alreadyStarted) {
-            // WHY: nome e entrada saem do mesmo par quoteId/version, então a execução existente é esta mesma
+            // WHY: nome e entrada saem do mesmo par quoteId/version, então a execução
+            // existente é esta mesma
             executionArn = executionArn(executionName);
         }
         Instant now = Instant.now(clock);
@@ -155,8 +170,10 @@ public class OutboxPublisher {
         if (item.eventId() == null) {
             return;
         }
-        // WHY: o reconciler lê os pendentes mais antigos pelo gsi2sk; com a data da última falha, um item que
-        // falha sempre vai para o fim da fila e não impede a republicação dos mais novos
+        // WHY: o reconciler lê os pendentes mais antigos pelo gsi2sk; com a data da
+        // última falha, um item que
+        // falha sempre vai para o fim da fila e não impede a republicação dos mais
+        // novos
         table.updateIf(table.update(QuoteKeys.outboxPk(item.eventId()), QuoteKeys.META)
                 .updateExpression("SET attempts = if_not_exists(attempts, :zero) + :one, lastError = :error, "
                         + QuoteKeys.GSI2_SK + " = :now")

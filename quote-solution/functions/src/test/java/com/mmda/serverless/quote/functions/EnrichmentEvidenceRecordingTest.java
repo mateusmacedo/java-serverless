@@ -24,8 +24,10 @@ import org.junit.jupiter.params.provider.MethodSource;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 
 /**
- * Evidência usada pela versão a partir do {@code EnrichmentResolved} (§4 e §8 do desenho): {@code HIT},
- * {@code JOIN} e {@code MISS} gravam a mesma referência, com o {@code policyVersion}, e um evento fora do
+ * Evidência usada pela versão a partir do {@code EnrichmentResolved} (§4 e §8
+ * do desenho): {@code HIT},
+ * {@code JOIN} e {@code MISS} gravam a mesma referência, com o
+ * {@code policyVersion}, e um evento fora do
  * contrato do AsyncAPI da provider volta à fila em vez de virar evidência.
  */
 class EnrichmentEvidenceRecordingTest {
@@ -78,20 +80,25 @@ class EnrichmentEvidenceRecordingTest {
         ResumeProbe probe = waitingProbe();
         String body = withDetail(found(LEADER), change);
 
-        LambdaEvents.BatchResponse response = new ResumeHandler(probe.resumer()).handleRequest(QuoteFixtures.sqs(body), null);
+        LambdaEvents.BatchResponse response = new ResumeHandler(probe.resumer()).handleRequest(QuoteFixtures.sqs(body),
+                null);
 
         assertThat(response.batchItemFailures()).hasSize(1);
         assertThat(probe.writes()).isEmpty();
     }
 
-    /** A reentrega chega depois do prazo do waiter (visibilidade de 90 s), e o evento não vira evidência tardia. */
+    /**
+     * A reentrega chega depois do prazo do waiter (visibilidade de 90 s), e o
+     * evento não vira evidência tardia.
+     */
     @ParameterizedTest
     @MethodSource("eventsOutsideTheContract")
     void eventOutsideTheContractGoesBackToTheQueueEvenAfterTheDeadline(Consumer<ObjectNode> change) {
         ResumeProbe probe = new ResumeProbe(WORK_REF, QUOTE_ID, 1, ResumeProbe.NOW.minusSeconds(1));
         String body = withDetail(found(LEADER), change);
 
-        LambdaEvents.BatchResponse response = new ResumeHandler(probe.resumer()).handleRequest(QuoteFixtures.sqs(body), null);
+        LambdaEvents.BatchResponse response = new ResumeHandler(probe.resumer()).handleRequest(QuoteFixtures.sqs(body),
+                null);
 
         assertThat(response.batchItemFailures()).hasSize(1);
         assertThat(probe.writes()).isEmpty();

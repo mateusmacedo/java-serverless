@@ -6,8 +6,10 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * JSON dos eventos, das evidências e dos pedidos recebidos. Usa o {@link ObjectMapper} do Spring, que omite
- * nulos ({@code spring.jackson.default-property-inclusion}) e ignora campos desconhecidos.
+ * JSON dos eventos, das evidências e dos pedidos recebidos. Usa o
+ * {@link ObjectMapper} do Spring, que omite
+ * nulos ({@code spring.jackson.default-property-inclusion}) e ignora campos
+ * desconhecidos.
  */
 @Component
 class EventJson {
@@ -25,7 +27,8 @@ class EventJson {
     /**
      * Lê o {@code detail} do envelope que a regra do EventBridge entrega na fila.
      *
-     * @throws IllegalArgumentException se o corpo não for um evento do EventBridge com {@code detail}
+     * @throws IllegalArgumentException se o corpo não for um evento do EventBridge
+     *                                  com {@code detail}
      */
     <T> T detail(String messageBody, Class<T> type) {
         JsonNode envelope = objectMapper.readTree(messageBody);
@@ -36,7 +39,10 @@ class EventJson {
         return objectMapper.treeToValue(detail, type);
     }
 
-    /** Lê o corpo de uma resposta de fornecedor; um corpo ilegível vira {@code null}, sem exceção. */
+    /**
+     * Lê o corpo de uma resposta de fornecedor; um corpo ilegível vira
+     * {@code null}, sem exceção.
+     */
     <T> T readOrNull(String body, Class<T> type) {
         if (body == null || body.isBlank()) {
             return null;

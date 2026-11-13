@@ -21,18 +21,24 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * {@code POST /v1/providers/{provider}/callbacks} (§8), no contrato {@code contracts/provider-solution/openapi.yaml}.
- * A assinatura é conferida sobre os bytes recebidos antes de qualquer leitura ou escrita: sem ela, {@code 401}.
- * O resultado gravado responde {@code 200}; o callback guardado à espera do encontro no {@code CORR#}, {@code 202}.
- * Só o envelope é validado aqui: o conteúdo de {@code result} é classificado no processamento.
+ * {@code POST /v1/providers/{provider}/callbacks} (§8), no contrato
+ * {@code contracts/provider-solution/openapi.yaml}.
+ * A assinatura é conferida sobre os bytes recebidos antes de qualquer leitura
+ * ou escrita: sem ela, {@code 401}.
+ * O resultado gravado responde {@code 200}; o callback guardado à espera do
+ * encontro no {@code CORR#}, {@code 202}.
+ * Só o envelope é validado aqui: o conteúdo de {@code result} é classificado no
+ * processamento.
  */
 @RestController
 class CallbackController {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(CallbackController.class);
     /**
-     * WHY: o corpo inteiro vai para o item {@code INBOX#}, e o DynamoDB recusa itens acima de 400 KB; sem o
-     * limite, o callback grande receberia {@code 503} e seria reenviado para sempre.
+     * WHY: o corpo inteiro vai para o item {@code INBOX#}, e o DynamoDB recusa
+     * itens acima de 400 KB; sem o
+     * limite, o callback grande receberia {@code 503} e seria reenviado para
+     * sempre.
      */
     static final int MAX_BODY_BYTES = 256 * 1024;
 
@@ -41,22 +47,23 @@ class CallbackController {
     private final ApiProperties properties;
     private final ObjectMapper objectMapper;
 
-    CallbackController(CallbackSecret secret, CallbackInbox inbox, ApiProperties properties, ObjectMapper objectMapper) {
+    CallbackController(CallbackSecret secret, CallbackInbox inbox, ApiProperties properties,
+            ObjectMapper objectMapper) {
         this.secret = secret;
         this.inbox = inbox;
         this.properties = properties;
         this.objectMapper = objectMapper;
     }
 
-    @PostMapping(path = "/v1/providers/{provider}/callbacks", consumes = MediaType.APPLICATION_JSON_VALUE,
-            produces = MediaType.APPLICATION_JSON_VALUE)
+    @PostMapping(path = "/v1/providers/{provider}/callbacks", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     ResponseEntity<Object> receive(@PathVariable String provider,
-                                   @RequestHeader(name = CallbackSignature.HEADER, required = false) String signature,
-                                   @RequestBody(required = false) byte[] body) {
+            @RequestHeader(name = CallbackSignature.HEADER, required = false) String signature,
+            @RequestBody(required = false) byte[] body) {
         byte[] received = body == null ? new byte[0] : body;
         boolean knownProvider = properties.providers().contains(provider);
         if (!CallbackSignature.verify(secret.value(), received, signature)) {
-            // WHY: o caminho vem de quem não provou nada; só um provedor da lista vai para o log
+            // WHY: o caminho vem de quem não provou nada; só um provedor da lista vai para
+            // o log
             LOGGER.warn("Callback rejected by its signature: provider={}", knownProvider ? provider : "<unknown>");
             return error(HttpStatus.UNAUTHORIZED, "INVALID_SIGNATURE", "X-Signature does not match the body");
         }
@@ -87,7 +94,10 @@ class CallbackController {
         return ResponseEntity.status(receipt.processed() ? HttpStatus.OK : HttpStatus.ACCEPTED).body(receipt);
     }
 
-    /** Falha da AWS antes de a inbox ficar consistente: o fornecedor reenvia o mesmo callback. */
+    /**
+     * Falha da AWS antes de a inbox ficar consistente: o fornecedor reenvia o mesmo
+     * callback.
+     */
     @ExceptionHandler(SdkException.class)
     ResponseEntity<Object> unavailable(SdkException exception) {
         LOGGER.warn("Callback not stored, the provider should send it again: {}", exception.getMessage());

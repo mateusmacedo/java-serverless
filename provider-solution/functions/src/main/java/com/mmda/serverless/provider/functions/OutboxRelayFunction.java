@@ -15,9 +15,12 @@ import software.amazon.awssdk.core.exception.SdkException;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 
 /**
- * Relay do outbox (desenho, §7): recebe só os {@code INSERT} de itens {@code OUTBOX} pelo filtro do ESM e
- * trata cada registro separadamente. No primeiro erro transitório devolve o número de sequência dele em
- * {@code batchItemFailures}: o stream reentrega a partir dali, inclusive os seguintes.
+ * Relay do outbox (desenho, §7): recebe só os {@code INSERT} de itens
+ * {@code OUTBOX} pelo filtro do ESM e
+ * trata cada registro separadamente. No primeiro erro transitório devolve o
+ * número de sequência dele em
+ * {@code batchItemFailures}: o stream reentrega a partir dali, inclusive os
+ * seguintes.
  */
 @Component("outboxRelay")
 class OutboxRelayFunction implements Function<DynamodbEvent, StreamsEventResponse> {

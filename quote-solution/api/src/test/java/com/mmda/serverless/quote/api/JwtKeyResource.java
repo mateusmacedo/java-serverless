@@ -8,8 +8,10 @@ import java.util.Base64;
 import java.util.Map;
 
 /**
- * Par RSA 2048 gerado em memória uma vez por JVM. A chave pública verifica os tokens da API e a privada assina
- * os de {@link TestTokens}. As duas seguem inline em Base64, como no gerador de chaves do smallrye-jwt em teste.
+ * Par RSA 2048 gerado em memória uma vez por JVM. A chave pública verifica os
+ * tokens da API e a privada assina
+ * os de {@link TestTokens}. As duas seguem inline em Base64, como no gerador de
+ * chaves do smallrye-jwt em teste.
  */
 public class JwtKeyResource implements QuarkusTestResourceLifecycleManager {
 

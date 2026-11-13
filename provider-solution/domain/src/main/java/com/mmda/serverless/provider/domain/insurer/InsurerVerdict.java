@@ -20,11 +20,16 @@ public sealed interface InsurerVerdict {
         }
     }
 
-    /** Seguradora assíncrona aceitou o pedido; o resultado chega por callback (M3). */
+    /**
+     * Seguradora assíncrona aceitou o pedido; o resultado chega por callback (M3).
+     */
     record Accepted(String providerRequestId) implements InsurerVerdict {
     }
 
-    /** Erro que permite repetir com segurança; esgotado o orçamento, vira {@code UNAVAILABLE}. */
+    /**
+     * Erro que permite repetir com segurança; esgotado o orçamento, vira
+     * {@code UNAVAILABLE}.
+     */
     record Transient(String errorClass) implements InsurerVerdict {
     }
 
@@ -32,7 +37,10 @@ public sealed interface InsurerVerdict {
     record Unavailable(String reasonCode) implements InsurerVerdict {
     }
 
-    /** Pedido possivelmente enviado sem resposta: a consulta fica {@code UNKNOWN} e nunca é repetida. */
+    /**
+     * Pedido possivelmente enviado sem resposta: a consulta fica {@code UNKNOWN} e
+     * nunca é repetida.
+     */
     record Unknown(String errorClass) implements InsurerVerdict {
     }
 }

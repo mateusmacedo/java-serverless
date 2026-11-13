@@ -4,7 +4,10 @@ import java.nio.charset.StandardCharsets;
 import org.springframework.stereotype.Component;
 import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
 
-/** Segredo {@code callback-secret}, lido uma vez por container, como os segredos das outras funções. */
+/**
+ * Segredo {@code callback-secret}, lido uma vez por container, como os segredos
+ * das outras funções.
+ */
 @Component
 class CallbackSecret {
 

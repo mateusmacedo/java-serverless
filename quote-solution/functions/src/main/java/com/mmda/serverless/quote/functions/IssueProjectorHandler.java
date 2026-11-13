@@ -12,9 +12,12 @@ import java.util.List;
 import org.jboss.logging.Logger;
 
 /**
- * Consome a fila {@code issues} ({@code QueryReconciled}, {@code OperationIssueRaised} e
- * {@code OperationIssueUpdated}). Uma falha devolve só a mensagem em {@code batchItemFailures}; depois do
- * {@code maxReceiveCount}, ela vai para a {@code issues-dlq}, que o {@code reconciler} reprocessa.
+ * Consome a fila {@code issues} ({@code QueryReconciled},
+ * {@code OperationIssueRaised} e
+ * {@code OperationIssueUpdated}). Uma falha devolve só a mensagem em
+ * {@code batchItemFailures}; depois do
+ * {@code maxReceiveCount}, ela vai para a {@code issues-dlq}, que o
+ * {@code reconciler} reprocessa.
  */
 @Singleton
 @Named("issue-projector")

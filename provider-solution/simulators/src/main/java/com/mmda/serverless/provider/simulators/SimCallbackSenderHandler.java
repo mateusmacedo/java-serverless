@@ -17,12 +17,16 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Entrada da Lambda {@code simCallbackSender}, consumidora da fila {@code sim-callbacks} com
- * {@code ReportBatchItemFailures}: só a mensagem que falhou volta à fila. Lê o evento SQS como JSON cru, como o
+ * Entrada da Lambda {@code simCallbackSender}, consumidora da fila
+ * {@code sim-callbacks} com
+ * {@code ReportBatchItemFailures}: só a mensagem que falhou volta à fila. Lê o
+ * evento SQS como JSON cru, como o
  * {@code resume} da quote.
  * <p>
- * WHY: sem contexto Spring. No Floci, a partida a frio do sender e a da API somam-se ao atraso do callback
- * dentro da espera da seguradora (20 s no local), e o contexto dos simuladores custava cerca de 4,6 s a mais.
+ * WHY: sem contexto Spring. No Floci, a partida a frio do sender e a da API
+ * somam-se ao atraso do callback
+ * dentro da espera da seguradora (20 s no local), e o contexto dos simuladores
+ * custava cerca de 4,6 s a mais.
  */
 public class SimCallbackSenderHandler implements RequestStreamHandler {
 
@@ -56,7 +60,10 @@ public class SimCallbackSenderHandler implements RequestStreamHandler {
         JSON.writeValue(output, Map.of("batchItemFailures", failures));
     }
 
-    /** Configuração pelas variáveis de ambiente da Lambda; os testes as passam como propriedades de sistema. */
+    /**
+     * Configuração pelas variáveis de ambiente da Lambda; os testes as passam como
+     * propriedades de sistema.
+     */
     private static final class Holder {
 
         static final SimCallbackSender SENDER = new SimCallbackSender(

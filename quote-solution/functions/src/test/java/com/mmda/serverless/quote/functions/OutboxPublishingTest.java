@@ -36,7 +36,10 @@ import software.amazon.awssdk.services.sfn.model.ExecutionAlreadyExistsException
 import software.amazon.awssdk.services.sfn.model.StartExecutionRequest;
 import software.amazon.awssdk.services.sfn.model.StartExecutionResponse;
 
-/** Relay registro a registro e classificação das falhas de publicação (§7 do desenho). */
+/**
+ * Relay registro a registro e classificação das falhas de publicação (§7 do
+ * desenho).
+ */
 class OutboxPublishingTest {
 
     static final String STATE_MACHINE = "arn:aws:states:us-east-1:000000000000:stateMachine:quote-flow";
@@ -55,7 +58,8 @@ class OutboxPublishingTest {
         when(dynamoDb.updateItem(any(UpdateItemRequest.class))).thenReturn(UpdateItemResponse.builder().build());
         QuoteFunctionsConfig config = new TestConfig();
         Clock clock = Clock.fixed(Instant.parse("2026-11-11T10:00:00Z"), ZoneOffset.UTC);
-        publisher = new OutboxPublisher(new QuoteTable(dynamoDb, config, mapper), eventBridge, sfn, mapper, config, clock);
+        publisher = new OutboxPublisher(new QuoteTable(dynamoDb, config, mapper), eventBridge, sfn, mapper, config,
+                clock);
     }
 
     @Test

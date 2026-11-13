@@ -6,15 +6,16 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 
 /**
- * Janela fixa da quota de um provedor e credencial, compartilhada por todos os workflows (T21).
+ * Janela fixa da quota de um provedor e credencial, compartilhada por todos os
+ * workflows (T21).
  *
  * @param id  início da janela em UTC, no formato {@code yyyyMMdd'T'HHmmss}
  * @param end fim exclusivo, que é o início da próxima janela
  */
 public record QuotaWindow(String id, Instant start, Instant end) {
 
-    private static final DateTimeFormatter ID_FORMAT =
-            DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss").withZone(ZoneOffset.UTC);
+    private static final DateTimeFormatter ID_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss")
+            .withZone(ZoneOffset.UTC);
 
     public static QuotaWindow of(Instant now, Duration length) {
         long seconds = length.toSeconds();

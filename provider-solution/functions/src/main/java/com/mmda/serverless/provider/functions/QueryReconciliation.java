@@ -24,10 +24,14 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
- * Reconciliação de uma consulta, comum ao {@code reconciler} e ao {@code reconcileWorker} (desenho, §8 e §9). A
- * consulta em voo além do {@code deadlineAt}, sem entrega viva, é tratada como interrompida: fica {@code UNKNOWN}
- * se o pedido pode ter chegado ao fornecedor. A {@code UNKNOWN} de seguradora com API de situação é consultada e
- * concluída com o resultado dela; sem API de situação, abre {@code UNKNOWN_QUERY}. INVARIANT: nada aqui repete a
+ * Reconciliação de uma consulta, comum ao {@code reconciler} e ao
+ * {@code reconcileWorker} (desenho, §8 e §9). A
+ * consulta em voo além do {@code deadlineAt}, sem entrega viva, é tratada como
+ * interrompida: fica {@code UNKNOWN}
+ * se o pedido pode ter chegado ao fornecedor. A {@code UNKNOWN} de seguradora
+ * com API de situação é consultada e
+ * concluída com o resultado dela; sem API de situação, abre
+ * {@code UNKNOWN_QUERY}. INVARIANT: nada aqui repete a
  * chamada ao fornecedor; lease ou prazo vencidos só autorizam ler o estado.
  */
 @Component
@@ -48,9 +52,9 @@ class QueryReconciliation {
     private final Clock clock;
 
     QueryReconciliation(QueryLedger ledger, PendingCallbacks pendingCallbacks, EnrichmentResolutions resolutions,
-                        ProviderClients clients,
-                        RawResponses rawResponses, OperationIssues issues, EventJson json,
-                        ProviderProperties properties, OperationsProperties operations, Clock clock) {
+            ProviderClients clients,
+            RawResponses rawResponses, OperationIssues issues, EventJson json,
+            ProviderProperties properties, OperationsProperties operations, Clock clock) {
         this.ledger = ledger;
         this.pendingCallbacks = pendingCallbacks;
         this.resolutions = resolutions;
@@ -78,7 +82,9 @@ class QueryReconciliation {
     record Result(Outcome outcome, String safeSummary) {
     }
 
-    /** Ciclo do reconciler: as consultas em voo além do prazo e as {@code UNKNOWN}. */
+    /**
+     * Ciclo do reconciler: as consultas em voo além do prazo e as {@code UNKNOWN}.
+     */
     record Report(int expired, int concluded, int unknown) {
     }
 
@@ -159,8 +165,10 @@ class QueryReconciliation {
             LOGGER.warn("Insurer query past its deadline left UNKNOWN: queryId={} insurerId={}", query.queryId(),
                     query.insurerId());
             if (query.providerRequestId() != null) {
-                // WHY: a entrega que gravou o 202 pode ter caído antes da metade do worker no CORR#; refeita aqui, ela
-                // conclui com o callback já guardado na inbox antes de qualquer leitura da situação (§8)
+                // WHY: a entrega que gravou o 202 pode ter caído antes da metade do worker no
+                // CORR#; refeita aqui, ela
+                // conclui com o callback já guardado na inbox antes de qualquer leitura da
+                // situação (§8)
                 pendingCallbacks.meet(query.insurerId(), query.providerRequestId(), query.queryId());
             }
             return afterExpiry(query.queryId(), reads);
@@ -194,7 +202,7 @@ class QueryReconciliation {
         Result result = switch (InsurerStatus.classify(exchange.outcome())) {
             case InsurerStatus.Completed completed -> concludeFromStatus(query, completed, exchange.rawBody());
             case InsurerStatus.Pending ignored ->
-                    new Result(Outcome.UNKNOWN, "A seguradora ainda processa o pedido");
+                new Result(Outcome.UNKNOWN, "A seguradora ainda processa o pedido");
             case InsurerStatus.Unrecognized ignored -> {
                 raiseUnknown(query, "A seguradora não reconhece o pedido na API de situação");
                 yield new Result(Outcome.UNKNOWN, "A seguradora não reconhece o pedido");
@@ -214,8 +222,10 @@ class QueryReconciliation {
     }
 
     /**
-     * Conclui a consulta com o resultado da API de situação, como o callback que faltava (§8): evidência, tentativa,
-     * {@code InsurerResultRecorded} com o {@code eventId} UUIDv5 do {@code queryId} e o {@code CONSUMED} do pedido.
+     * Conclui a consulta com o resultado da API de situação, como o callback que
+     * faltava (§8): evidência, tentativa,
+     * {@code InsurerResultRecorded} com o {@code eventId} UUIDv5 do {@code queryId}
+     * e o {@code CONSUMED} do pedido.
      */
     private Result concludeFromStatus(QueryRecord query, InsurerStatus.Completed completed, String rawBody) {
         Instant now = clock.instant();
@@ -237,7 +247,8 @@ class QueryReconciliation {
         InsurerResultRecorded event = InsurerResultRecorded.of(query.origin(), queryId,
                 attempt.isPresent() ? Identities.attemptRef(queryId, sequence) : null, outcome, receivedAt);
         Settlement settlement = new Settlement(queryId, null, unavailable ? QueryState.FAILED : QueryState.COMPLETED,
-                finished, evidence, new Settlement.OutboxEvent(event.eventId(), InsurerResultRecorded.DETAIL_TYPE, event),
+                finished, evidence,
+                new Settlement.OutboxEvent(event.eventId(), InsurerResultRecorded.DETAIL_TYPE, event),
                 consumedId(query), query.workRef());
         if (!ledger.settleFrom(settlement, SETTLEABLE, now)) {
             return new Result(Outcome.SETTLED, "A consulta foi concluída por outro caminho");
@@ -249,9 +260,12 @@ class QueryReconciliation {
     }
 
     /**
-     * Grava a metade do worker no {@code CORR#} com o {@code providerRequestId} da consulta ou, quando o {@code 202}
-     * se perdeu, o da API de situação. WHY: o callback que chegou só com o {@code providerRequestId} fica retido na
-     * inbox até esse encontro; com a consulta já concluída, ele vira evidência tardia, não {@code UNMATCHED} (§8).
+     * Grava a metade do worker no {@code CORR#} com o {@code providerRequestId} da
+     * consulta ou, quando o {@code 202}
+     * se perdeu, o da API de situação. WHY: o callback que chegou só com o
+     * {@code providerRequestId} fica retido na
+     * inbox até esse encontro; com a consulta já concluída, ele vira evidência
+     * tardia, não {@code UNMATCHED} (§8).
      */
     private void meetCallbacks(QueryRecord query, ProviderExchange<InsurerStatus> exchange) {
         String providerRequestId = query.providerRequestId();
@@ -264,7 +278,10 @@ class QueryReconciliation {
         }
     }
 
-    /** Em voo sem tentativa aberta e sem resposta, além do prazo: {@code UNAVAILABLE} sem chamada (§9). */
+    /**
+     * Em voo sem tentativa aberta e sem resposta, além do prazo:
+     * {@code UNAVAILABLE} sem chamada (§9).
+     */
     private boolean concludeUnavailable(QueryRecord query, Instant now) {
         String reasonCode = ErrorClasses.DEADLINE_EXCEEDED_BEFORE_CALL;
         int sequence = query.attemptCount();
@@ -300,9 +317,12 @@ class QueryReconciliation {
     }
 
     /**
-     * Leituras da API de situação num ciclo do {@code reconciler}. WHY: as leituras são em série, cada uma com o
-     * timeout HTTP; sem teto, uma seguradora lenta ou fora do ar consumiria o timeout do reconciler antes da inbox,
-     * das DLQs e das métricas. Depois do teto, ou da primeira leitura sem resposta de um provedor, as consultas
+     * Leituras da API de situação num ciclo do {@code reconciler}. WHY: as leituras
+     * são em série, cada uma com o
+     * timeout HTTP; sem teto, uma seguradora lenta ou fora do ar consumiria o
+     * timeout do reconciler antes da inbox,
+     * das DLQs e das métricas. Depois do teto, ou da primeira leitura sem resposta
+     * de um provedor, as consultas
      * seguem {@code UNKNOWN} para o próximo ciclo.
      */
     static final class StatusReads {

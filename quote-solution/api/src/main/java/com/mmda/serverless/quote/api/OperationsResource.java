@@ -29,8 +29,10 @@ import java.util.List;
 import org.jboss.logging.Logger;
 
 /**
- * Operações restritas (§8 e §11 do desenho, M5): ocorrências da quote e da provider, reconciliação manual de uma
- * consulta conhecida da organização e a situação dela. Nada aqui leva token, payload bruto nem o motivo informado.
+ * Operações restritas (§8 e §11 do desenho, M5): ocorrências da quote e da
+ * provider, reconciliação manual de uma
+ * consulta conhecida da organização e a situação dela. Nada aqui leva token,
+ * payload bruto nem o motivo informado.
  */
 @Path("/v1/operations")
 @Authenticated
@@ -52,7 +54,8 @@ public class OperationsResource {
     }
 
     /**
-     * Ocorrências da organização. O callback sem correlação não tem organização e não aparece para nenhuma (§11 do
+     * Ocorrências da organização. O callback sem correlação não tem organização e
+     * não aparece para nenhuma (§11 do
      * desenho); aparece no alarme e no log da provider.
      */
     @GET
@@ -90,9 +93,12 @@ public class OperationsResource {
     }
 
     /**
-     * Reconciliação manual: aceita só para consulta conhecida da organização ({@code QUERYREF#}); a de outra
-     * organização ou desconhecida responde 404, sem revelar que existe. Grava a auditoria (motivo e quem pediu) e o
-     * pedido para a provider numa transação; o 202 não significa consulta recuperada.
+     * Reconciliação manual: aceita só para consulta conhecida da organização
+     * ({@code QUERYREF#}); a de outra
+     * organização ou desconhecida responde 404, sem revelar que existe. Grava a
+     * auditoria (motivo e quem pediu) e o
+     * pedido para a provider numa transação; o 202 não significa consulta
+     * recuperada.
      */
     @POST
     @Path("/queries/{queryId}/reconcile")
@@ -113,9 +119,10 @@ public class OperationsResource {
         LOG.infof("reconcile requested operationId=%s queryId=%s organizationId=%s requestedBy=%s correlationId=%s",
                 accepted.operationId(), queryId, organizationId, caller.userId(), correlation.id());
         String statusUrl = QuoteKeys.operationStatusUrl(accepted.operationId());
-        // NOTE: o contrato fixa QUEUED no 202, também no reenvio; a situação real é a do statusUrl
+        // NOTE: o contrato fixa QUEUED no 202, também no reenvio; a situação real é a
+        // do statusUrl
         return Response.accepted(new OperationViews.ReconcileAccepted(accepted.operationId(),
-                        Operations.OperationStatus.QUEUED.name(), statusUrl))
+                Operations.OperationStatus.QUEUED.name(), statusUrl))
                 .header(HttpHeaders.LOCATION, statusUrl)
                 .build();
     }

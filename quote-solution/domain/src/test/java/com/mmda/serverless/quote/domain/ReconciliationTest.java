@@ -19,7 +19,7 @@ class ReconciliationTest {
     private static final Duration MARGIN = Duration.ofSeconds(120);
 
     @ParameterizedTest
-    @EnumSource(value = ExecutionState.class, names = {"FAILED", "TIMED_OUT", "ABORTED"})
+    @EnumSource(value = ExecutionState.class, names = { "FAILED", "TIMED_OUT", "ABORTED" })
     void t20_executionEndedWithoutConsolidationIsFinalizedEvenBeforeTheDeadline(ExecutionState state) {
         assertThat(Reconciliation.versionAction(state, NOW.plusSeconds(200), MARGIN, NOW))
                 .isEqualTo(VersionAction.FINALIZE);
@@ -27,7 +27,7 @@ class ReconciliationTest {
     }
 
     @ParameterizedTest
-    @EnumSource(value = ExecutionState.class, names = {"RUNNING", "SUCCEEDED", "MISSING"})
+    @EnumSource(value = ExecutionState.class, names = { "RUNNING", "SUCCEEDED", "MISSING" })
     void versionWithoutAnEndedExecutionIsOnlyStuckAfterTheDeadlinePlusTheMargin(ExecutionState state) {
         Instant deadline = NOW.minusSeconds(120);
 
@@ -38,7 +38,7 @@ class ReconciliationTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"RUNNING", "PENDING_REDRIVE", "SOMETHING_NEW"})
+    @ValueSource(strings = { "RUNNING", "PENDING_REDRIVE", "SOMETHING_NEW" })
     void unknownOrRunningStatusIsNeverFinalized(String status) {
         ExecutionState state = ExecutionState.of(status);
 

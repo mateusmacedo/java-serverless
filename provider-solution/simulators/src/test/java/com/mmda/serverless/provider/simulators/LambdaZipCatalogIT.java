@@ -11,8 +11,10 @@ import java.util.zip.ZipFile;
 import org.junit.jupiter.api.Test;
 
 /**
- * O catálogo de {@code contracts/fixtures} precisa chegar ao zip da Lambda dos simuladores, que o lê do classpath, com
- * os mesmos bytes do contrato. Roda no {@code integration-test}, depois do {@code package}.
+ * O catálogo de {@code contracts/fixtures} precisa chegar ao zip da Lambda dos
+ * simuladores, que o lê do classpath, com
+ * os mesmos bytes do contrato. Roda no {@code integration-test}, depois do
+ * {@code package}.
  */
 class LambdaZipCatalogIT {
 

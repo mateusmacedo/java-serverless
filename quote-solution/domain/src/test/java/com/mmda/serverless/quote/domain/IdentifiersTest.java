@@ -9,7 +9,9 @@ import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
-/** Identificadores determinísticos, idempotência, revisões, prazos e permissões. */
+/**
+ * Identificadores determinísticos, idempotência, revisões, prazos e permissões.
+ */
 class IdentifiersTest {
 
     @Test
@@ -33,7 +35,8 @@ class IdentifiersTest {
     @Test
     void t02_sameIntentWithAnotherFormattingIsAReplay() {
         String first = Idempotency.requestHash("{\"product\":\"AUTO\",\"risk\":{\"usage\":\"PERSONAL\"}}");
-        String reformatted = Idempotency.requestHash("{ \"risk\" : { \"usage\" : \"PERSONAL\" }, \"product\" : \"AUTO\" }");
+        String reformatted = Idempotency
+                .requestHash("{ \"risk\" : { \"usage\" : \"PERSONAL\" }, \"product\" : \"AUTO\" }");
 
         assertThat(Idempotency.compare(first, reformatted)).isEqualTo(Idempotency.Decision.REPLAY);
     }
@@ -101,7 +104,7 @@ class IdentifiersTest {
     void retriesOnlyRetryableFailuresUpToTheLimit() {
         List<Duration> sleeps = new java.util.ArrayList<>();
         Retries retries = new Retries(3, Duration.ofMillis(10), Duration.ofMillis(40), sleeps::add);
-        int[] calls = {0};
+        int[] calls = { 0 };
 
         assertThatThrownBy(() -> retries.run(() -> {
             calls[0]++;

@@ -13,9 +13,12 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
- * Corpo do {@code POST /v1/quotes}, validado campo a campo para devolver todos os {@code fieldErrors} de
- * uma vez. WHY: o body é lido como JSON bruto porque o {@code requestHash} da idempotência é calculado
- * sobre ele; campos desconhecidos são rejeitados para que o hash não dependa de campos ignorados.
+ * Corpo do {@code POST /v1/quotes}, validado campo a campo para devolver todos
+ * os {@code fieldErrors} de
+ * uma vez. WHY: o body é lido como JSON bruto porque o {@code requestHash} da
+ * idempotência é calculado
+ * sobre ele; campos desconhecidos são rejeitados para que o hash não dependa de
+ * campos ignorados.
  */
 record CreateQuoteRequest(
         String applicantRef,
@@ -44,15 +47,19 @@ record CreateQuoteRequest(
 
     static void requireObject(JsonNode body) {
         if (body == null || !body.isObject()) {
-            throw ApiException.validation(List.of(new ErrorResponse.FieldError("$", "O corpo deve ser um objeto JSON.")));
+            throw ApiException
+                    .validation(List.of(new ErrorResponse.FieldError("$", "O corpo deve ser um objeto JSON.")));
         }
     }
 
     /**
-     * Campos do pedido, acumulando os erros em {@code errors}; {@code extraFields} são os campos que outro corpo
-     * acrescenta, como o {@code expectedVersion} da nova versão, e que esta leitura não rejeita.
+     * Campos do pedido, acumulando os erros em {@code errors}; {@code extraFields}
+     * são os campos que outro corpo
+     * acrescenta, como o {@code expectedVersion} da nova versão, e que esta leitura
+     * não rejeita.
      */
-    static CreateQuoteRequest parseFields(JsonNode body, Set<String> extraFields, List<ErrorResponse.FieldError> errors) {
+    static CreateQuoteRequest parseFields(JsonNode body, Set<String> extraFields,
+            List<ErrorResponse.FieldError> errors) {
         Set<String> known = new HashSet<>(FIELDS);
         known.addAll(extraFields);
         rejectUnknown(body, known, "", errors);
@@ -89,7 +96,10 @@ record CreateQuoteRequest(
                 desiredStartDate);
     }
 
-    /** Resolve as referências no catálogo da organização; referência desconhecida é erro de campo. */
+    /**
+     * Resolve as referências no catálogo da organização; referência desconhecida é
+     * erro de campo.
+     */
     QuoteSnapshot resolve(Catalog.Organization organization, Catalog catalog) {
         List<ErrorResponse.FieldError> errors = new ArrayList<>();
         var applicant = organization == null ? null : organization.customer(applicantRef).orElse(null);
@@ -116,7 +126,7 @@ record CreateQuoteRequest(
 
     private static void rejectUnknown(JsonNode node, Set<String> known, String prefix,
             List<ErrorResponse.FieldError> errors) {
-        for (Iterator<String> names = node.fieldNames(); names.hasNext(); ) {
+        for (Iterator<String> names = node.fieldNames(); names.hasNext();) {
             String name = names.next();
             if (!known.contains(name)) {
                 errors.add(new ErrorResponse.FieldError(prefix + name, "Campo não reconhecido."));
@@ -139,7 +149,8 @@ record CreateQuoteRequest(
 
     private static String reference(JsonNode node, String field, String path, List<ErrorResponse.FieldError> errors) {
         String value = text(node, field, path, errors);
-        // WHY: o maxLength do JSON Schema conta caracteres Unicode, e um caractere fora do BMP ocupa dois char
+        // WHY: o maxLength do JSON Schema conta caracteres Unicode, e um caractere fora
+        // do BMP ocupa dois char
         if (value != null && value.codePointCount(0, value.length()) > MAX_REF_LENGTH) {
             errors.add(new ErrorResponse.FieldError(path, "Referência longa demais."));
             return null;

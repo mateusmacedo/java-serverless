@@ -10,7 +10,9 @@ import java.util.UUID;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
-/** Resumos criptográficos usados nas identidades determinísticas da provider. */
+/**
+ * Resumos criptográficos usados nas identidades determinísticas da provider.
+ */
 public final class Digests {
 
     private static final HexFormat HEX = HexFormat.of();

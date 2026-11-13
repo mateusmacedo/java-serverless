@@ -4,8 +4,10 @@ import com.mmda.serverless.provider.domain.Decimals;
 import java.util.Objects;
 
 /**
- * Perfil normalizado do veículo e do condutor principal, o {@code result} do {@code EnrichmentResolved}
- * quando {@code FOUND}. É o contrato que a quote usa na seleção de seguradoras (ano do veículo).
+ * Perfil normalizado do veículo e do condutor principal, o {@code result} do
+ * {@code EnrichmentResolved}
+ * quando {@code FOUND}. É o contrato que a quote usa na seleção de seguradoras
+ * (ano do veículo).
  */
 public record EnrichmentProfile(Vehicle vehicle, Driver principalDriver) {
 

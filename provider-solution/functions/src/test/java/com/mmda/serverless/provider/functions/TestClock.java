@@ -7,7 +7,8 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 
 /**
- * Relógio comum à provider e ao {@link ProviderStub} nos testes de reuso: a validade da evidência e a lease
+ * Relógio comum à provider e ao {@link ProviderStub} nos testes de reuso: a
+ * validade da evidência e a lease
  * da liderança vencem sem espera real. Sem avanço, é o relógio do sistema.
  */
 final class TestClock extends Clock {

@@ -5,7 +5,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-/** Seguradoras simuladas do laboratório (§10 do desenho), na ordem em que a seleção as considera. */
+/**
+ * Seguradoras simuladas do laboratório (§10 do desenho), na ordem em que a
+ * seleção as considera.
+ */
 public final class Insurers {
 
     public static final String ALPHA = "alpha";
@@ -13,7 +16,8 @@ public final class Insurers {
 
     private static final Map<String, String> NAMES = new LinkedHashMap<>();
 
-    // WHY: o mesmo insurerName que o simulador devolve na oferta; o resultado (gravado na seleção) e a
+    // WHY: o mesmo insurerName que o simulador devolve na oferta; o resultado
+    // (gravado na seleção) e a
     // oferta da mesma seguradora precisam mostrar o mesmo nome
     static {
         NAMES.put(ALPHA, "Alpha Seguros");

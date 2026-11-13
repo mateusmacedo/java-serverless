@@ -17,7 +17,8 @@ class CallbackSignatureTest {
     void signatureIsTheHexHmacOfTheExactBody() {
         String signature = CallbackSignature.sign(SECRET, BODY);
 
-        // NOTE: valor de referência do openssl dgst -sha256 -hmac callback-secret sobre o mesmo corpo
+        // NOTE: valor de referência do openssl dgst -sha256 -hmac callback-secret sobre
+        // o mesmo corpo
         assertThat(signature).isEqualTo("sha256=7dd40c35ca8116bee21f54222163e9c19de42d39e9651f839a0d284f997e222b");
         assertThat(CallbackSignature.verify(SECRET, BODY, signature)).isTrue();
     }

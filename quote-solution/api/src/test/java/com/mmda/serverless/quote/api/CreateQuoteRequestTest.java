@@ -11,7 +11,10 @@ class CreateQuoteRequestTest {
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
-    /** Um caractere fora do BMP: conta 1 no maxLength do contrato e ocupa 2 {@code char} em Java. */
+    /**
+     * Um caractere fora do BMP: conta 1 no maxLength do contrato e ocupa 2
+     * {@code char} em Java.
+     */
     private static final String CAR = "🚗";
 
     @Test

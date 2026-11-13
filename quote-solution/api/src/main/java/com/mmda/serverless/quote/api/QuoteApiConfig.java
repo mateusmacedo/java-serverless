@@ -7,7 +7,10 @@ public interface QuoteApiConfig {
 
     String tableName();
 
-    /** Prazo total da versão ({@code quoteDeadlineSeconds}), contado da aceitação durável. */
+    /**
+     * Prazo total da versão ({@code quoteDeadlineSeconds}), contado da aceitação
+     * durável.
+     */
     int deadlineSeconds();
 
     /** Orientação de polling devolvida enquanto a versão não é terminal. */

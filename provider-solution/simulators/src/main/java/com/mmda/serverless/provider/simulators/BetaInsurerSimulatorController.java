@@ -21,9 +21,12 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Seguradora assíncrona beta (§10): aceita o pedido com {@code 202} e um {@code providerRequestId} e entrega o
- * resultado por callback, agendado na fila {@code sim-callbacks}. O veículo escolhe o cenário, e as coberturas
- * são as do perfil pedido no catálogo. O resultado e o agendamento são decididos antes da resposta, então o
+ * Seguradora assíncrona beta (§10): aceita o pedido com {@code 202} e um
+ * {@code providerRequestId} e entrega o
+ * resultado por callback, agendado na fila {@code sim-callbacks}. O veículo
+ * escolhe o cenário, e as coberturas
+ * são as do perfil pedido no catálogo. O resultado e o agendamento são
+ * decididos antes da resposta, então o
  * {@code vehicle-beta-early} chega antes do {@code 202} gravado pelo worker.
  */
 @RestController
@@ -44,7 +47,7 @@ class BetaInsurerSimulatorController {
     private final Clock clock;
 
     BetaInsurerSimulatorController(BetaQuotes quotes, ScheduledCallbacks callbacks, SimulatorProperties properties,
-                                   LabCatalog catalog, Clock clock) {
+            LabCatalog catalog, Clock clock) {
         this.quotes = quotes;
         this.callbacks = callbacks;
         this.properties = properties;
@@ -69,7 +72,8 @@ class BetaInsurerSimulatorController {
         Instant now = clock.instant().truncatedTo(ChronoUnit.MILLIS);
         String providerRequestId = "beta-" + UUID.randomUUID();
         List<Delivery> deliveries = deliveries(scenario);
-        int readyAfter = deliveries.isEmpty() ? properties.betaCallbackDelaySeconds() : deliveries.getFirst().delaySeconds();
+        int readyAfter = deliveries.isEmpty() ? properties.betaCallbackDelaySeconds()
+                : deliveries.getFirst().delaySeconds();
         Map<String, Object> result = result(scenario, request.clientReference(), vehicleRef,
                 RiskFields.usage(request.risk()), profile.get(), now);
         quotes.save(new BetaQuote(providerRequestId, request.clientReference(), scenario.name(), now,
@@ -77,13 +81,17 @@ class BetaInsurerSimulatorController {
         String externalEventId = "bev-" + UUID.randomUUID();
         for (Delivery delivery : deliveries) {
             callbacks.schedule(new CallbackOrder(PROVIDER, externalEventId, providerRequestId,
-                    delivery.withClientReference() ? request.clientReference() : null, result), delivery.delaySeconds());
+                    delivery.withClientReference() ? request.clientReference() : null, result),
+                    delivery.delaySeconds());
         }
         return ResponseEntity.status(HttpStatus.ACCEPTED)
                 .body(new Accepted(request.clientReference(), providerRequestId, "PROCESSING"));
     }
 
-    /** Situação para a reconciliação (M4), por {@code providerRequestId} ou {@code clientReference}. */
+    /**
+     * Situação para a reconciliação (M4), por {@code providerRequestId} ou
+     * {@code clientReference}.
+     */
     @GetMapping(path = "/sim/insurers/beta/quotes/{reference}", produces = MediaType.APPLICATION_JSON_VALUE)
     ResponseEntity<Object> status(@PathVariable String reference) {
         return quotes.find(reference)
@@ -99,8 +107,10 @@ class BetaInsurerSimulatorController {
     }
 
     /**
-     * Um callback por cenário, com o {@code clientReference}; o duplicado repete o mesmo {@code externalEventId},
-     * o atrasado passa da espera da seguradora e o antecipado sai sem atraso e só com o {@code providerRequestId}.
+     * Um callback por cenário, com o {@code clientReference}; o duplicado repete o
+     * mesmo {@code externalEventId},
+     * o atrasado passa da espera da seguradora e o antecipado sai sem atraso e só
+     * com o {@code providerRequestId}.
      */
     private List<Delivery> deliveries(BetaScenario scenario) {
         int delay = properties.betaCallbackDelaySeconds();
@@ -114,7 +124,7 @@ class BetaInsurerSimulatorController {
     }
 
     private Map<String, Object> result(BetaScenario scenario, String clientReference, String vehicleRef, String usage,
-                                       LabCatalog.CoverageProfile profile, Instant now) {
+            LabCatalog.CoverageProfile profile, Instant now) {
         return switch (scenario) {
             case DECLINES -> Map.of("outcome", "DECLINED", "declineCode", "RISK_NOT_ACCEPTED");
             case NEEDS_INFO -> Map.of("outcome", "PENDING_INFORMATION", "pendingFields", List.of(Map.of(
@@ -124,7 +134,7 @@ class BetaInsurerSimulatorController {
     }
 
     private Map<String, Object> offer(String clientReference, String vehicleRef, String usage,
-                                      LabCatalog.CoverageProfile profile, Instant now) {
+            LabCatalog.CoverageProfile profile, Instant now) {
         BigDecimal total = SyntheticData.basePremium(vehicleRef, usage).multiply(PREMIUM_FACTOR)
                 .setScale(2, RoundingMode.HALF_UP);
         BigDecimal installment = total.divide(BigDecimal.valueOf(MAX_INSTALLMENTS), 2, RoundingMode.HALF_UP);
@@ -149,7 +159,10 @@ class BetaInsurerSimulatorController {
         return offer;
     }
 
-    /** Cenário pelo veículo do catálogo; {@code OFFER} vale para qualquer outro veículo. */
+    /**
+     * Cenário pelo veículo do catálogo; {@code OFFER} vale para qualquer outro
+     * veículo.
+     */
     enum BetaScenario {
         OFFER(null),
         DECLINES("vehicle-beta-declines"),
@@ -187,7 +200,7 @@ class BetaInsurerSimulatorController {
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
     record Status(String providerRequestId, String clientReference, String status, String receivedAt,
-                  String completedAt, Map<String, Object> result) {
+            String completedAt, Map<String, Object> result) {
     }
 
     @JsonInclude(JsonInclude.Include.NON_NULL)

@@ -5,12 +5,17 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * Resultado do enriquecimento obrigatório como a consolidação o enxerga. {@code notFoundRefs} são as
- * referências que o provedor declarou não encontrar, como {@code vehicleRef} (RN07).
+ * Resultado do enriquecimento obrigatório como a consolidação o enxerga.
+ * {@code notFoundRefs} são as
+ * referências que o provedor declarou não encontrar, como {@code vehicleRef}
+ * (RN07).
  */
 public record EnrichmentOutcome(ResultType resultType, List<String> notFoundRefs) {
 
-    /** Referências do {@code EnrichmentRequested} que o provedor pode declarar não encontradas. */
+    /**
+     * Referências do {@code EnrichmentRequested} que o provedor pode declarar não
+     * encontradas.
+     */
     public static final Set<String> DECLARABLE_REFS = Set.of("vehicleRef", "principalDriverRef");
 
     public enum ResultType {
@@ -36,7 +41,10 @@ public record EnrichmentOutcome(ResultType resultType, List<String> notFoundRefs
         return new EnrichmentOutcome(ResultType.FAILED, List.of());
     }
 
-    /** Caminho no snapshot de cada referência não encontrada: {@code vehicleRef} vira {@code risk.vehicleRef}. */
+    /**
+     * Caminho no snapshot de cada referência não encontrada: {@code vehicleRef}
+     * vira {@code risk.vehicleRef}.
+     */
     public List<MissingField> missingFields() {
         return notFoundRefs.stream()
                 .map(ref -> new MissingField("risk." + ref, OutcomeReason.ENRICHMENT_NOT_FOUND.name()))

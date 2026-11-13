@@ -8,8 +8,10 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * Classifica a resposta do provedor de enriquecimento pela tabela do §9 do desenho e normaliza o perfil.
- * Só um 404 com {@code code = NOT_FOUND} e referências conhecidas em {@code notFoundRefs} é
+ * Classifica a resposta do provedor de enriquecimento pela tabela do §9 do
+ * desenho e normaliza o perfil.
+ * Só um 404 com {@code code = NOT_FOUND} e referências conhecidas em
+ * {@code notFoundRefs} é
  * {@code NOT_FOUND}; qualquer outra falha é {@code FAILED} (RN07).
  */
 public final class EnrichmentProtocol {
@@ -24,7 +26,7 @@ public final class EnrichmentProtocol {
         return switch (outcome) {
             case CallOutcome.NotSent<EnrichmentReply> notSent -> new EnrichmentVerdict.Transient(notSent.errorClass());
             case CallOutcome.NoResponse<EnrichmentReply> ignored ->
-                    new EnrichmentVerdict.Unknown(ErrorClasses.PROVIDER_NO_RESPONSE);
+                new EnrichmentVerdict.Unknown(ErrorClasses.PROVIDER_NO_RESPONSE);
             case CallOutcome.Responded<EnrichmentReply> responded -> classifyResponse(responded);
         };
     }

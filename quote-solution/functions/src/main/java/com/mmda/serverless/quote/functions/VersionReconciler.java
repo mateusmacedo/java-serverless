@@ -25,8 +25,10 @@ import software.amazon.awssdk.services.sfn.SfnClient;
 import software.amazon.awssdk.services.sfn.model.ExecutionDoesNotExistException;
 
 /**
- * Versões {@code ACTIVE_VERSION} (§9 do desenho): finaliza a que tem a execução encerrada em {@code FAILED},
- * {@code TIMED_OUT} ou {@code ABORTED} (T20), abre {@code STUCK_VERSION} para a que passou do prazo com a margem
+ * Versões {@code ACTIVE_VERSION} (§9 do desenho): finaliza a que tem a execução
+ * encerrada em {@code FAILED},
+ * {@code TIMED_OUT} ou {@code ABORTED} (T20), abre {@code STUCK_VERSION} para a
+ * que passou do prazo com a margem
  * e repara o resumo do {@code META} da versão atual.
  */
 @ApplicationScoped
@@ -54,9 +56,12 @@ public class VersionReconciler {
     }
 
     /**
-     * Contadores da varredura: {@code active}, {@code finalized}, {@code stuck} e {@code summariesRepaired}. Além das
-     * versões {@code ACTIVE_VERSION}, confere o resumo das {@code TERMINAL} ainda em {@code SUMMARY_PENDING}, cujo
-     * {@code refreshSummary} falhou depois da consolidação. A falha de uma versão fica no log e não impede as outras.
+     * Contadores da varredura: {@code active}, {@code finalized}, {@code stuck} e
+     * {@code summariesRepaired}. Além das
+     * versões {@code ACTIVE_VERSION}, confere o resumo das {@code TERMINAL} ainda
+     * em {@code SUMMARY_PENDING}, cujo
+     * {@code refreshSummary} falhou depois da consolidação. A falha de uma versão
+     * fica no log e não impede as outras.
      */
     Map<String, Integer> reconcile(Instant now) {
         Duration stuckMargin = Duration.ofSeconds(reconcilerConfig.stuckVersionMarginSeconds());
@@ -99,12 +104,16 @@ public class VersionReconciler {
                     .build());
             items.addAll(page.items());
             remaining -= page.items().size();
-            startKey = page.hasLastEvaluatedKey() && !page.lastEvaluatedKey().isEmpty() ? page.lastEvaluatedKey() : null;
+            startKey = page.hasLastEvaluatedKey() && !page.lastEvaluatedKey().isEmpty() ? page.lastEvaluatedKey()
+                    : null;
         } while (startKey != null && remaining > 0);
         return items;
     }
 
-    /** Repara o {@code META} da versão consolidada, se diverge, e a tira do índice {@code SUMMARY_PENDING}. */
+    /**
+     * Repara o {@code META} da versão consolidada, se diverge, e a tira do índice
+     * {@code SUMMARY_PENDING}.
+     */
     private void confirmSummary(String quoteId, int version, Instant now, Map<String, Integer> report) {
         if (quoteId == null || version < 1) {
             return;
@@ -121,8 +130,10 @@ public class VersionReconciler {
         if (quoteId == null || version < 1) {
             return;
         }
-        // WHY: o índice é eventualmente consistente; a leitura da tabela confirma que a versão segue ativa
-        Optional<Map<String, AttributeValue>> found = table.get(QuoteKeys.quotePk(quoteId), QuoteKeys.versionSk(version));
+        // WHY: o índice é eventualmente consistente; a leitura da tabela confirma que a
+        // versão segue ativa
+        Optional<Map<String, AttributeValue>> found = table.get(QuoteKeys.quotePk(quoteId),
+                QuoteKeys.versionSk(version));
         if (found.isEmpty() || Phase.TERMINAL.name().equals(Attr.string(found.get(), "phase"))) {
             return;
         }
@@ -143,9 +154,11 @@ public class VersionReconciler {
                 }
             }
             case STUCK -> {
-                table.writeIssue(new QuoteIssue(QuoteIssues.Type.STUCK_VERSION, QuoteIssues.versionTarget(quoteId, version),
-                        table.organizationOf(quoteId), quoteId, version, null,
-                        "A versão " + version + " passou do prazo sem terminar; a execução está " + state.name() + "."),
+                table.writeIssue(
+                        new QuoteIssue(QuoteIssues.Type.STUCK_VERSION, QuoteIssues.versionTarget(quoteId, version),
+                                table.organizationOf(quoteId), quoteId, version, null,
+                                "A versão " + version + " passou do prazo sem terminar; a execução está " + state.name()
+                                        + "."),
                         now);
                 report.merge("stuck", 1, Integer::sum);
                 LOG.warnf("STUCK_VERSION: quoteId=%s version=%d execution %s", quoteId, version, state);
@@ -158,7 +171,10 @@ public class VersionReconciler {
         }
     }
 
-    /** {@code DescribeExecution} pelo {@code executionArn} gravado ou, sem ele, pelo derivado do nome (§7). */
+    /**
+     * {@code DescribeExecution} pelo {@code executionArn} gravado ou, sem ele, pelo
+     * derivado do nome (§7).
+     */
     private ExecutionState executionState(Map<String, AttributeValue> versionItem, String quoteId, int version) {
         String executionArn = Attr.string(versionItem, "executionArn");
         if (executionArn == null) {

@@ -4,10 +4,13 @@ import com.mmda.serverless.provider.domain.QueryState;
 import java.util.Objects;
 
 /**
- * Conclusão de uma consulta numa só transação, com o {@code CONSUMED} do pedido junto do efeito (§8).
+ * Conclusão de uma consulta numa só transação, com o {@code CONSUMED} do pedido
+ * junto do efeito (§8).
  *
- * @param newQuery consulta criada já concluída, quando a provider conclui sem chamar; senão {@code null}
- * @param event    evento de resultado, ou {@code null} quando a consulta fica para a reconciliação
+ * @param newQuery consulta criada já concluída, quando a provider conclui sem
+ *                 chamar; senão {@code null}
+ * @param event    evento de resultado, ou {@code null} quando a consulta fica
+ *                 para a reconciliação
  */
 record Settlement(
         String queryId,
@@ -27,9 +30,12 @@ record Settlement(
         }
     }
 
-    /** Tentativa encerrada; {@code httpStatus}, {@code errorClass} e {@code providerRequestId} são opcionais. */
+    /**
+     * Tentativa encerrada; {@code httpStatus}, {@code errorClass} e
+     * {@code providerRequestId} são opcionais.
+     */
     record AttemptResult(int sequence, String outcome, Integer httpStatus, String errorClass,
-                         String providerRequestId) {
+            String providerRequestId) {
     }
 
     /** Evento a gravar no outbox; {@code detail} é serializado em JSON. */

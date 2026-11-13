@@ -15,15 +15,21 @@ import java.util.function.Function;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Cadastro sintético do laboratório: o mesmo {@code contracts/fixtures/catalog.json} que a quote e o frontend usam,
- * empacotado no zip como recurso de classpath. Os simuladores tiram dele os veículos, os condutores e os perfis de
- * cobertura; o comportamento de cada cenário continua decidido pelo id do veículo (desenho, §10). Os ids são únicos
+ * Cadastro sintético do laboratório: o mesmo
+ * {@code contracts/fixtures/catalog.json} que a quote e o frontend usam,
+ * empacotado no zip como recurso de classpath. Os simuladores tiram dele os
+ * veículos, os condutores e os perfis de
+ * cobertura; o comportamento de cada cenário continua decidido pelo id do
+ * veículo (desenho, §10). Os ids são únicos
  * entre as organizações, porque o fornecedor recebe só a referência.
  */
 final class LabCatalog {
 
     static final String RESOURCE = "fixtures/catalog.json";
-    /** Perfil usado quando o {@code risk} não traz {@code coverageProfile}, como nos pedidos sem snapshot completo. */
+    /**
+     * Perfil usado quando o {@code risk} não traz {@code coverageProfile}, como nos
+     * pedidos sem snapshot completo.
+     */
     static final String DEFAULT_COVERAGE_PROFILE = "COMPREHENSIVE";
 
     private final Map<String, Vehicle> vehicles;

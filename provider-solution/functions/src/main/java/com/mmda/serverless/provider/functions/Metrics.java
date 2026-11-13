@@ -8,8 +8,10 @@ import java.util.Map;
 import org.springframework.stereotype.Component;
 
 /**
- * Métricas próprias em EMF (CloudWatch Embedded Metric Format), uma linha JSON por registro na saída da Lambda
- * (desenho, §9). Todas levam a dimensão {@code Stage}; as de provedor, também {@code Provider}. Os alarmes do
+ * Métricas próprias em EMF (CloudWatch Embedded Metric Format), uma linha JSON
+ * por registro na saída da Lambda
+ * (desenho, §9). Todas levam a dimensão {@code Stage}; as de provedor, também
+ * {@code Provider}. Os alarmes do
  * serverless.yml leem exatamente esses nomes.
  */
 @Component
@@ -33,7 +35,10 @@ class Metrics {
         this.clock = clock;
     }
 
-    /** Leituras do reconciler a cada ciclo: callbacks {@code UNMATCHED}, consultas {@code UNKNOWN} e outbox. */
+    /**
+     * Leituras do reconciler a cada ciclo: callbacks {@code UNMATCHED}, consultas
+     * {@code UNKNOWN} e outbox.
+     */
     void reconcilerGauges(long unmatchedCallbacks, long unknownQueries, long outboxPendingAgeSeconds) {
         Map<String, Number> values = new LinkedHashMap<>();
         values.put(UNMATCHED_CALLBACKS, unmatchedCallbacks);
@@ -43,7 +48,8 @@ class Metrics {
     }
 
     /**
-     * Uma chamada ao fornecedor; {@code failed} quando ela não trouxe resposta de negócio, como falha de rede, 5xx,
+     * Uma chamada ao fornecedor; {@code failed} quando ela não trouxe resposta de
+     * negócio, como falha de rede, 5xx,
      * 4xx ou resposta ilegível. O alarme compara as duas somas por provedor.
      */
     void providerCall(String provider, boolean failed) {
@@ -73,7 +79,10 @@ class Metrics {
         sink.emit(json.write(record));
     }
 
-    /** Destino das linhas EMF; na Lambda, a saída padrão, que vai para o CloudWatch Logs. */
+    /**
+     * Destino das linhas EMF; na Lambda, a saída padrão, que vai para o CloudWatch
+     * Logs.
+     */
     @FunctionalInterface
     interface MetricsSink {
 

@@ -16,16 +16,22 @@ import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
 
 /**
- * Outbox pendente (§7 e §9 do desenho): republica o {@code OUTBOX_PENDING} mais antigo que
- * {@code outboxRepublishAfterSeconds} com o mesmo código da relay e mede a idade do mais antigo para a métrica
- * {@code OutboxPendingAgeSeconds}. Publicar de novo não tem efeito: os consumidores descartam o
+ * Outbox pendente (§7 e §9 do desenho): republica o {@code OUTBOX_PENDING} mais
+ * antigo que
+ * {@code outboxRepublishAfterSeconds} com o mesmo código da relay e mede a
+ * idade do mais antigo para a métrica
+ * {@code OutboxPendingAgeSeconds}. Publicar de novo não tem efeito: os
+ * consumidores descartam o
  * {@code eventId} repetido e a execução repetida conta como sucesso.
  */
 @ApplicationScoped
 public class OutboxReconciler {
 
     private static final Logger LOG = Logger.getLogger(OutboxReconciler.class);
-    /** WHY: limita a varredura da idade a uma execução do reconciler, mesmo com muito outbox preso. */
+    /**
+     * WHY: limita a varredura da idade a uma execução do reconciler, mesmo com
+     * muito outbox preso.
+     */
     private static final int MAX_AGE_PAGES = 10;
 
     private final DynamoDbClient dynamoDb;
@@ -33,14 +39,18 @@ public class OutboxReconciler {
     private final OutboxPublisher publisher;
     private final QuoteFunctionsConfig config;
 
-    OutboxReconciler(DynamoDbClient dynamoDb, QuoteTable table, OutboxPublisher publisher, QuoteFunctionsConfig config) {
+    OutboxReconciler(DynamoDbClient dynamoDb, QuoteTable table, OutboxPublisher publisher,
+            QuoteFunctionsConfig config) {
         this.dynamoDb = dynamoDb;
         this.table = table;
         this.publisher = publisher;
         this.config = config;
     }
 
-    /** Relatório do M1, com {@code scanned}, {@code republished}, {@code transientFailures} e {@code permanentFailures}. */
+    /**
+     * Relatório do M1, com {@code scanned}, {@code republished},
+     * {@code transientFailures} e {@code permanentFailures}.
+     */
     Map<String, Integer> republish(Instant now) {
         Instant cutoff = now.minusSeconds(config.outboxRepublishAfterSeconds());
         int scanned = 0;
@@ -50,11 +60,13 @@ public class OutboxReconciler {
                 .indexName(QuoteKeys.GSI2)
                 .keyConditionExpression("#pk = :pending AND #sk < :cutoff")
                 .expressionAttributeNames(Map.of("#pk", QuoteKeys.GSI2_PK, "#sk", QuoteKeys.GSI2_SK))
-                .expressionAttributeValues(Map.of(":pending", s(QuoteKeys.OUTBOX_PENDING), ":cutoff", s(cutoff.toString())))
+                .expressionAttributeValues(
+                        Map.of(":pending", s(QuoteKeys.OUTBOX_PENDING), ":cutoff", s(cutoff.toString())))
                 .limit(config.reconcilerBatchSize())
                 .build()).items()) {
             scanned++;
-            // WHY: o índice é eventualmente consistente; a leitura da tabela confirma que o item segue pendente
+            // WHY: o índice é eventualmente consistente; a leitura da tabela confirma que o
+            // item segue pendente
             Optional<Map<String, AttributeValue>> item = table.get(Attr.string(pending, QuoteKeys.PK), QuoteKeys.META);
             if (item.isEmpty() || Attr.string(item.get(), "publishedAt") != null) {
                 continue;
@@ -76,8 +88,10 @@ public class OutboxReconciler {
     }
 
     /**
-     * Idade, em segundos, do outbox pendente mais antigo, 0 sem pendentes. WHY: medida pelo {@code createdAt}, não
-     * pelo {@code gsi2sk}, que a falha permanente adia (§7); por isso lê todos os pendentes, não só o primeiro.
+     * Idade, em segundos, do outbox pendente mais antigo, 0 sem pendentes. WHY:
+     * medida pelo {@code createdAt}, não
+     * pelo {@code gsi2sk}, que a falha permanente adia (§7); por isso lê todos os
+     * pendentes, não só o primeiro.
      */
     long oldestPendingAgeSeconds(Instant now) {
         long oldest = 0;
@@ -98,7 +112,8 @@ public class OutboxReconciler {
                     oldest = Math.max(oldest, Duration.between(createdAt, now).toSeconds());
                 }
             }
-            startKey = page.hasLastEvaluatedKey() && !page.lastEvaluatedKey().isEmpty() ? page.lastEvaluatedKey() : null;
+            startKey = page.hasLastEvaluatedKey() && !page.lastEvaluatedKey().isEmpty() ? page.lastEvaluatedKey()
+                    : null;
         } while (startKey != null && ++pages < MAX_AGE_PAGES);
         return oldest;
     }

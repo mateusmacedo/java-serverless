@@ -14,16 +14,19 @@ import software.amazon.awssdk.services.eventbridge.model.PutEventsResponse;
 import software.amazon.awssdk.services.eventbridge.model.PutEventsResultEntry;
 
 /**
- * Publicação de um item do outbox no barramento da plataforma, comum à relay e ao republicador (§7). A
- * entrada do {@code PutEvents} é conferida uma a uma; publicar de novo não tem efeito, porque o
- * {@code eventId} vai no {@code detail} e os consumidores descartam a repetição.
+ * Publicação de um item do outbox no barramento da plataforma, comum à relay e
+ * ao republicador (§7). A
+ * entrada do {@code PutEvents} é conferida uma a uma; publicar de novo não tem
+ * efeito, porque o
+ * {@code eventId} vai no {@code detail} e os consumidores descartam a
+ * repetição.
  */
 @Component
 class OutboxPublisher {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(OutboxPublisher.class);
-    private static final Set<String> TRANSIENT_ENTRY_ERRORS =
-            Set.of("ThrottlingException", "InternalFailure", "InternalException", "ServiceUnavailable");
+    private static final Set<String> TRANSIENT_ENTRY_ERRORS = Set.of("ThrottlingException", "InternalFailure",
+            "InternalException", "ServiceUnavailable");
 
     private final EventBridgeClient eventBridge;
     private final OutboxStore outbox;
@@ -41,7 +44,10 @@ class OutboxPublisher {
         PUBLISHED,
         /** Vale repetir: o registro volta em {@code batchItemFailures}. */
         TRANSIENT_FAILURE,
-        /** Não vale repetir: grava {@code attempts} e {@code lastError} e o item continua pendente. */
+        /**
+         * Não vale repetir: grava {@code attempts} e {@code lastError} e o item
+         * continua pendente.
+         */
         PERMANENT_FAILURE
     }
 

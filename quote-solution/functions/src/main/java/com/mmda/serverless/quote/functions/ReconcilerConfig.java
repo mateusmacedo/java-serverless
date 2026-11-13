@@ -11,21 +11,34 @@ public interface ReconcilerConfig {
 
     String resultsDeadLetterQueueUrl();
 
-    /** Fila {@code issues} do {@code issue-projector}, para onde volta a mensagem reprocessada da DLQ (M5). */
+    /**
+     * Fila {@code issues} do {@code issue-projector}, para onde volta a mensagem
+     * reprocessada da DLQ (M5).
+     */
     String issuesQueueUrl();
 
     String issuesDeadLetterQueueUrl();
 
-    /** Tentativas de uma mensagem da DLQ, contando a entrega original (ADR 0007). */
+    /**
+     * Tentativas de uma mensagem da DLQ, contando a entrega original (ADR 0007).
+     */
     int dlqMaxAttempts();
 
-    /** Margem além de {@code deadlineAt} para a ocorrência {@code STUCK_VERSION}. */
+    /**
+     * Margem além de {@code deadlineAt} para a ocorrência {@code STUCK_VERSION}.
+     */
     int stuckVersionMarginSeconds();
 
-    /** Idade do {@code RESUMING} a partir da qual o waiter é retomado pelo {@code reconciler} (T13). */
+    /**
+     * Idade do {@code RESUMING} a partir da qual o waiter é retomado pelo
+     * {@code reconciler} (T13).
+     */
     int resumingRetryAfterSeconds();
 
-    /** Namespace das métricas EMF da solução, o mesmo dos alarmes do {@code serverless.yml}. */
+    /**
+     * Namespace das métricas EMF da solução, o mesmo dos alarmes do
+     * {@code serverless.yml}.
+     */
     String metricsNamespace();
 
     String stage();

@@ -4,9 +4,12 @@ import com.mmda.serverless.provider.domain.EventIds;
 import java.util.Objects;
 
 /**
- * {@code detail} do {@code OperationIssueRaised} e do {@code OperationIssueUpdated} (desenho, §3). O
- * {@code eventId} é o UUIDv5 de {@code issueId|revision}, e o {@code revision} cresce a cada mudança da
- * ocorrência. {@code organizationId}, {@code queryId} e {@code quoteId} faltam quando o alvo não os tem, como
+ * {@code detail} do {@code OperationIssueRaised} e do
+ * {@code OperationIssueUpdated} (desenho, §3). O
+ * {@code eventId} é o UUIDv5 de {@code issueId|revision}, e o {@code revision}
+ * cresce a cada mudança da
+ * ocorrência. {@code organizationId}, {@code queryId} e {@code quoteId} faltam
+ * quando o alvo não os tem, como
  * no callback sem correlação.
  */
 public record OperationIssue(
@@ -46,7 +49,7 @@ public record OperationIssue(
 
     /** Estado gravado no {@code ISSUE#}, de que sai o evento de cada revisão. */
     public record State(String issueId, String organizationId, IssueType type, IssueStatus status, String queryId,
-                        String quoteId, String firstSeenAt, String lastSeenAt, String safeSummary, long revision) {
+            String quoteId, String firstSeenAt, String lastSeenAt, String safeSummary, long revision) {
 
         public OperationIssue event(String occurredAt) {
             return new OperationIssue(EventIds.operationIssue(issueId, revision), occurredAt, SCHEMA_VERSION, issueId,
@@ -54,7 +57,10 @@ public record OperationIssue(
                     type.reconcilable() && queryId != null, revision);
         }
 
-        /** Primeira revisão: o evento é {@code OperationIssueRaised}; as seguintes, {@code OperationIssueUpdated}. */
+        /**
+         * Primeira revisão: o evento é {@code OperationIssueRaised}; as seguintes,
+         * {@code OperationIssueUpdated}.
+         */
         public String detailType() {
             return revision == 1 ? RAISED : UPDATED;
         }

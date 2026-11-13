@@ -26,9 +26,12 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * {@code insurerWorker} com a seguradora assíncrona beta (desenho, §8, "Seguradora" e "Callbacks"): o caminho
- * do {@code 202}, a metade do worker no {@code CORR#} e as pendências que a API de callbacks guardou antes dela.
- * Os callbacks passam pelo código do {@code provider-api} ({@link CallbackApi}), então as duas metades do encontro
+ * {@code insurerWorker} com a seguradora assíncrona beta (desenho, §8,
+ * "Seguradora" e "Callbacks"): o caminho
+ * do {@code 202}, a metade do worker no {@code CORR#} e as pendências que a API
+ * de callbacks guardou antes dela.
+ * Os callbacks passam pelo código do {@code provider-api}
+ * ({@link CallbackApi}), então as duas metades do encontro
  * e as duas conclusões, a da API e a do worker, são as reais.
  */
 class InsurerCallbackIT extends FlociIntegrationTest {
@@ -36,7 +39,10 @@ class InsurerCallbackIT extends FlociIntegrationTest {
     private static final Duration DEADLINE = Duration.ofMinutes(4);
     private static final String BETA = "beta";
     private static final String UNREADABLE_OFFER = "{\"outcome\":\"OFFER\",\"insurerName\":\"Beta Seguros\"}";
-    /** Atributos sem identidade nem horário, comparados pelo valor; os demais, só pelo tipo. */
+    /**
+     * Atributos sem identidade nem horário, comparados pelo valor; os demais, só
+     * pelo tipo.
+     */
     private static final Set<String> COMPARED_BY_VALUE = Set.of("type", "state", "operation", "provider", "insurerId",
             "organizationId", "version", "sequence", "outcome", "errorClass", "httpStatus", "resultType",
             "normalizedResult", "processingStatus", "detailType", "attempts", "gsi2pk");
@@ -138,8 +144,10 @@ class InsurerCallbackIT extends FlociIntegrationTest {
     }
 
     /**
-     * O callback com {@code clientReference} chega durante a chamada e conclui a consulta antes de o {@code 202}
-     * ser gravado: o {@code 202} não muda a consulta concluída, e a metade do worker no {@code CORR#} não acha
+     * O callback com {@code clientReference} chega durante a chamada e conclui a
+     * consulta antes de o {@code 202}
+     * ser gravado: o {@code 202} não muda a consulta concluída, e a metade do
+     * worker no {@code CORR#} não acha
      * pendência nem grava outro resultado.
      */
     @Test
@@ -172,8 +180,10 @@ class InsurerCallbackIT extends FlociIntegrationTest {
     }
 
     /**
-     * A conclusão do callback existe nos dois módulos (a API conclui quando é a segunda metade; o worker, quando
-     * ele é): o mesmo callback deixa os mesmos itens, com os mesmos atributos, nos dois caminhos.
+     * A conclusão do callback existe nos dois módulos (a API conclui quando é a
+     * segunda metade; o worker, quando
+     * ele é): o mesmo callback deixa os mesmos itens, com os mesmos atributos, nos
+     * dois caminhos.
      */
     @Test
     void theApiAndTheWorkerSettleTheSameCallbackIntoTheSameItems() {
@@ -199,8 +209,8 @@ class InsurerCallbackIT extends FlociIntegrationTest {
                 .isEqualTo(shape(item("INBOX#beta#" + workerEvent, "META")));
         assertThat(shape(item("CORR#beta#" + ProviderStub.betaRequestId(byApi.queryId()), "META")))
                 .isEqualTo(shape(item("CORR#beta#" + ProviderStub.betaRequestId(byWorker.queryId()), "META")));
-        assertThat(queryItems(byApi.queryId(), "ATTEMPT#")).singleElement().satisfies(attempt ->
-                assertThat(attribute(attempt, "errorClass")).contains("INVALID_PROVIDER_RESPONSE"));
+        assertThat(queryItems(byApi.queryId(), "ATTEMPT#")).singleElement().satisfies(
+                attempt -> assertThat(attribute(attempt, "errorClass")).contains("INVALID_PROVIDER_RESPONSE"));
     }
 
     @Test
@@ -275,7 +285,10 @@ class InsurerCallbackIT extends FlociIntegrationTest {
         return TestRequests.insurer("vehicle-hatch-2021", Instant.now().plus(DEADLINE), BETA);
     }
 
-    /** Callback que chegou só com o {@code providerRequestId}, antes da metade do worker: a API o guarda na inbox. */
+    /**
+     * Callback que chegou só com o {@code providerRequestId}, antes da metade do
+     * worker: a API o guarda na inbox.
+     */
     private String givenCallbackWaitingForTheWorker(String providerRequestId, String result) {
         String externalEventId = "bev_" + UUID.randomUUID();
         assertThat(api.receive(BETA, callback(externalEventId, providerRequestId, null, result)))
@@ -284,14 +297,17 @@ class InsurerCallbackIT extends FlociIntegrationTest {
     }
 
     private static String callback(String externalEventId, String providerRequestId, String clientReference,
-                                   String result) {
+            String result) {
         String reference = clientReference == null ? "" : ",\"clientReference\":\"" + clientReference + "\"";
         return """
                 {"externalEventId":"%s","providerRequestId":"%s"%s,"sentAt":"%s","result":%s}"""
                 .formatted(externalEventId, providerRequestId, reference, Timestamps.format(Instant.now()), result);
     }
 
-    /** Consulta que recebeu o {@code 202} numa entrega que morreu antes da metade do worker no {@code CORR#}. */
+    /**
+     * Consulta que recebeu o {@code 202} numa entrega que morreu antes da metade do
+     * worker no {@code CORR#}.
+     */
     private static void givenAcceptedQuery(TestRequests.Request request, String providerRequestId) {
         String startedAt = Timestamps.format(Instant.now().minusSeconds(200));
         Map<String, AttributeValue> query = new HashMap<>(Map.of(

@@ -32,7 +32,8 @@ import software.amazon.awssdk.services.eventbridge.model.PutEventsResponse;
 import software.amazon.awssdk.services.eventbridge.model.PutEventsResultEntry;
 
 @ExtendWith(MockitoExtension.class)
-// WHY: a sobrecarga do SDK com Consumer repassa para a sobrecarga com request, que é a simulada;
+// WHY: a sobrecarga do SDK com Consumer repassa para a sobrecarga com request,
+// que é a simulada;
 // no modo estrito o Mockito trata essa chamada como argumento divergente
 @MockitoSettings(strictness = Strictness.LENIENT)
 class OutboxPublisherTest {

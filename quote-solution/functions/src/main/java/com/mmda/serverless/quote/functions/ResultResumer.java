@@ -35,8 +35,10 @@ import software.amazon.awssdk.services.sfn.model.InvalidTokenException;
 import software.amazon.awssdk.services.sfn.model.TaskTimedOutException;
 
 /**
- * Retomada (§8 do desenho): grava o resultado da provider e a intenção de retomada numa transação, com o
- * {@code CONSUMED#<eventId>}, e só depois chama {@code SendTaskSuccess}. Resultado depois do prazo ou de
+ * Retomada (§8 do desenho): grava o resultado da provider e a intenção de
+ * retomada numa transação, com o
+ * {@code CONSUMED#<eventId>}, e só depois chama {@code SendTaskSuccess}.
+ * Resultado depois do prazo ou de
  * outro resultado vira evidência tardia, sem reabrir a versão (RN10).
  */
 @ApplicationScoped
@@ -77,7 +79,8 @@ public class ResultResumer {
     public Disposition handle(String body) {
         JsonNode envelope = readTree(body);
         String detailType = envelope.path("detail-type").asText();
-        if (!QuoteEvents.ENRICHMENT_RESOLVED.equals(detailType) && !QuoteEvents.INSURER_RESULT_RECORDED.equals(detailType)) {
+        if (!QuoteEvents.ENRICHMENT_RESOLVED.equals(detailType)
+                && !QuoteEvents.INSURER_RESULT_RECORDED.equals(detailType)) {
             LOG.warnf("ignoring unexpected event %s", detailType);
             return Disposition.IGNORED;
         }
@@ -86,12 +89,14 @@ public class ResultResumer {
         WorkRef workRef = new WorkRef(required(detail, "workRef"));
         Optional<Map<String, AttributeValue>> found = table.get(QuoteKeys.waiterPk(workRef), QuoteKeys.META);
         if (found.isEmpty()) {
-            // WHY: o pedido só sai depois do commit do waiter; um workRef desconhecido não é desta quote (M4 registra)
+            // WHY: o pedido só sai depois do commit do waiter; um workRef desconhecido não
+            // é desta quote (M4 registra)
             LOG.warnf("result %s for unknown workRef=%s", eventId, workRef);
             return Disposition.UNKNOWN_WORK;
         }
         Waiter waiter = Waiter.of(found.get());
-        // WHY: conferido em toda entrega, o evento fora do contrato chega à DLQ; conferido só no prazo, a
+        // WHY: conferido em toda entrega, o evento fora do contrato chega à DLQ;
+        // conferido só no prazo, a
         // reentrega depois dele o gravaria como evidência tardia
         EnrichmentDetail enrichment = waiter.kind() == WorkRef.Kind.ENRICHMENT ? EnrichmentDetail.of(detail) : null;
         Instant now = Instant.now(clock);
@@ -106,7 +111,8 @@ public class ResultResumer {
                 "SET #status = :resuming, resultEventId = :eventId, resumePayload = :payload, "
                         + QuoteKeys.GSI2_PK + " = :gsi2pk, " + QuoteKeys.GSI2_SK + " = :now, updatedAt = :now",
                 "#status = :waiting", Map.of("#status", "status"),
-                Map.of(":resuming", s("RESUMING"), ":eventId", s(eventId), ":payload", s(table.toJson(result.payload())),
+                Map.of(":resuming", s("RESUMING"), ":eventId", s(eventId), ":payload",
+                        s(table.toJson(result.payload())),
                         ":gsi2pk", s(QuoteKeys.WAITER_RESUMING), ":now", s(now.toString()), ":waiting", s("WAITING"))));
         writes.addAll(result.writes());
         writes.add(table.put(consumed(eventId, now), QuoteTable.NOT_EXISTS));
@@ -132,9 +138,12 @@ public class ResultResumer {
     }
 
     /**
-     * {@code SendTaskSuccess} com o token mais recente do waiter; também retoma, pelo {@code reconciler}, o waiter
-     * parado em {@code RESUMING} (T13). {@code TaskTimedOut} e {@code InvalidToken} marcam {@code EXPIRED} só a
-     * partir de {@code RESUMING}, para nunca rebaixar um {@code DONE}. Devolve o estado final.
+     * {@code SendTaskSuccess} com o token mais recente do waiter; também retoma,
+     * pelo {@code reconciler}, o waiter
+     * parado em {@code RESUMING} (T13). {@code TaskTimedOut} e {@code InvalidToken}
+     * marcam {@code EXPIRED} só a
+     * partir de {@code RESUMING}, para nunca rebaixar um {@code DONE}. Devolve o
+     * estado final.
      */
     String resumeExecution(WorkRef workRef) {
         Map<String, AttributeValue> waiter = table.get(QuoteKeys.waiterPk(workRef), QuoteKeys.META).orElseThrow();
@@ -152,9 +161,11 @@ public class ResultResumer {
                 ":resuming", s("RESUMING"), ":now", s(now)));
         String expression;
         if (delivered) {
-            expression = "SET #status = :final, updatedAt = :now REMOVE " + QuoteKeys.GSI2_PK + ", " + QuoteKeys.GSI2_SK;
+            expression = "SET #status = :final, updatedAt = :now REMOVE " + QuoteKeys.GSI2_PK + ", "
+                    + QuoteKeys.GSI2_SK;
         } else {
-            // WHY: EXPIRED aqui pode ter o resultado entregue (§8); o reconciler confere antes do TASK_EXPIRED
+            // WHY: EXPIRED aqui pode ter o resultado entregue (§8); o reconciler confere
+            // antes do TASK_EXPIRED
             values.put(":expiredIndex", s(QuoteKeys.WAITER_EXPIRED));
             expression = "SET #status = :final, updatedAt = :now, " + QuoteKeys.GSI2_PK + " = :expiredIndex, "
                     + QuoteKeys.GSI2_SK + " = :now";
@@ -186,10 +197,12 @@ public class ResultResumer {
         putIfPresent(values, expression, "reasonCode", reasonCode);
         putIfPresent(values, expression, "queryRef", optional(detail, "queryId"));
         putIfPresent(values, expression, "attemptRef", optional(detail, "attemptRef"));
-        // WHY: com o mesmo resultEventId do waiter, o reconciler reconhece o resultado entregue (TASK_EXPIRED, §8)
+        // WHY: com o mesmo resultEventId do waiter, o reconciler reconhece o resultado
+        // entregue (TASK_EXPIRED, §8)
         putIfPresent(values, expression, "resultEventId", eventId);
         List<TransactWriteItem> writes = new ArrayList<>();
-        writes.add(table.update(QuoteKeys.quotePk(waiter.quoteId()), QuoteKeys.resultSk(waiter.version(), waiter.insurerId()),
+        writes.add(table.update(QuoteKeys.quotePk(waiter.quoteId()),
+                QuoteKeys.resultSk(waiter.version(), waiter.insurerId()),
                 expression.toString(), "#status IN (:pending, :processing)", Map.of("#status", "status"), values));
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("insurerId", waiter.insurerId());
@@ -201,7 +214,8 @@ public class ResultResumer {
                 throw new IllegalArgumentException("QUOTED result without offer");
             }
             String offerId = QuoteKeys.offerId(workRef);
-            writes.add(table.put(offerItem(waiter, offerId, optional(detail, "queryId"), offer, now), QuoteTable.NOT_EXISTS));
+            writes.add(table.put(offerItem(waiter, offerId, optional(detail, "queryId"), offer, now),
+                    QuoteTable.NOT_EXISTS));
             payload.put("offerId", offerId);
         }
         return new Result(writes, payload);
@@ -232,8 +246,10 @@ public class ResultResumer {
     }
 
     /**
-     * Evidência usada pela versão ({@code V#n#EVIDENCE#<workRef>}, §4 do desenho). {@code HIT}, {@code JOIN} e
-     * {@code MISS} gravam o mesmo item, com a referência da evidência da provider e o {@code policyVersion}
+     * Evidência usada pela versão ({@code V#n#EVIDENCE#<workRef>}, §4 do desenho).
+     * {@code HIT}, {@code JOIN} e
+     * {@code MISS} gravam o mesmo item, com a referência da evidência da provider e
+     * o {@code policyVersion}
      * que a produziu, ambos obrigatórios no AsyncAPI da provider.
      */
     private Result enrichmentResult(Waiter waiter, WorkRef workRef, EnrichmentDetail enrichment, JsonNode detail,
@@ -268,7 +284,10 @@ public class ResultResumer {
         return new Result(List.of(table.put(evidence, QuoteTable.NOT_EXISTS)), payload);
     }
 
-    /** Evidência tardia (§4 do desenho), gravada com o {@code CONSUMED} para não se repetir. */
+    /**
+     * Evidência tardia (§4 do desenho), gravada com o {@code CONSUMED} para não se
+     * repetir.
+     */
     private Disposition recordLate(Waiter waiter, JsonNode detail, String eventId, String reason, Instant now) {
         String target = waiter.kind() == WorkRef.Kind.ENRICHMENT ? "ENRICHMENT" : waiter.insurerId();
         String queryId = optional(detail, "queryId");
@@ -279,7 +298,8 @@ public class ResultResumer {
         late.put("reason", s(reason));
         late.put("eventId", s(eventId));
         late.put("receivedAt", s(now.toString()));
-        putIfPresent(late, "status", optional(detail, waiter.kind() == WorkRef.Kind.ENRICHMENT ? "resultType" : "status"));
+        putIfPresent(late, "status",
+                optional(detail, waiter.kind() == WorkRef.Kind.ENRICHMENT ? "resultType" : "status"));
         putIfPresent(late, "queryRef", queryId);
         putIfPresent(late, "attemptRef", optional(detail, "attemptRef"));
         if (waiter.kind() == WorkRef.Kind.ENRICHMENT) {
@@ -310,7 +330,10 @@ public class ResultResumer {
         return "DUPLICATE".equals(reason) ? Disposition.DUPLICATE : Disposition.LATE;
     }
 
-    /** O descarte não grava nada; a linha de log com o {@code eventId} é o rastro dele. */
+    /**
+     * O descarte não grava nada; a linha de log com o {@code eventId} é o rastro
+     * dele.
+     */
     private static Disposition discarded(String eventId) {
         LOG.infof("result %s already consumed, discarded", eventId);
         return Disposition.DISCARDED;
@@ -370,13 +393,16 @@ public class ResultResumer {
     private record Result(List<TransactWriteItem> writes, Map<String, Object> payload) {
     }
 
-    /** Campos do {@code EnrichmentResolved} que viram evidência, conferidos contra o AsyncAPI da provider. */
+    /**
+     * Campos do {@code EnrichmentResolved} que viram evidência, conferidos contra o
+     * AsyncAPI da provider.
+     */
     private record EnrichmentDetail(EnrichmentOutcome.ResultType resultType, ReuseDecision reuseDecision,
             String evidenceId, String queryId, String policyVersion) {
 
         static EnrichmentDetail of(JsonNode detail) {
-            EnrichmentOutcome.ResultType resultType =
-                    EnrichmentOutcome.ResultType.valueOf(required(detail, "resultType"));
+            EnrichmentOutcome.ResultType resultType = EnrichmentOutcome.ResultType
+                    .valueOf(required(detail, "resultType"));
             ReuseDecision reuseDecision = ReuseDecision.valueOf(required(detail, "reuseDecision"));
             if (reuseDecision == ReuseDecision.HIT && resultType == EnrichmentOutcome.ResultType.FAILED) {
                 throw new IllegalArgumentException("FAILED enrichment never comes from the reuse index");
@@ -388,7 +414,8 @@ public class ResultResumer {
             if (!notFoundRefs.isMissingNode() && !notFoundRefs.isNull() && !notFoundRefs.isArray()) {
                 throw new IllegalArgumentException("enrichment with notFoundRefs that is not a list");
             }
-            // WHY: NOT_FOUND só vale declarado pelo provedor (RN07), e sem as referências a versão terminaria
+            // WHY: NOT_FOUND só vale declarado pelo provedor (RN07), e sem as referências a
+            // versão terminaria
             // NEEDS_INFORMATION sem nenhum campo a completar
             if (resultType == EnrichmentOutcome.ResultType.NOT_FOUND && notFoundRefs.isEmpty()) {
                 throw new IllegalArgumentException("NOT_FOUND enrichment without notFoundRefs");

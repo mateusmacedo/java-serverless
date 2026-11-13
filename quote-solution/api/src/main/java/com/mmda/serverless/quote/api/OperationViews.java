@@ -8,7 +8,10 @@ import java.util.List;
 import java.util.Map;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 
-/** Respostas de {@code /v1/operations}: só resumo seguro, sem token, payload nem dado do operador. */
+/**
+ * Respostas de {@code /v1/operations}: só resumo seguro, sem token, payload nem
+ * dado do operador.
+ */
 final class OperationViews {
 
     private OperationViews() {

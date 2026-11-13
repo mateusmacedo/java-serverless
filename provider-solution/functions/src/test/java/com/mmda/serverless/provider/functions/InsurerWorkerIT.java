@@ -20,7 +20,10 @@ import software.amazon.awssdk.services.sqs.model.Message;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
-/** {@code insurerWorker} com a seguradora síncrona alpha (desenho, §8, "Seguradora"). */
+/**
+ * {@code insurerWorker} com a seguradora síncrona alpha (desenho, §8,
+ * "Seguradora").
+ */
 class InsurerWorkerIT extends FlociIntegrationTest {
 
     private static final Duration DEADLINE = Duration.ofMinutes(4);
@@ -109,7 +112,8 @@ class InsurerWorkerIT extends FlociIntegrationTest {
 
     @Test
     void unavailableInsurerIsRetriedThenRecordedAsUnavailable() {
-        TestRequests.Request request = TestRequests.insurer(ProviderStub.VEHICLE_ALPHA_DOWN, Instant.now().plus(DEADLINE));
+        TestRequests.Request request = TestRequests.insurer(ProviderStub.VEHICLE_ALPHA_DOWN,
+                Instant.now().plus(DEADLINE));
 
         worker.apply(sqsEvent(request.body()));
 
@@ -213,7 +217,8 @@ class InsurerWorkerIT extends FlociIntegrationTest {
 
     @Test
     void unsupportedInsurerIsUnavailableWithoutCalling() {
-        TestRequests.Request request = TestRequests.insurer("vehicle-hatch-2019", Instant.now().plus(DEADLINE), "gamma");
+        TestRequests.Request request = TestRequests.insurer("vehicle-hatch-2019", Instant.now().plus(DEADLINE),
+                "gamma");
 
         worker.apply(sqsEvent(request.body()));
 

@@ -3,8 +3,10 @@ package com.mmda.serverless.provider.domain;
 import java.util.regex.Pattern;
 
 /**
- * Valores monetários trafegam como strings decimais e nunca passam por ponto flutuante binário (RN12). O
- * formato é o dos contratos ({@code ^\d+(\.\d+)?$}): sem sinal, sem expoente e sem separador de milhar.
+ * Valores monetários trafegam como strings decimais e nunca passam por ponto
+ * flutuante binário (RN12). O
+ * formato é o dos contratos ({@code ^\d+(\.\d+)?$}): sem sinal, sem expoente e
+ * sem separador de milhar.
  */
 public final class Decimals {
 

@@ -5,8 +5,10 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * O que um pedido de enriquecimento novo faz diante do índice de reuso e da liderança lidos com
- * {@code ConsistentRead} (desenho, §8): usar a evidência válida ({@code HIT}), esperar a consulta em voo
+ * O que um pedido de enriquecimento novo faz diante do índice de reuso e da
+ * liderança lidos com
+ * {@code ConsistentRead} (desenho, §8): usar a evidência válida ({@code HIT}),
+ * esperar a consulta em voo
  * ({@code JOIN}) ou liderar uma consulta nova ({@code MISS}).
  */
 public sealed interface ReusePlan {
@@ -17,7 +19,7 @@ public sealed interface ReusePlan {
      * @param workRef    pedido que decide
      */
     static ReusePlan of(Optional<ReuseIndexEntry> reuse, Optional<Leadership> leadership, String workRef,
-                        Instant now, String policyVersion) {
+            Instant now, String policyVersion) {
         Objects.requireNonNull(workRef, "workRef");
         if (reuse.isPresent() && reuse.get().servesAt(now, policyVersion)) {
             return new Hit(reuse.get());
@@ -40,20 +42,24 @@ public sealed interface ReusePlan {
     record Hit(ReuseIndexEntry entry) implements ReusePlan {
     }
 
-    /** Registro como seguidor da liderança em voo, na {@code fencingVersion} dela. */
+    /**
+     * Registro como seguidor da liderança em voo, na {@code fencingVersion} dela.
+     */
     record Join(long fencingVersion) implements ReusePlan {
     }
 
     /**
-     * Aquisição da liderança, condicionada ao estado lido: {@code expectedFencingVersion} e
+     * Aquisição da liderança, condicionada ao estado lido:
+     * {@code expectedFencingVersion} e
      * {@code expectedReuseRevision} são {@code null} quando o item não existia.
      */
     record Lead(long fencingVersion, long firstFencingVersion, Long expectedFencingVersion,
-                Long expectedReuseRevision) implements ReusePlan {
+            Long expectedReuseRevision) implements ReusePlan {
     }
 
     /**
-     * A liderança é do próprio pedido: outra entrega dele assumiu primeiro. O pedido nunca se registra como
+     * A liderança é do próprio pedido: outra entrega dele assumiu primeiro. O
+     * pedido nunca se registra como
      * seguidor de si mesmo e segue a regra de reentrega da própria consulta.
      */
     record OwnLeadership() implements ReusePlan {

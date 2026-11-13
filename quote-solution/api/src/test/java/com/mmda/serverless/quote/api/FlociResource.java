@@ -27,11 +27,15 @@ import software.amazon.awssdk.services.dynamodb.model.ScalarAttributeType;
 import software.amazon.awssdk.services.dynamodb.model.StreamViewType;
 
 /**
- * Sobe um Floci com a tabela da quote-solution (mesmo esquema do {@code serverless.yml}) e um user pool
- * Cognito com app client, grupos e usuários. Os tokens são access tokens reais do pool.
+ * Sobe um Floci com a tabela da quote-solution (mesmo esquema do
+ * {@code serverless.yml}) e um user pool
+ * Cognito com app client, grupos e usuários. Os tokens são access tokens reais
+ * do pool.
  * <p>
- * WHY: o issuer é lido do {@code openid-configuration} do container e o JWKS é apontado na porta
- * mapeada, porque o Floci de teste sobe sem {@code FLOCI_HOSTNAME} (§11 do desenho).
+ * WHY: o issuer é lido do {@code openid-configuration} do container e o JWKS é
+ * apontado na porta
+ * mapeada, porque o Floci de teste sobe sem {@code FLOCI_HOSTNAME} (§11 do
+ * desenho).
  */
 public class FlociResource implements QuarkusTestResourceLifecycleManager {
 
@@ -45,7 +49,10 @@ public class FlociResource implements QuarkusTestResourceLifecycleManager {
     static final TestUser WRITER = new TestUser("ana-writer",
             List.of("org_org-acme", "perm_quotes_read", "perm_quotes_write", "perm_offers_select"));
     static final TestUser READER = new TestUser("rui-reader", List.of("org_org-acme", "perm_quotes_read"));
-    /** {@code perm_offers_select} desde o M5: a seleção numa cotação de outra organização responde 404 (T18). */
+    /**
+     * {@code perm_offers_select} desde o M5: a seleção numa cotação de outra
+     * organização responde 404 (T18).
+     */
     static final TestUser GLOBEX = new TestUser("carla-globex",
             List.of("org_org-globex", "perm_quotes_read", "perm_quotes_write", "perm_offers_select"));
     /** Operadores do M5, com as permissões de operação e sem as de cotação. */
@@ -66,8 +73,8 @@ public class FlociResource implements QuarkusTestResourceLifecycleManager {
         System.setProperty("aws.secretAccessKey", floci.getSecretKey());
 
         try (DynamoDbClient dynamoDb = DynamoDbClient.builder().httpClientBuilder(AwsCrtHttpClient.builder()).build();
-             CognitoIdentityProviderClient cognito = CognitoIdentityProviderClient.builder()
-                     .httpClientBuilder(AwsCrtHttpClient.builder()).build()) {
+                CognitoIdentityProviderClient cognito = CognitoIdentityProviderClient.builder()
+                        .httpClientBuilder(AwsCrtHttpClient.builder()).build()) {
             createTable(dynamoDb);
 
             String poolId = cognito.createUserPool(builder -> builder.poolName("it-quote-users")).userPool().id();

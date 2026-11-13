@@ -12,8 +12,10 @@ import java.net.http.HttpTimeoutException;
 import org.springframework.stereotype.Component;
 
 /**
- * POST JSON para os fornecedores, sob {@code PROVIDERS_BASE_URL}. Separa o que falhou antes do envio
- * (repetível) do que pode ter chegado ao fornecedor sem resposta (ambíguo), como pede o §9 do desenho.
+ * POST JSON para os fornecedores, sob {@code PROVIDERS_BASE_URL}. Separa o que
+ * falhou antes do envio
+ * (repetível) do que pode ter chegado ao fornecedor sem resposta (ambíguo),
+ * como pede o §9 do desenho.
  */
 @Component
 class ProviderHttp {
@@ -41,7 +43,10 @@ class ProviderHttp {
                 .build());
     }
 
-    /** Leitura sem efeito no fornecedor, como a API de situação da seguradora assíncrona (§10). */
+    /**
+     * Leitura sem efeito no fornecedor, como a API de situação da seguradora
+     * assíncrona (§10).
+     */
     CallOutcome<String> getJson(String path) {
         return send(HttpRequest.newBuilder(URI.create(stripTrailingSlash(properties.providersBaseUrl()) + path))
                 .timeout(properties.httpTimeout())

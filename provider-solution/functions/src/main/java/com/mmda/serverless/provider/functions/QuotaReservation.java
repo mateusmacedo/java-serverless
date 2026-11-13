@@ -5,7 +5,8 @@ import java.time.Duration;
 import java.time.Instant;
 
 /**
- * Débito de uma chamada na quota do provedor e credencial, na janela corrente (§9). O item da janela
+ * Débito de uma chamada na quota do provedor e credencial, na janela corrente
+ * (§9). O item da janela
  * expira por TTL uma hora depois da virada.
  */
 record QuotaReservation(String key, int limit, QuotaWindow window) {

@@ -15,22 +15,34 @@ import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
 
 /**
- * Listagem paginada por cursor no índice {@code gsi1} de uma organização, do {@code gsi1sk} maior para o menor
- * (ADR 0015 e §11 do desenho). O cursor é a posição ({@code gsi1sk}) do último item lido, e a chave da tabela sai
- * dela; o {@code gsi1pk} vem sempre da organização de quem chama, então um cursor adulterado não lê outra.
+ * Listagem paginada por cursor no índice {@code gsi1} de uma organização, do
+ * {@code gsi1sk} maior para o menor
+ * (ADR 0015 e §11 do desenho). O cursor é a posição ({@code gsi1sk}) do último
+ * item lido, e a chave da tabela sai
+ * dela; o {@code gsi1pk} vem sempre da organização de quem chama, então um
+ * cursor adulterado não lê outra.
  */
 final class IndexPages {
 
-    /** WHY: limita as leituras de uma página quando o filtro descarta quase tudo; a página volta com o cursor. */
+    /**
+     * WHY: limita as leituras de uma página quando o filtro descarta quase tudo; a
+     * página volta com o cursor.
+     */
     private static final int MAX_QUERIES = 10;
     private static final int MIN_EVALUATED = 50;
-    /** WHY: limite da chave de ordenação do DynamoDB; o {@code ExclusiveStartKey} maior é recusado com 400. */
+    /**
+     * WHY: limite da chave de ordenação do DynamoDB; o {@code ExclusiveStartKey}
+     * maior é recusado com 400.
+     */
     static final int MAX_POSITION_BYTES = 1024;
 
     private IndexPages() {
     }
 
-    /** Filtro: condição da chave de ordenação, {@code FilterExpression} e a conferência exata no código. */
+    /**
+     * Filtro: condição da chave de ordenação, {@code FilterExpression} e a
+     * conferência exata no código.
+     */
     record Filter(String sortKeyCondition, String expression, Map<String, String> names,
             Map<String, AttributeValue> values, Predicate<Map<String, AttributeValue>> accept) {
 
@@ -44,12 +56,14 @@ final class IndexPages {
     }
 
     /**
-     * @param baseKey chave da tabela do item na posição informada; a posição termina em {@code #<id>}
+     * @param baseKey chave da tabela do item na posição informada; a posição
+     *                termina em {@code #<id>}
      */
     static Page read(DynamoDbClient dynamoDb, String table, String partition, Filter filter, String afterPosition,
             Function<String, Map<String, AttributeValue>> baseKey, int limit) {
         List<Map<String, AttributeValue>> items = new ArrayList<>();
-        Map<String, AttributeValue> startKey = afterPosition == null ? null : startKey(partition, afterPosition, baseKey);
+        Map<String, AttributeValue> startKey = afterPosition == null ? null
+                : startKey(partition, afterPosition, baseKey);
         String lastEvaluated = null;
         for (int query = 0; query < MAX_QUERIES; query++) {
             QueryResponse page = dynamoDb.query(request(table, partition, filter, startKey,
@@ -60,7 +74,8 @@ final class IndexPages {
                 }
                 items.add(item);
                 if (items.size() > limit) {
-                    // INVARIANT: o cursor aponta o último item devolvido, então o item excedente volta na página seguinte
+                    // INVARIANT: o cursor aponta o último item devolvido, então o item excedente
+                    // volta na página seguinte
                     List<Map<String, AttributeValue>> returned = List.copyOf(items.subList(0, limit));
                     return new Page(returned, position(returned.getLast()));
                 }
@@ -78,7 +93,10 @@ final class IndexPages {
         return Items.string(item, QuoteKeys.GSI1_SK);
     }
 
-    /** Identificador no fim da posição {@code <ordem>#<id>}; nulo quando a posição está fora do formato. */
+    /**
+     * Identificador no fim da posição {@code <ordem>#<id>}; nulo quando a posição
+     * está fora do formato.
+     */
     static String idOf(String position) {
         int separator = position == null ? -1 : position.lastIndexOf('#');
         if (separator < 1 || separator == position.length() - 1) {

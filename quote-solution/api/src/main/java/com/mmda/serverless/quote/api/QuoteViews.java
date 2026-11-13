@@ -24,8 +24,10 @@ import java.nio.charset.StandardCharsets;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 
 /**
- * Monta as respostas de leitura a partir dos itens da versão. Revisões, ações permitidas e
- * disponibilidade das ofertas são derivadas aqui, com o {@code serverTime} da leitura (§4 e §8).
+ * Monta as respostas de leitura a partir dos itens da versão. Revisões, ações
+ * permitidas e
+ * disponibilidade das ofertas são derivadas aqui, com o {@code serverTime} da
+ * leitura (§4 e §8).
  */
 final class QuoteViews {
 
@@ -77,7 +79,10 @@ final class QuoteViews {
     record OffersPage(long revision, String serverTime, List<Offer> items, String nextCursor) {
     }
 
-    /** Resumo da cotação na listagem, lido do {@code META}: fase, resultado e ofertas da versão atual. */
+    /**
+     * Resumo da cotação na listagem, lido do {@code META}: fase, resultado e
+     * ofertas da versão atual.
+     */
     @JsonInclude(JsonInclude.Include.ALWAYS)
     record QuoteSummary(String id, int currentVersion, String phase, String outcome, String createdAt,
             int offerCount) {
@@ -126,7 +131,8 @@ final class QuoteViews {
         Map<String, AttributeValue> versionItem = items.version();
         QuoteActions.QuoteState state = state(version, meta);
         boolean anySelectable = items.offers().stream()
-                .anyMatch(offer -> QuoteActions.unavailabilityReason(state, instant(offer, "validUntil"), serverTime) == null);
+                .anyMatch(offer -> QuoteActions.unavailabilityReason(state, instant(offer, "validUntil"),
+                        serverTime) == null);
         long resultRevisions = items.results().stream().mapToLong(result -> Items.number(result, "revision", 0)).sum();
         long revision = Revisions.versionRevision(Items.number(versionItem, "revision", 0), resultRevisions,
                 items.offers().size(), items.selection() != null);
@@ -158,8 +164,8 @@ final class QuoteViews {
     }
 
     private Offer offer(Map<String, AttributeValue> item, QuoteActions.QuoteState state, Instant serverTime) {
-        QuoteActions.UnavailabilityReason reason =
-                QuoteActions.unavailabilityReason(state, instant(item, "validUntil"), serverTime);
+        QuoteActions.UnavailabilityReason reason = QuoteActions.unavailabilityReason(state, instant(item, "validUntil"),
+                serverTime);
         return new Offer(Items.string(item, "offerId"), Items.string(item, "insurerId"),
                 Items.string(item, "insurerName"), Items.string(item, "premiumTotal"), Items.string(item, "currency"),
                 json(Items.string(item, "installments")), json(Items.string(item, "coverages")),
@@ -186,7 +192,9 @@ final class QuoteViews {
                 Items.string(meta, "selectionId") != null);
     }
 
-    /** Mudança mais recente entre a versão, os resultados, as ofertas e a seleção. */
+    /**
+     * Mudança mais recente entre a versão, os resultados, as ofertas e a seleção.
+     */
     private static String updatedAt(VersionItems items) {
         List<String> instants = new ArrayList<>();
         instants.add(Items.string(items.version(), "updatedAt"));

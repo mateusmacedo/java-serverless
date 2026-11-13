@@ -14,7 +14,10 @@ import java.util.List;
 import org.jboss.logging.Logger;
 import org.jboss.resteasy.reactive.server.ServerExceptionMapper;
 
-/** Converte toda falha no erro padrão do contrato, sem stack trace nem detalhe interno. */
+/**
+ * Converte toda falha no erro padrão do contrato, sem stack trace nem detalhe
+ * interno.
+ */
 public class ApiExceptionMappers {
 
     private static final Logger LOG = Logger.getLogger(ApiExceptionMappers.class);
@@ -30,7 +33,7 @@ public class ApiExceptionMappers {
         return error(exception.status(), exception.code(), exception.getMessage(), exception.fieldErrors());
     }
 
-    @ServerExceptionMapper({AuthenticationFailedException.class, UnauthorizedException.class})
+    @ServerExceptionMapper({ AuthenticationFailedException.class, UnauthorizedException.class })
     public Response unauthenticated(RuntimeException exception) {
         return Response.fromResponse(error(401, "UNAUTHENTICATED", "Sessão inválida ou ausente.", List.of()))
                 .header(HttpHeaders.WWW_AUTHENTICATE, "Bearer")

@@ -6,8 +6,10 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Ocorrências operacionais e reconciliações manuais vistas pela API (§3, §4, §8 e §11 do desenho, M5): as da quote,
- * gravadas pelo {@code reconciler}, e as da provider, projetadas pelo {@code issue-projector}.
+ * Ocorrências operacionais e reconciliações manuais vistas pela API (§3, §4, §8
+ * e §11 do desenho, M5): as da quote,
+ * gravadas pelo {@code reconciler}, e as da provider, projetadas pelo
+ * {@code issue-projector}.
  */
 public final class Operations {
 
@@ -19,7 +21,10 @@ public final class Operations {
     private Operations() {
     }
 
-    /** Tipos de ocorrência do contrato; o {@code DEAD_LETTER} existe nas duas soluções. */
+    /**
+     * Tipos de ocorrência do contrato; o {@code DEAD_LETTER} existe nas duas
+     * soluções.
+     */
     public enum IssueType {
         UNKNOWN_QUERY(true),
         UNMATCHED_CALLBACK(true),
@@ -35,7 +40,10 @@ public final class Operations {
             this.provider = provider;
         }
 
-        /** Tipo que a provider publica em {@code OperationIssueRaised} e {@code OperationIssueUpdated}. */
+        /**
+         * Tipo que a provider publica em {@code OperationIssueRaised} e
+         * {@code OperationIssueUpdated}.
+         */
         public boolean fromProvider() {
             return provider;
         }
@@ -50,7 +58,10 @@ public final class Operations {
         }
     }
 
-    /** Situação de uma reconciliação manual; a provider não publica o {@code RUNNING} no MVP. */
+    /**
+     * Situação de uma reconciliação manual; a provider não publica o
+     * {@code RUNNING} no MVP.
+     */
     public enum OperationStatus {
         QUEUED,
         RUNNING,
@@ -58,7 +69,10 @@ public final class Operations {
         FAILED
     }
 
-    /** Identificador opaco de uma reconciliação manual, sem dado do operador nem da consulta. */
+    /**
+     * Identificador opaco de uma reconciliação manual, sem dado do operador nem da
+     * consulta.
+     */
     public static String newOperationId() {
         UUID uuid = UUID.randomUUID();
         return "op_" + HexFormat.of().toHexDigits(uuid.getMostSignificantBits())
@@ -66,9 +80,12 @@ public final class Operations {
     }
 
     /**
-     * {@code RECONCILE} só para a ocorrência aberta, com consulta, marcada como reconciliável pela provider e para
-     * quem tem {@code operations:reconcile} (§8 do desenho). WHY: a ocorrência resolvida não tem mais o que
-     * reconciliar, e o callback sem correlação fica só consultável, sem botão indevido (contrato compartilhado).
+     * {@code RECONCILE} só para a ocorrência aberta, com consulta, marcada como
+     * reconciliável pela provider e para
+     * quem tem {@code operations:reconcile} (§8 do desenho). WHY: a ocorrência
+     * resolvida não tem mais o que
+     * reconciliar, e o callback sem correlação fica só consultável, sem botão
+     * indevido (contrato compartilhado).
      */
     public static List<String> issueActions(String queryId, boolean reconcilable, boolean open,
             Collection<Permission> permissions) {

@@ -21,9 +21,12 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * T21: pedidos de vários workflows ao mesmo provedor, ao mesmo tempo, dividem a quota da janela (§5
- * {@code QUOTA#}, §9). O limite vale para todos, não só para a concorrência do Map de uma cotação. Cada pedido
- * é de uma cotação nova, e os provedores do teste têm quota de {@link #T21_QUOTA_PER_MINUTE} por minuto.
+ * T21: pedidos de vários workflows ao mesmo provedor, ao mesmo tempo, dividem a
+ * quota da janela (§5
+ * {@code QUOTA#}, §9). O limite vale para todos, não só para a concorrência do
+ * Map de uma cotação. Cada pedido
+ * é de uma cotação nova, e os provedores do teste têm quota de
+ * {@link #T21_QUOTA_PER_MINUTE} por minuto.
  */
 class QuotaAcrossWorkflowsIT extends FlociIntegrationTest {
 
@@ -46,7 +49,8 @@ class QuotaAcrossWorkflowsIT extends FlociIntegrationTest {
         QuotaWindow window = windowWithMargin();
         SQS.purgeQueue(builder -> builder.queueUrl(INSURER_QUEUE_URL));
         List<TestRequests.Request> requests = IntStream.range(0, WORKFLOWS)
-                .mapToObj(index -> TestRequests.insurer("vehicle-hatch-2019", Instant.now().plus(DEADLINE), T21_INSURER))
+                .mapToObj(
+                        index -> TestRequests.insurer("vehicle-hatch-2019", Instant.now().plus(DEADLINE), T21_INSURER))
                 .toList();
 
         runTogether(requests, request -> insurerWorker.apply(sqsEvent(request.body())));
@@ -56,8 +60,9 @@ class QuotaAcrossWorkflowsIT extends FlociIntegrationTest {
         List<TestRequests.Request> quoted = requests.stream()
                 .filter(request -> !item("QUERY#" + request.queryId(), "META").isEmpty())
                 .toList();
-        assertThat(quoted).hasSize(T21_QUOTA_PER_MINUTE).allSatisfy(request ->
-                assertThat(attribute(item("QUERY#" + request.queryId(), "META"), "state")).contains("COMPLETED"));
+        assertThat(quoted).hasSize(T21_QUOTA_PER_MINUTE)
+                .allSatisfy(request -> assertThat(attribute(item("QUERY#" + request.queryId(), "META"), "state"))
+                        .contains("COMPLETED"));
         assertThat(EnrichmentWorkerIT.queuedMessages(INSURER_QUEUE_URL))
                 .as("the requests over the quota go back to the queue, delayed to the next window")
                 .isEqualTo(WORKFLOWS - T21_QUOTA_PER_MINUTE);
@@ -89,7 +94,10 @@ class QuotaAcrossWorkflowsIT extends FlociIntegrationTest {
                 });
     }
 
-    /** Janela corrente com pelo menos {@link #WINDOW_MARGIN} pela frente; senão, espera a próxima. */
+    /**
+     * Janela corrente com pelo menos {@link #WINDOW_MARGIN} pela frente; senão,
+     * espera a próxima.
+     */
     private static QuotaWindow windowWithMargin() throws InterruptedException {
         QuotaWindow window = QuotaWindow.of(Instant.now(), QuotaReservation.WINDOW);
         if (Duration.between(Instant.now(), window.end()).compareTo(WINDOW_MARGIN) < 0) {

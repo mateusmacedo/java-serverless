@@ -16,9 +16,12 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Provedor de enriquecimento simulado (§10): 404 {@code NOT_FOUND} declarado para referência desconhecida, 503 nas
- * duas primeiras chamadas de cada {@code clientReference} do {@code vehicle-flaky} e 504 sempre para o
- * {@code vehicle-enrichment-down}. Marca, modelo, ano e habilitação vêm do catálogo do laboratório; o resto do
+ * Provedor de enriquecimento simulado (§10): 404 {@code NOT_FOUND} declarado
+ * para referência desconhecida, 503 nas
+ * duas primeiras chamadas de cada {@code clientReference} do
+ * {@code vehicle-flaky} e 504 sempre para o
+ * {@code vehicle-enrichment-down}. Marca, modelo, ano e habilitação vêm do
+ * catálogo do laboratório; o resto do
  * perfil, e o perfil inteiro de referência fora do catálogo, é sintético.
  */
 @RestController
@@ -27,7 +30,10 @@ class EnrichmentSimulatorController {
     static final String VEHICLE_FLAKY = "vehicle-flaky";
     static final String VEHICLE_ENRICHMENT_DOWN = "vehicle-enrichment-down";
     static final int FLAKY_FAILURES = 2;
-    /** WHY: o {@code licenseDate} do catálogo é data civil no fuso do contrato, e não em UTC. */
+    /**
+     * WHY: o {@code licenseDate} do catálogo é data civil no fuso do contrato, e
+     * não em UTC.
+     */
     static final ZoneId CIVIL_ZONE = ZoneId.of("America/Sao_Paulo");
 
     private final ScenarioCounters counters;
@@ -42,7 +48,8 @@ class EnrichmentSimulatorController {
 
     @PostMapping(path = "/sim/enrichment/profiles", produces = MediaType.APPLICATION_JSON_VALUE)
     ResponseEntity<Object> profile(@RequestBody ProfileRequest request) {
-        if (isBlank(request.clientReference()) || isBlank(request.vehicleRef()) || isBlank(request.principalDriverRef())) {
+        if (isBlank(request.clientReference()) || isBlank(request.vehicleRef())
+                || isBlank(request.principalDriverRef())) {
             return error(HttpStatus.BAD_REQUEST, new ErrorBody("INVALID_REQUEST",
                     "clientReference, vehicleRef and principalDriverRef are required", null));
         }

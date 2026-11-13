@@ -16,11 +16,14 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
 
 /**
- * Um único Floci e os recursos que a API de callbacks usa, com o mesmo esquema do serverless.yml: a tabela de
+ * Um único Floci e os recursos que a API de callbacks usa, com o mesmo esquema
+ * do serverless.yml: a tabela de
  * consultas, o bucket de payloads e o {@code callback-secret}.
  * <p>
- * WHY: endpoint, região, credenciais e as variáveis da Lambda vão para as propriedades de sistema, que o AWS SDK
- * e o Spring leem; assim os testes e o handler da Lambda passam pela autoconfiguração real do spring-aws.
+ * WHY: endpoint, região, credenciais e as variáveis da Lambda vão para as
+ * propriedades de sistema, que o AWS SDK
+ * e o Spring leem; assim os testes e o handler da Lambda passam pela
+ * autoconfiguração real do spring-aws.
  */
 abstract class FlociIntegrationTest {
 
@@ -54,7 +57,7 @@ abstract class FlociIntegrationTest {
                         .projection(projection -> projection.projectionType(ProjectionType.ALL))
                         .build()));
         try (S3Client s3 = S3Client.builder().forcePathStyle(true).build();
-             SecretsManagerClient secrets = SecretsManagerClient.create()) {
+                SecretsManagerClient secrets = SecretsManagerClient.create()) {
             s3.createBucket(builder -> builder.bucket(BUCKET));
             secrets.createSecret(builder -> builder.name(CALLBACK_SECRET).secretString(CALLBACK_SECRET_VALUE));
         }
@@ -62,9 +65,9 @@ abstract class FlociIntegrationTest {
 
     static Map<String, AttributeValue> item(String pk, String sk) {
         return DYNAMO_DB.getItem(builder -> builder
-                        .tableName(TABLE)
-                        .consistentRead(true)
-                        .key(Map.of("pk", AttributeValue.fromS(pk), "sk", AttributeValue.fromS(sk))))
+                .tableName(TABLE)
+                .consistentRead(true)
+                .key(Map.of("pk", AttributeValue.fromS(pk), "sk", AttributeValue.fromS(sk))))
                 .item();
     }
 
@@ -76,15 +79,18 @@ abstract class FlociIntegrationTest {
         return Optional.ofNullable(value.s() != null ? value.s() : value.n());
     }
 
-    /** Itens da partição {@code QUERY#<queryId>} cujo {@code sk} começa com o prefixo. */
+    /**
+     * Itens da partição {@code QUERY#<queryId>} cujo {@code sk} começa com o
+     * prefixo.
+     */
     static List<Map<String, AttributeValue>> queryItems(String queryId, String skPrefix) {
         return DYNAMO_DB.query(builder -> builder
-                        .tableName(TABLE)
-                        .consistentRead(true)
-                        .keyConditionExpression("pk = :pk AND begins_with(sk, :prefix)")
-                        .expressionAttributeValues(Map.of(
-                                ":pk", AttributeValue.fromS("QUERY#" + queryId),
-                                ":prefix", AttributeValue.fromS(skPrefix))))
+                .tableName(TABLE)
+                .consistentRead(true)
+                .keyConditionExpression("pk = :pk AND begins_with(sk, :prefix)")
+                .expressionAttributeValues(Map.of(
+                        ":pk", AttributeValue.fromS("QUERY#" + queryId),
+                        ":prefix", AttributeValue.fromS(skPrefix))))
                 .items();
     }
 

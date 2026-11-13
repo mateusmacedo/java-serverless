@@ -7,7 +7,10 @@ import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 
-/** Usuário, organização e permissões, derivados do access token (§11 do desenho). */
+/**
+ * Usuário, organização e permissões, derivados do access token (§11 do
+ * desenho).
+ */
 @Path("/v1/me")
 @Authenticated
 public class MeResource {

@@ -18,14 +18,22 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Fornecedores no protocolo dos simuladores, servidos em processo, para os testes de integração escolherem a
- * resposta pelo veículo e contarem as chamadas por {@code clientReference}. O {@code vehicle-slow} demora
- * mais que o timeout HTTP dos testes, para simular resposta perdida depois do envio. Uma chamada retida por
- * {@link #hold(String)} só responde quando o teste solta, como um fornecedor lento; a retenção que vence sozinha
- * fica em {@link #expiredHolds()}, para o teste distinguir a soltura dele da expiração. O
- * {@code vehicle-observed-ahead} responde com o {@code observedAt} duas horas à frente do relógio. A seguradora
- * {@code beta} responde {@code 202} com o {@code providerRequestId} de {@link #betaRequestId(String)}; o resultado
- * dela chega por callback, que os testes entregam pelo código da API de callbacks.
+ * Fornecedores no protocolo dos simuladores, servidos em processo, para os
+ * testes de integração escolherem a
+ * resposta pelo veículo e contarem as chamadas por {@code clientReference}. O
+ * {@code vehicle-slow} demora
+ * mais que o timeout HTTP dos testes, para simular resposta perdida depois do
+ * envio. Uma chamada retida por
+ * {@link #hold(String)} só responde quando o teste solta, como um fornecedor
+ * lento; a retenção que vence sozinha
+ * fica em {@link #expiredHolds()}, para o teste distinguir a soltura dele da
+ * expiração. O
+ * {@code vehicle-observed-ahead} responde com o {@code observedAt} duas horas à
+ * frente do relógio. A seguradora
+ * {@code beta} responde {@code 202} com o {@code providerRequestId} de
+ * {@link #betaRequestId(String)}; o resultado
+ * dela chega por callback, que os testes entregam pelo código da API de
+ * callbacks.
  */
 final class ProviderStub {
 
@@ -38,7 +46,10 @@ final class ProviderStub {
     static final String VEHICLE_OBSERVED_AHEAD = "vehicle-observed-ahead";
     static final Duration OBSERVED_AHEAD = Duration.ofHours(2);
     static final long SLOW_MILLIS = 2_500;
-    /** Teto da retenção; o timeout HTTP do teste que retém respostas fica acima dele. */
+    /**
+     * Teto da retenção; o timeout HTTP do teste que retém respostas fica acima
+     * dele.
+     */
     static final Duration MAX_HOLD = Duration.ofSeconds(50);
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
@@ -84,14 +95,17 @@ final class ProviderStub {
         return count == null ? 0 : count.get();
     }
 
-    /** Chamadas de enriquecimento recebidas para o veículo, de qualquer consulta. */
+    /**
+     * Chamadas de enriquecimento recebidas para o veículo, de qualquer consulta.
+     */
     int enrichmentCalls(String vehicleRef) {
         AtomicInteger count = enrichmentCallsByVehicle.get(vehicleRef);
         return count == null ? 0 : count.get();
     }
 
     /**
-     * Retém a resposta das chamadas cujo veículo ou {@code clientReference} é {@code key} até o teste soltar,
+     * Retém a resposta das chamadas cujo veículo ou {@code clientReference} é
+     * {@code key} até o teste soltar,
      * por no máximo {@link #MAX_HOLD}.
      */
     CountDownLatch hold(String key) {
@@ -101,7 +115,8 @@ final class ProviderStub {
     }
 
     /**
-     * Roda a ação uma vez, durante a chamada da seguradora para a consulta e antes da resposta, como um callback
+     * Roda a ação uma vez, durante a chamada da seguradora para a consulta e antes
+     * da resposta, como um callback
      * que chega enquanto o worker ainda espera o {@code 202}.
      */
     void beforeAnswering(String clientReference, Runnable action) {
@@ -109,7 +124,8 @@ final class ProviderStub {
     }
 
     /**
-     * Situação que o {@code GET /sim/insurers/beta/quotes/{ref}} devolve para a referência, como a beta simulada
+     * Situação que o {@code GET /sim/insurers/beta/quotes/{ref}} devolve para a
+     * referência, como a beta simulada
      * (§10); sem ela, a referência é desconhecida (404).
      */
     void betaStatus(String reference, String body) {
@@ -122,7 +138,9 @@ final class ProviderStub {
         return count == null ? 0 : count.get();
     }
 
-    /** Chaves cuja retenção venceu por {@link #MAX_HOLD} antes de o teste soltar. */
+    /**
+     * Chaves cuja retenção venceu por {@link #MAX_HOLD} antes de o teste soltar.
+     */
     Set<String> expiredHolds() {
         return Set.copyOf(expiredHolds);
     }
@@ -137,7 +155,8 @@ final class ProviderStub {
         awaitRelease(reference);
         switch (vehicle) {
             case VEHICLE_ENRICHMENT_DOWN -> respond(exchange, 504, "{\"code\":\"UPSTREAM_TIMEOUT\"}");
-            case VEHICLE_UNKNOWN -> respond(exchange, 404, "{\"code\":\"NOT_FOUND\",\"notFoundRefs\":[\"vehicleRef\"]}");
+            case VEHICLE_UNKNOWN ->
+                respond(exchange, 404, "{\"code\":\"NOT_FOUND\",\"notFoundRefs\":[\"vehicleRef\"]}");
             case VEHICLE_SLOW -> slow(exchange);
             default -> {
                 if (VEHICLE_FLAKY.equals(vehicle) && call <= 2) {
@@ -147,11 +166,13 @@ final class ProviderStub {
                     if (VEHICLE_OBSERVED_AHEAD.equals(vehicle)) {
                         observedAt = observedAt.plus(OBSERVED_AHEAD);
                     }
-                    respond(exchange, 200, """
-                            {"clientReference":"%s","vehicle":{"ref":"%s","make":"Fiat","model":"Argo","modelYear":2019,\
-                            "marketValue":"68500.00"},"driver":{"ref":"%s","licenseYears":8,"claimsLast5Years":0},\
-                            "observedAt":"%s","unknownField":true}"""
-                            .formatted(reference, vehicle, request.path("principalDriverRef").asString(), observedAt));
+                    respond(exchange, 200,
+                            """
+                                    {"clientReference":"%s","vehicle":{"ref":"%s","make":"Fiat","model":"Argo","modelYear":2019,\
+                                    "marketValue":"68500.00"},"driver":{"ref":"%s","licenseYears":8,"claimsLast5Years":0},\
+                                    "observedAt":"%s","unknownField":true}"""
+                                    .formatted(reference, vehicle, request.path("principalDriverRef").asString(),
+                                            observedAt));
                 }
             }
         }

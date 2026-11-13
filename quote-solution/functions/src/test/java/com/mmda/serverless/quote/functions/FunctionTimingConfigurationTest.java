@@ -31,14 +31,20 @@ import org.yaml.snakeyaml.nodes.ScalarNode;
 import org.yaml.snakeyaml.nodes.SequenceNode;
 
 /**
- * Teste de configuração (§6, §9, §12 e §13 do desenho) sobre o {@code serverless.yml}, em cada stage: o que o Floci
- * não confere, como a invariante de orçamento que substitui o {@code TimeoutSecondsPath}, a relação visibilidade ×
- * timeout do ESM, os alarmes e o destino deles, os parâmetros do stage {@code dev} e o IAM dos papéis.
+ * Teste de configuração (§6, §9, §12 e §13 do desenho) sobre o
+ * {@code serverless.yml}, em cada stage: o que o Floci
+ * não confere, como a invariante de orçamento que substitui o
+ * {@code TimeoutSecondsPath}, a relação visibilidade ×
+ * timeout do ESM, os alarmes e o destino deles, os parâmetros do stage
+ * {@code dev} e o IAM dos papéis.
  */
 class FunctionTimingConfigurationTest {
 
     private static final Pattern PARAM = Pattern.compile("\\$\\{param:([A-Za-z]+)}");
-    /** Referência a parâmetro com ou sem fallback, como {@code ${param:x}} e {@code ${param:x, null}}. */
+    /**
+     * Referência a parâmetro com ou sem fallback, como {@code ${param:x}} e
+     * {@code ${param:x, null}}.
+     */
     private static final Pattern PARAM_REFERENCE = Pattern.compile("\\$\\{param:([A-Za-z]+)(,[^}]*)?}");
     private static final List<String> LAMBDA_INVOCATION_ERRORS = List.of("Lambda.ServiceException",
             "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException");
@@ -53,7 +59,7 @@ class FunctionTimingConfigurationTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"local", "dev"})
+    @ValueSource(strings = { "local", "dev" })
     void stepBudgetFitsTheQuoteDeadline(String stage) {
         Map<String, Object> params = params(stage);
         int rounds = (int) Math.ceil((double) param(params, "maxInsurers") / param(params, "mapConcurrency"));
@@ -64,17 +70,18 @@ class FunctionTimingConfigurationTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"local", "dev"})
+    @ValueSource(strings = { "local", "dev" })
     void workflowTimeoutIsTheDeadlinePlusTheMargin(String stage) {
         Map<String, Object> params = params(stage);
 
         assertThat(param(params, "workflowTimeoutSeconds"))
                 .isEqualTo(param(params, "quoteDeadlineSeconds") + param(params, "workflowMarginSeconds"));
-        assertThat(resolve(definition().get("TimeoutSeconds"), params)).isEqualTo(param(params, "workflowTimeoutSeconds"));
+        assertThat(resolve(definition().get("TimeoutSeconds"), params))
+                .isEqualTo(param(params, "workflowTimeoutSeconds"));
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"local", "dev"})
+    @ValueSource(strings = { "local", "dev" })
     void mapConcurrencyAndInsurerLimitComeFromTheParameters(String stage) {
         Map<String, Object> params = params(stage);
         Map<String, Object> map = map(states(definition()).get("QuoteInsurers"));
@@ -84,7 +91,7 @@ class FunctionTimingConfigurationTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"local", "dev"})
+    @ValueSource(strings = { "local", "dev" })
     void budgetCoversEveryLabInsurerSoNoSelectedInsurerIsCutByTheLimit(String stage) {
         Map<String, Object> params = params(stage);
         int insurers = Insurers.all().size();
@@ -141,12 +148,13 @@ class FunctionTimingConfigurationTest {
             assertThat(task).containsKey("TimeoutSeconds");
             List<Object> retries = list(task.get("Retry"));
             assertThat(retries).hasSize(1);
-            assertThat(list(map(retries.getFirst()).get("ErrorEquals"))).containsExactlyElementsOf(LAMBDA_INVOCATION_ERRORS);
+            assertThat(list(map(retries.getFirst()).get("ErrorEquals")))
+                    .containsExactlyElementsOf(LAMBDA_INVOCATION_ERRORS);
         }
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"local", "dev"})
+    @ValueSource(strings = { "local", "dev" })
     void waitsUseTheStepParametersAndPassTheSameTimeoutToTheDispatch(String stage) {
         Map<String, Object> params = params(stage);
         for (Map<String, Object> task : tasks(definition())) {
@@ -157,13 +165,14 @@ class FunctionTimingConfigurationTest {
                         "${param:insurerTimeoutSeconds}");
                 assertThat(payload.get("timeoutSeconds")).isEqualTo(task.get("TimeoutSeconds"));
             } else {
-                assertThat(resolve(task.get("TimeoutSeconds"), params)).isEqualTo(functionTimeout("workflowSteps", params));
+                assertThat(resolve(task.get("TimeoutSeconds"), params))
+                        .isEqualTo(functionTimeout("workflowSteps", params));
             }
         }
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"local", "dev"})
+    @ValueSource(strings = { "local", "dev" })
     void queueVisibilityCoversTheConsumerTimeoutWithRedrive(String stage) {
         Map<String, Object> params = params(stage);
         Map<String, Object> resources = map(map(serverless.get("resources")).get("Resources"));
@@ -180,7 +189,8 @@ class FunctionTimingConfigurationTest {
                 int visibility = (Integer) resolve(properties.get("VisibilityTimeout"), params);
                 int timeout = functionTimeout(function.getKey(), params);
                 assertThat(visibility).as("VisibilityTimeout of %s", queue).isGreaterThanOrEqualTo(timeout);
-                assertThat(visibility).as("AWS recommends about 6 times the timeout").isGreaterThanOrEqualTo(6 * timeout);
+                assertThat(visibility).as("AWS recommends about 6 times the timeout")
+                        .isGreaterThanOrEqualTo(6 * timeout);
                 assertThat(map(properties.get("RedrivePolicy"))).containsKeys("deadLetterTargetArn", "maxReceiveCount");
                 assertThat(map(event).get("sqs")).extracting(value -> map(value).get("batchSize")).isEqualTo(1);
             }
@@ -204,7 +214,7 @@ class FunctionTimingConfigurationTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"local", "dev"})
+    @ValueSource(strings = { "local", "dev" })
     void insurerRequestDeadlineIsCappedByTheRemainingQuoteDeadline(String stage) {
         Map<String, Object> params = params(stage);
         Instant acceptedAt = Instant.parse("2026-11-12T10:00:00Z");
@@ -226,7 +236,7 @@ class FunctionTimingConfigurationTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"local", "dev"})
+    @ValueSource(strings = { "local", "dev" })
     void everyDeadLetterQueueAndTheStreamFailuresHaveVolumeAndAgeAlarms(String stage) {
         Map<String, Object> params = params(stage);
         Map<String, Object> resources = resources();
@@ -261,12 +271,13 @@ class FunctionTimingConfigurationTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"local", "dev"})
+    @ValueSource(strings = { "local", "dev" })
     void outboxAgeAndExpiredTaskAlarmsWatchTheMetricsTheReconcilerEmits(String stage) {
         Map<String, Object> params = params(stage);
         assertThat(environment()).containsEntry("METRICS_NAMESPACE", "${self:custom.metricsNamespace}")
                 .containsEntry("STAGE", "${sls:stage}");
-        Map<String, Object> outbox = alarm("${self:custom.metricsNamespace}", ReconcilerMetrics.OUTBOX_PENDING_AGE_SECONDS);
+        Map<String, Object> outbox = alarm("${self:custom.metricsNamespace}",
+                ReconcilerMetrics.OUTBOX_PENDING_AGE_SECONDS);
         Map<String, Object> expired = alarm("${self:custom.metricsNamespace}", ReconcilerMetrics.EXPIRED_TASKS);
 
         assertThat(resolve(outbox.get("Threshold"), params)).isEqualTo(param(params, "outboxAlarmAgeSeconds"));
@@ -280,7 +291,7 @@ class FunctionTimingConfigurationTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"local", "dev"})
+    @ValueSource(strings = { "local", "dev" })
     void alarmThresholdsAndReconcilerParametersFollowTheDesign(String stage) {
         Map<String, Object> params = params(stage);
         assertThat(param(params, "dlqAlarmMessages")).isEqualTo(1);
@@ -319,12 +330,13 @@ class FunctionTimingConfigurationTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"local", "dev"})
+    @ValueSource(strings = { "local", "dev" })
     void issuesQueueReceivesTheProviderOperationalEventsAndTheReconcilerReprocessesItsDlq(String stage) {
         Map<String, Object> params = params(stage);
         Map<String, Object> rule = map(map(resources().get("ProviderIssuesRule")).get("Properties"));
         assertThat(map(rule.get("EventPattern"))).containsEntry("source", List.of("mmda.provider"))
-                .containsEntry("detail-type", List.of("QueryReconciled", "OperationIssueRaised", "OperationIssueUpdated"));
+                .containsEntry("detail-type",
+                        List.of("QueryReconciled", "OperationIssueRaised", "OperationIssueUpdated"));
         assertThat(logicalId(map(list(rule.get("Targets")).getFirst()).get("Arn"))).isEqualTo("IssuesQueue");
         Map<String, Object> policy = map(list(map(map(map(resources().get("IssuesQueuePolicy")).get("Properties"))
                 .get("PolicyDocument")).get("Statement")).getFirst());
@@ -341,7 +353,8 @@ class FunctionTimingConfigurationTest {
         assertThat(param(params, "issuesVisibilityTimeoutSeconds")).isEqualTo(90);
         assertThat(param(params, "issuesMaxReceiveCount")).isEqualTo(5);
         assertThat(statements("IssueProjectorRole").stream().flatMap(statement -> actions(statement).stream()))
-                .containsExactlyInAnyOrder("dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "sqs:ReceiveMessage",
+                .containsExactlyInAnyOrder("dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem",
+                        "sqs:ReceiveMessage",
                         "sqs:DeleteMessage", "sqs:GetQueueAttributes");
 
         List<Map<String, Object>> reconciler = statements("ReconcilerRole");
@@ -354,9 +367,12 @@ class FunctionTimingConfigurationTest {
                 .as("the selection checks the offer in its transaction").contains("dynamodb:ConditionCheckItem");
     }
 
-    /** O Serverless falha na resolução de um {@code ${param:x}} sem valor no stage e sem fallback. */
+    /**
+     * O Serverless falha na resolução de um {@code ${param:x}} sem valor no stage e
+     * sem fallback.
+     */
     @ParameterizedTest
-    @ValueSource(strings = {"local", "dev"})
+    @ValueSource(strings = { "local", "dev" })
     void everyReferencedParameterHasAValueInTheStage(String stage) {
         Map<String, Object> params = params(stage);
         Set<String> referenced = new TreeSet<>();
@@ -373,8 +389,10 @@ class FunctionTimingConfigurationTest {
     }
 
     /**
-     * WHY: o SDK lê o {@code AWS_ENDPOINT_URL} sozinho e trataria um valor vazio como endpoint, então fora do Floci
-     * a condição tira a variável; o issuer é o do Cognito da região, e a espera da seguradora é a da AWS (§12).
+     * WHY: o SDK lê o {@code AWS_ENDPOINT_URL} sozinho e trataria um valor vazio
+     * como endpoint, então fora do Floci
+     * a condição tira a variável; o issuer é o do Cognito da região, e a espera da
+     * seguradora é a da AWS (§12).
      */
     @Test
     void onlyTheFlociDifferencesLiveInTheLocalStage() {
@@ -404,8 +422,9 @@ class FunctionTimingConfigurationTest {
 
         assertThat(topic.get("Type")).isEqualTo("AWS::SNS::Topic");
         assertThat(map(topic.get("Properties")).get("TopicName")).isEqualTo("${self:service}-${sls:stage}-alarms");
-        assertThat(alarms()).as("the 8 alarms of §2").hasSize(8).allSatisfy(alarm -> assertThat(alarm.get("AlarmActions"))
-                .as("AlarmActions of %s", alarm.get("AlarmName")).isEqualTo(List.of("AlarmsTopic")));
+        assertThat(alarms()).as("the 8 alarms of §2").hasSize(8)
+                .allSatisfy(alarm -> assertThat(alarm.get("AlarmActions"))
+                        .as("AlarmActions of %s", alarm.get("AlarmName")).isEqualTo(List.of("AlarmsTopic")));
         assertThat(subscription).containsEntry("Type", "AWS::SNS::Subscription")
                 .containsEntry("Condition", "HasAlarmEmail");
         assertThat(map(subscription.get("Properties"))).containsEntry("TopicArn", "AlarmsTopic")
@@ -415,8 +434,10 @@ class FunctionTimingConfigurationTest {
     }
 
     /**
-     * WHY: o papel do {@code reconciler} é também o de execução do agendamento; com papel próprio, o Serverless não
-     * acrescenta a confiança no Scheduler nem a invocação, e o Floci não aplica IAM (§13).
+     * WHY: o papel do {@code reconciler} é também o de execução do agendamento; com
+     * papel próprio, o Serverless não
+     * acrescenta a confiança no Scheduler nem a invocação, e o Floci não aplica IAM
+     * (§13).
      */
     @Test
     void theSchedulerAssumesTheReconcilerRoleOnlyToInvokeTheReconciler() {
@@ -435,13 +456,16 @@ class FunctionTimingConfigurationTest {
                 .as("confused deputy").containsEntry("aws:SourceAccount", "${aws:accountId}");
 
         String reconciler = "arn:aws:lambda:${aws:region}:${aws:accountId}:function:${self:service}-${sls:stage}-reconciler";
-        assertThat(statements("ReconcilerRole").stream().filter(statement -> actions(statement).contains("lambda:InvokeFunction")))
+        assertThat(statements("ReconcilerRole").stream()
+                .filter(statement -> actions(statement).contains("lambda:InvokeFunction")))
                 .singleElement()
-                .satisfies(statement -> assertThat(statement.get("Resource")).isEqualTo(List.of(reconciler, reconciler + ":*")));
+                .satisfies(statement -> assertThat(statement.get("Resource"))
+                        .isEqualTo(List.of(reconciler, reconciler + ":*")));
         for (Object other : map(serverless.get("functions")).values()) {
             String role = (String) map(other).get("role");
             if (!"ReconcilerRole".equals(role)) {
-                assertThat(trust(role)).as("trust of %s", role).extracting(statement -> map(statement.get("Principal")).get("Service"))
+                assertThat(trust(role)).as("trust of %s", role)
+                        .extracting(statement -> map(statement.get("Principal")).get("Service"))
                         .containsExactly("lambda.amazonaws.com");
                 assertThat(statements(role)).as("%s invokes no function", role)
                         .noneMatch(statement -> actions(statement).contains("lambda:InvokeFunction"));
@@ -449,7 +473,10 @@ class FunctionTimingConfigurationTest {
         }
     }
 
-    /** Cada papel escreve só no grupo de log da própria função, criado pelo Serverless, sem logs em {@code *}. */
+    /**
+     * Cada papel escreve só no grupo de log da própria função, criado pelo
+     * Serverless, sem logs em {@code *}.
+     */
     @Test
     void everyRoleWritesOnlyToTheLogGroupOfItsOwnFunction() {
         Map<String, Object> functions = map(serverless.get("functions"));
@@ -464,7 +491,8 @@ class FunctionTimingConfigurationTest {
             assertThat(policies).as("business and logs policies of %s", role).hasSize(2);
             List<Object> logs = list(map(map(policies.get(1)).get("PolicyDocument")).get("Statement"));
             assertThat(logs).as("logs policy of %s", role).singleElement().satisfies(statement -> {
-                assertThat(actions(map(statement))).containsExactlyInAnyOrder("logs:CreateLogStream", "logs:PutLogEvents");
+                assertThat(actions(map(statement))).containsExactlyInAnyOrder("logs:CreateLogStream",
+                        "logs:PutLogEvents");
                 assertThat(map(statement).get("Resource"))
                         .isEqualTo("${self:custom.functionLogGroupArn}-" + function.getKey() + ":*");
             });
@@ -473,10 +501,14 @@ class FunctionTimingConfigurationTest {
         }
         assertThat(roles).as("one role per function").hasSize(functions.size());
         assertThat(map(serverless.get("custom")).get("functionLogGroupArn"))
-                .isEqualTo("arn:aws:logs:${aws:region}:${aws:accountId}:log-group:/aws/lambda/${self:service}-${sls:stage}");
+                .isEqualTo(
+                        "arn:aws:logs:${aws:region}:${aws:accountId}:log-group:/aws/lambda/${self:service}-${sls:stage}");
     }
 
-    /** Parâmetros como o Serverless os resolve no stage: os do stage sobre os do {@code default}. */
+    /**
+     * Parâmetros como o Serverless os resolve no stage: os do stage sobre os do
+     * {@code default}.
+     */
     private static Map<String, Object> params(String stage) {
         Map<String, Object> all = map(serverless.get("params"));
         Map<String, Object> merged = new HashMap<>(map(all.get("default")));
@@ -511,14 +543,16 @@ class FunctionTimingConfigurationTest {
     }
 
     private static List<Map<String, Object>> statements(String role) {
-        Map<String, Object> policy = map(list(map(map(resources().get(role)).get("Properties")).get("Policies")).getFirst());
+        Map<String, Object> policy = map(
+                list(map(map(resources().get(role)).get("Properties")).get("Policies")).getFirst());
         List<Map<String, Object>> statements = new ArrayList<>();
         list(map(policy.get("PolicyDocument")).get("Statement")).forEach(statement -> statements.add(map(statement)));
         return statements;
     }
 
     private static List<Map<String, Object>> trust(String role) {
-        Map<String, Object> document = map(map(map(resources().get(role)).get("Properties")).get("AssumeRolePolicyDocument"));
+        Map<String, Object> document = map(
+                map(map(resources().get(role)).get("Properties")).get("AssumeRolePolicyDocument"));
         List<Map<String, Object>> statements = new ArrayList<>();
         list(document.get("Statement")).forEach(statement -> statements.add(map(statement)));
         return statements;
@@ -539,7 +573,10 @@ class FunctionTimingConfigurationTest {
         return getAtt.toString().replace(".Arn", "");
     }
 
-    /** {@code outcome} que o passo {@code record-insurer-outcome} do {@code Catch} grava. */
+    /**
+     * {@code outcome} que o passo {@code record-insurer-outcome} do {@code Catch}
+     * grava.
+     */
     private static Object recordedOutcome(Map<String, Object> processor, Object handler) {
         Map<String, Object> state = map(states(processor).get(map(handler).get("Next")));
         Map<String, Object> payload = map(map(state.get("Parameters")).get("Payload"));
@@ -556,7 +593,8 @@ class FunctionTimingConfigurationTest {
     }
 
     private static Map<String, Object> definition() {
-        return map(map(map(map(serverless.get("stepFunctions")).get("stateMachines")).get("quoteFlow")).get("definition"));
+        return map(
+                map(map(map(serverless.get("stepFunctions")).get("stateMachines")).get("quoteFlow")).get("definition"));
     }
 
     private static Map<String, Object> states(Map<String, Object> machine) {
@@ -582,7 +620,10 @@ class FunctionTimingConfigurationTest {
         return (Integer) value;
     }
 
-    /** {@code ${param:x}} vale o parâmetro do stage; {@code "${param:x}"} dentro de texto vira texto. */
+    /**
+     * {@code ${param:x}} vale o parâmetro do stage; {@code "${param:x}"} dentro de
+     * texto vira texto.
+     */
     private static Object resolve(Object value, Map<String, Object> params) {
         if (!(value instanceof String text)) {
             return value;
@@ -604,7 +645,10 @@ class FunctionTimingConfigurationTest {
         return (List<Object>) value;
     }
 
-    /** Lê as tags do CloudFormation ({@code !GetAtt}, {@code !Ref}, {@code !Join}, {@code !If}) como valores comuns. */
+    /**
+     * Lê as tags do CloudFormation ({@code !GetAtt}, {@code !Ref}, {@code !Join},
+     * {@code !If}) como valores comuns.
+     */
     private static final class IgnoringTagsConstructor extends SafeConstructor {
 
         IgnoringTagsConstructor() {

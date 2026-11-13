@@ -1,8 +1,10 @@
 package com.mmda.serverless.quote.domain;
 
 /**
- * Revisões monotônicas calculadas na leitura (§4 do desenho), como soma de contadores que só crescem.
- * A revisão da versão e a da lista de ofertas são independentes e não se comparam entre si.
+ * Revisões monotônicas calculadas na leitura (§4 do desenho), como soma de
+ * contadores que só crescem.
+ * A revisão da versão e a da lista de ofertas são independentes e não se
+ * comparam entre si.
  */
 public final class Revisions {
 
