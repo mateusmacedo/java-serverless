@@ -26,8 +26,10 @@ Convenções:
 | 2 | `provider-solution` | `provider-solution` | `provider-solution-dev` | 8 Lambdas, API `dev-provider-solution`, tabelas `-queries` e `-simulators`, bucket `-payloads`, 4 filas com DLQ, `stream-failures`, 2 segredos, tópico de alarmes e 16 alarmes |
 | 3 | `quote-solution` | `quote-solution` | `quote-solution-dev` | 7 Lambdas, API `dev-quote-solution`, máquina `quote-solution-dev-quote-flow`, tabela `-quotes`, filas `results` e `issues` com DLQ, `stream-failures`, segredo `token-key`, user pool, tópico de alarmes e 8 alarmes |
 
-As duas soluções chegam ao barramento pelo nome, sem referência entre stacks, então a ordem acima é
-obrigatória no deploy e invertida na remoção.
+As duas soluções chegam ao barramento pelo nome, sem referência entre stacks. O barramento sobe antes
+delas, e a provider e a quote sobem em qualquer ordem entre si
+([ADR 0013](decisoes/0013-barramento-da-plataforma.md)); na remoção, as soluções saem antes do barramento.
+A numeração da tabela é a ordem sugerida, que os comandos deste guia seguem.
 
 O `dev` não tem bloco próprio de `params` e herda o `default`, que traz os valores da AWS. O que muda
 entre o `local` e o `dev` (`awsEndpointUrl`, `jwtIssuerBase`, `insurerTimeoutSeconds`,

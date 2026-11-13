@@ -227,15 +227,8 @@ docker run --rm -u "$(id -u):$(id -g)" -v "$PWD":/w -w /w plantuml/plantuml:late
 
 ## Divergências conhecidas
 
-1. **Ordem do deploy em Arquitetura.** O diagrama de ambiente local de
-   [`arquitetura.md`](../../docs/arquitetura.md#ambiente-local) diz "sample e depois receipt"; o `deploy:local`
-   implanta cinco stacks. A dependência real desta solução é só a `sample-solution` antes.
-2. **Caminho do tema e comando de renderização.** Os mesmos dois pontos de
-   [`docs/README.md`](../../docs/README.md#diagramas) descritos na
-   [`sample-solution`](../../sample-solution/docs/README.md#divergências-conhecidas): o `!include` indicado não
-   renderiza a partir de `<solução>/docs/diagramas/`, e o comando único sobrescreve diagramas de mesmo nome.
-3. **Falha no `Announce`.** Depois das novas tentativas, a execução fica `FAILED` com o comprovante já gravado e
+1. **Falha no `Announce`.** Depois das novas tentativas, a execução fica `FAILED` com o comprovante já gravado e
    sem `ReceiptIssued`. Nada reprocessa sozinho; a saída é a reemissão manual descrita em [Filas e DLQ](#filas-e-dlq).
-4. **Emissão manual sem conferência de origem.** O `POST /receipts` emite comprovante para qualquer `requestId`
+2. **Emissão manual sem conferência de origem.** O `POST /receipts` emite comprovante para qualquer `requestId`
    válido no formato, e a primeira emissão fixa `signature` e `payloadBytes`: um `RequestCompleted` que chegue
    depois para o mesmo `requestId` devolve o comprovante manual, e não um com os dados do evento.

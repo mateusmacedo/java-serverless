@@ -31,7 +31,7 @@ estão documentadas na própria pasta: [`sample-solution`](../../sample-solution
 | Peça | Tipo | Responsabilidade | Quem usa |
 |---|---|---|---|
 | [`platform/events`](../events/serverless.yml) | Stack Serverless (serviço `platform`), sem funções | Barramento `platform-<stage>-events`, onde a `quote-solution` e a `provider-solution` publicam e declaram as regras | `quote-solution`, `provider-solution` |
-| [`platform/spring-parent`](../spring-parent/pom.xml) | `pom` | BOMs do Spring Boot (importado primeiro), Spring Cloud e AWS SDK; exclusão de `apache-client` e `netty-nio-client`; zip da Lambda | `sample-solution`, `provider-solution`, `spring-aws` |
+| [`platform/spring-parent`](../spring-parent/pom.xml) | `pom` | BOMs do Spring Boot (importado primeiro), Spring Cloud e AWS SDK; exclusão de `apache-client`, `apache5-client` e `netty-nio-client`; zip da Lambda | `sample-solution`, `provider-solution`, `spring-aws` |
 | [`platform/quarkus-parent`](../quarkus-parent/pom.xml) | `pom` | BOMs do Quarkus (linha LTS) e do Quarkus Amazon Services; `quarkus-maven-plugin`; `<artifactId>-lambda.zip` | `receipt-solution`, `quote-solution` |
 | [`platform/spring-aws`](../spring-aws/pom.xml) | `jar` | Autoconfiguração dos clients síncronos do SDK v2 com `AwsCrtHttpClient` | Módulos Spring da `sample-solution` e da `provider-solution` |
 
@@ -72,7 +72,7 @@ migrá-las é evolução separada.
 
 | Parent | Herdam dele | O que define |
 |---|---|---|
-| `spring-parent` | `spring-aws`, `sample-solution`, `provider-solution` | BOM do Spring Boot antes dos demais, para manter a precedência que tinha como parent; Spring Cloud e AWS SDK; exclusão de `apache-client` e `netty-nio-client` de cada service do SDK; versões de `aws-serverless-java-container`, `openapi-request-validator` e `aws-crt`; execuções `copy-lambda-dependencies`, `copy-lambda-crt-natives` e `lambda-zip` (descritor inline do `maven-assembly-plugin`), ativadas no módulo que declara o `maven-dependency-plugin` e o `maven-assembly-plugin` |
+| `spring-parent` | `spring-aws`, `sample-solution`, `provider-solution` | BOM do Spring Boot antes dos demais, para manter a precedência que tinha como parent; Spring Cloud e AWS SDK; exclusão de `apache-client`, `apache5-client` e `netty-nio-client` de cada service do SDK; versões de `aws-serverless-java-container`, `openapi-request-validator` e `aws-crt`; execuções `copy-lambda-dependencies`, `copy-lambda-crt-natives` e `lambda-zip` (descritor inline do `maven-assembly-plugin`), ativadas no módulo que declara o `maven-dependency-plugin` e o `maven-assembly-plugin` |
 | `quarkus-parent` | `receipt-solution`, `quote-solution` | BOMs do Quarkus e do Quarkus Amazon Services; `quarkus-maven-plugin` (`build`, `generate-code`, `generate-code-tests`); versões fora do BOM (`aws-crt`, AssertJ, `openapi-request-validator-restassured`); cópia de `target/function.zip` para `<artifactId>-lambda.zip` (`maven-antrun-plugin`), com o `aws-crt` só nos jars Linux |
 
 O formato dos zips e a troca do `aws-crt` completo pelos jars `linux-x86_64` e `linux-aarch_64` estão em
@@ -177,15 +177,6 @@ docker run --rm -u "$(id -u):$(id -g)" -v "$PWD":/w -w /w plantuml/plantuml:late
 
 ## Divergências conhecidas
 
-1. **Ordem entre provider e quote.** O [guia do `dev`](../../docs/implantacao-aws-dev.md#1-visão-geral) chama de
-   obrigatória a ordem plataforma, provider e quote. O ADR 0013 diz que, depois do barramento, as soluções sobem
-   em qualquer ordem, e os `serverless.yml` não têm referência entre a provider e a quote; o que importa é o
-   barramento antes das duas.
-2. **Caminho do tema.** O [`docs/README.md`](../../docs/README.md#diagramas) e o cabeçalho do tema indicam
-   `!include ../../docs/diagramas/tema-plataforma.iuml` para `<solução>/docs/diagramas/`, caminho que não
-   renderiza. O certo é `../../../docs/diagramas/tema-plataforma.iuml`, usado aqui.
-3. **Comando de renderização.** O comando único de [`docs/README.md`](../../docs/README.md#diagramas) grava tudo
-   em `build/diagramas/`, e diagramas de mesmo nome em pastas diferentes se sobrescrevem.
-4. **`SchedulerClient` sem uso.** O `spring-aws` oferece o client do EventBridge Scheduler, mas nenhum módulo de
+1. **`SchedulerClient` sem uso.** O `spring-aws` oferece o client do EventBridge Scheduler, mas nenhum módulo de
    solução declara o SDK `scheduler`; o agendamento do `reprocess` da sample é criado pelo Serverless, sem
    chamada de SDK.

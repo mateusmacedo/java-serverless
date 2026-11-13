@@ -285,7 +285,7 @@ o `local`, só o que difere no Floci. A referência de cada parâmetro, com valo
 | Endpoints | `awsEndpointUrl`, `s3PathStyleAccess`, `providersBaseUrl` | Sim: `http://floci:4566`, path-style e a URL `_user_request_` do Floci |
 | Chamadas e retries | `providerHttpTimeoutSeconds`, `workerRetries`, `retryBackoffMaxSeconds`, `workerTimeoutSeconds` | Não |
 | Reuso | `enrichmentLeaseSeconds`, `inflightTombstoneSeconds`, `reusePolicyVersion`, `enrichmentValiditySeconds` | Não |
-| Quota | `enrichmentSimQuotaPerMinute`, `alphaQuotaPerMinute`, `betaQuotaPerMinute` | Não |
+| Quota | `providerCredentialRef`, `enrichmentSimQuotaPerMinute`, `alphaQuotaPerMinute`, `betaQuotaPerMinute` | Não |
 | Simuladores | `offerValiditySeconds`, `betaCallbackDelaySeconds`, `betaLateCallbackDelaySeconds`, `simCallbackSenderTimeoutSeconds`, `simCallbacksVisibilityTimeoutSeconds`, `simCallbacksMaxReceiveCount` | Sim: `betaLateCallbackDelaySeconds` é 30 (120 na AWS) |
 | Reconciliação | `outboxRepublishAfterSeconds`, `dlqMaxAttempts`, `unmatchedCallbackAfterSeconds`, `inboxStuckAfterSeconds`, `staleOutboxAfterSeconds`, `statusReadBudgetSeconds`, `reconcilerRate` | Não |
 | Filas de pedidos | `requestQueueVisibilityTimeoutSeconds`, `requestQueueMaxReceiveCount` | Não |
@@ -300,7 +300,6 @@ valores ficam fixos no `application.yml` de cada módulo, e não em params:
 | `provider.event-source` | `mmda.provider` | `provider-functions` |
 | `provider.supported-insurers` | `alpha,beta` | `provider-functions` |
 | `provider.operations.status-insurers` | `beta` (seguradoras com API de situação) | `provider-functions` |
-| `provider.credential-ref` | `${PROVIDER_CREDENTIAL_REF:default}`; o `serverless.yml` não define a variável | `provider-functions` |
 | `callbacks.providers` | `beta` (provedores que enviam callbacks) | `provider-api` |
 
 ## Rodar localmente no Floci
@@ -405,22 +404,4 @@ docker run --rm -u "$(id -u):$(id -g)" -v "$PWD":/w -w /w plantuml/plantuml:late
 
 ## Divergências conhecidas
 
-1. **Atributos da consulta (§5).** A linha `QUERY` da tabela do
-   [§5](../../docs/plataforma-de-cotacao.md#5-tabela-da-provider-solution) não cita o atributo
-   `providerOperation` nem o `gsi2sk` do `QUERY_IN_FLIGHT`. O código grava os dois
-   ([`QueryLedger`](../functions/src/main/java/com/mmda/serverless/provider/functions/QueryLedger.java),
-   linhas 478 e 497), e o `reconciler` usa o `gsi2sk = deadlineAt` para achar as consultas vencidas.
-2. **Fan-out pendente além da lápide (§9).** O §9 diz que o `reconciler` refaz o fan-out do
-   `FANOUT_PENDING`. O [`FanOutRecovery`](../functions/src/main/java/com/mmda/serverless/provider/functions/FanOutRecovery.java)
-   também descarta, com log de erro, o item concluído há mais que `inflightTombstoneSeconds`: marca o
-   `fannedOutAt` sem responder aos seguidores (linhas 41 a 44).
-3. **Lote das DLQs (§9).** O desenho não fixa quantas mensagens o `reconciler` lê por DLQ. O código faz um
-   `ReceiveMessage` de até 10 por DLQ a cada ciclo
-   ([`DeadLetterReprocessor`](../functions/src/main/java/com/mmda/serverless/provider/functions/DeadLetterReprocessor.java),
-   linhas 32 e 84); um acúmulo maior é drenado ao longo de vários ciclos.
-4. **Credencial da quota (§5 e §9).** O `QUOTA#` leva `<credentialRef>`, como se a quota fosse por
-   credencial, mas a variável `PROVIDER_CREDENTIAL_REF` não existe no `serverless.yml`; o valor é sempre
-   `default` (`application.yml` do `provider-functions`, linha 29).
-5. **Perfil `e2e` vazio.** O [`pom.xml`](../pom.xml) da solução declara o perfil `e2e` sem módulos, com um
-   comentário (linha 57) que fala do e2e exigir as stacks implantadas. A provider não tem módulo `e2e`, e
-   o script `test:e2e` do `package.json` não a inclui.
+Não há divergência conhecida entre o desenho e o código.

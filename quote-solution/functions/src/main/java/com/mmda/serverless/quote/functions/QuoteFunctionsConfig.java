@@ -22,7 +22,10 @@ public interface QuoteFunctionsConfig {
     /** Idade a partir da qual o {@code reconciler} republica um outbox pendente. */
     int outboxRepublishAfterSeconds();
 
-    /** Itens de outbox republicados por execução do {@code reconciler}. */
+    /**
+     * Itens tratados por dever em cada execução do {@code reconciler}: outbox, waiters, versões
+     * ({@code ACTIVE_VERSION} e {@code SUMMARY_PENDING}), ocorrências e mensagens das DLQs.
+     */
     @WithDefault("50")
     int reconcilerBatchSize();
 }
