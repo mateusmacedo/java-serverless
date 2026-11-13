@@ -1,0 +1,155 @@
+@startuml classes-funcoes
+!include ../../../docs/diagramas/tema-plataforma.iuml
+hide empty members
+hide stereotype
+left to right direction
+
+title $I_LAMBDA quote-functions (com.mmda.serverless.quote.functions) — handlers e colaboradores
+
+package "Handlers (@Named, QUARKUS_LAMBDA_HANDLER)" #FFFAF3 {
+    class WorkflowStepsHandler <<porta>> {
+        @Named workflow-steps
+        handleRequest(StepRequest) : Map
+    }
+    class DispatchHandler <<porta>> {
+        @Named dispatch
+        handleRequest(DispatchRequest) : Map
+    }
+    class ResumeHandler <<porta>> {
+        @Named resume
+        handleRequest(SqsEvent) : BatchResponse
+    }
+    class IssueProjectorHandler <<porta>> {
+        @Named issue-projector
+        handleRequest(SqsEvent) : BatchResponse
+    }
+    class OutboxRelayHandler <<porta>> {
+        @Named outbox-relay
+        handleRequest(StreamEvent) : BatchResponse
+    }
+    class ReconcilerHandler <<porta>> {
+        @Named reconciler
+        handleRequest(Map) : relatório
+    }
+}
+
+package "Workflow e consumidores" #F5FAFF {
+    class WorkflowSteps <<serviço>> {
+        loadSnapshot, evaluateEligibility, selectInsurers
+        recordInsurerOutcome, recordEnrichmentOutcome
+        consolidate
+        finalizeEndedExecution(quoteId, version, ExecutionState, QuoteIssue)
+    }
+    class ResultResumer <<serviço>> {
+        handle(body) : Disposition
+        resumeExecution(WorkRef) : DONE ou EXPIRED
+    }
+    class IssueProjector <<serviço>> {
+        handle(body) : Disposition
+    }
+    class OutboxPublisher <<serviço>> {
+        publish(OutboxItem) : Result
+        executionArn(executionName)
+    }
+}
+
+package "Deveres do reconciler" #F5FAFF {
+    class OutboxReconciler <<serviço>> {
+        republish(now)
+        oldestPendingAgeSeconds(now)
+    }
+    class WaiterReconciler <<serviço>> {
+        resumeStale(now)
+        reviewExpired(now)
+    }
+    class VersionReconciler <<serviço>> {
+        reconcile(now) : active, finalized, stuck, summariesRepaired
+    }
+    class IssueReviewer <<serviço>> {
+        review(now) : open, resolved
+    }
+    class DeadLetterReprocessor <<serviço>> {
+        reprocess(now) : results-dlq
+        reprocessIssues(now) : issues-dlq
+    }
+    class ReconcilerMetrics <<serviço>> {
+        emit(now, expiredTasks, outboxPendingAgeSeconds)
+    }
+}
+
+package "Infraestrutura" #FBF6FC {
+    class QuoteTable <<serviço>> {
+        get, query, count, transact, updateIf
+        outboxItem(...), refreshSummary, repairSummary
+        issueWrite, resolveIssue, indexed(gsi2pk, limit)
+    }
+    class TokenCipher <<serviço>> {
+        encrypt(token, WorkRef)
+        decrypt(ciphertext, WorkRef)
+    }
+    class LambdaEvents <<valor>> {
+        SqsEvent, StreamEvent, BatchResponse
+        {static} toItem(NewImage)
+    }
+    class QuoteFunctionsConfig <<valor>> {
+        tableName, eventBusName, stateMachineArn,
+        tokenKeySecretId, maxInsurers,
+        outboxRepublishAfterSeconds,
+        reconcilerBatchSize = 50
+    }
+    class ReconcilerConfig <<valor>> {
+        filas e DLQs, dlqMaxAttempts,
+        stuckVersionMarginSeconds,
+        resumingRetryAfterSeconds,
+        metricsNamespace, stage
+    }
+    class QuoteIssue <<evento>> {
+        type, target, organizationId,
+        quoteId, version, queryId, safeSummary
+    }
+}
+
+WorkflowStepsHandler --> WorkflowSteps
+ResumeHandler --> ResultResumer
+IssueProjectorHandler --> IssueProjector
+OutboxRelayHandler --> OutboxPublisher
+ReconcilerHandler --> OutboxReconciler
+ReconcilerHandler --> WaiterReconciler
+ReconcilerHandler --> VersionReconciler
+ReconcilerHandler --> IssueReviewer
+ReconcilerHandler --> DeadLetterReprocessor
+ReconcilerHandler --> ReconcilerMetrics
+DispatchHandler --> QuoteTable
+DispatchHandler --> TokenCipher
+WorkflowSteps --> QuoteTable
+ResultResumer --> QuoteTable
+ResultResumer --> TokenCipher
+IssueProjector --> QuoteTable
+OutboxPublisher --> QuoteTable
+OutboxReconciler --> OutboxPublisher
+WaiterReconciler --> ResultResumer
+VersionReconciler --> WorkflowSteps
+VersionReconciler --> OutboxPublisher
+DeadLetterReprocessor --> QuoteTable
+IssueReviewer --> QuoteTable
+WaiterReconciler ..> QuoteIssue
+VersionReconciler ..> QuoteIssue
+DeadLetterReprocessor ..> QuoteIssue
+QuoteTable ..> QuoteFunctionsConfig
+TokenCipher ..> QuoteFunctionsConfig
+ReconcilerMetrics ..> ReconcilerConfig
+DeadLetterReprocessor ..> ReconcilerConfig
+ResumeHandler ..> LambdaEvents
+IssueProjectorHandler ..> LambdaEvents
+OutboxRelayHandler ..> LambdaEvents
+
+legend right
+    <b>Leitura</b>
+    <back:$COR_ENTRADA>    </back> Handler escolhido por QUARKUS_LAMBDA_HANDLER
+    <back:$COR_APLICACAO>    </back> Lógica do passo, consumidor ou dever
+    <back:#F1F8E9>    </back> Configuração (@ConfigMapping) e eventos crus
+    <back:$COR_SAIDA>    </back> Ocorrência gravada no ISSUE#
+    Um zip (quote-functions-lambda.zip) serve as seis Lambdas;
+    quarkus.lambda.handler = workflow-steps é o padrão
+endlegend
+@enduml

@@ -1,0 +1,29 @@
+@startuml estados-situacao-beta
+!include ../../../docs/diagramas/tema-plataforma.iuml
+
+hide stereotype
+title $I_SIMULADOR Situação da beta simulada BETA#<providerRequestId> — calculada na leitura
+
+state "$I_SIMULADOR PROCESSING" as PROCESSING <<espera>> : agora < readyAt\nGET responde status PROCESSING, sem result
+state "COMPLETED" as COMPLETED <<ativo>> : agora >= readyAt\nGET responde completedAt = readyAt e o result
+state "Desconhecida" as DESCONHECIDA <<terminal>> : GET responde 404 NOT_FOUND
+
+[*] --> PROCESSING : POST /sim/insurers/beta/quotes responde 202:\nPut BETA#<providerRequestId> e BETAREF#<clientReference>,\nreadyAt = receivedAt + atraso do primeiro callback\n(betaCallbackDelaySeconds no vehicle-beta-silent)
+PROCESSING --> COMPLETED : o tempo passa de readyAt (nada é regravado)
+COMPLETED --> DESCONHECIDA : TTL de 1 dia expira os dois itens
+[*] --> DESCONHECIDA : referência nunca recebida
+
+note right of COMPLETED
+    O GET aceita o providerRequestId ou o clientReference (via BETAREF#).
+    Um segundo POST com o mesmo clientReference gera outro providerRequestId,
+    agenda outros callbacks e faz o BETAREF# apontar a situação nova.
+    Quem lê a situação é o reconciler ou o reconcileWorker, para a consulta UNKNOWN.
+end note
+
+legend right
+    <b>Leitura</b>
+    <back:$COR_ENTRADA>    </back> Seguradora ainda processa
+    <back:$COR_DOMINIO>    </back> Resultado pronto (oferta, recusa ou pendência)
+    <back:$COR_INFRA>    </back> Sem registro
+endlegend
+@enduml

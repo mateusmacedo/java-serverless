@@ -1,0 +1,64 @@
+@startuml estados-versao
+!include ../../../docs/diagramas/tema-plataforma.iuml
+hide stereotype
+
+title $I_VEICULO Versão da cotação (V#<nnnn>) — fases (Phase) e outcomes (Outcome)
+
+state "RECEIVED" as RECEIVED <<inicial>> : gsi2pk = ACTIVE_VERSION\ngsi2sk = deadlineAt\noutbox StartQuoteRequested e QuoteAccepted
+state "VALIDATING" as VALIDATING <<ativo>> : snapshot carregado
+state "ENRICHING" as ENRICHING <<espera>> : espera do enriquecimento
+state "QUOTING" as QUOTING <<espera>> : Map das seguradoras;\nofertas aparecem uma a uma
+
+state "TERMINAL" as TERMINAL <<terminal>> {
+    state "COMPLETED" as COMPLETED <<ativo>> : outcomeReason nulo\ntoda seguradora selecionada QUOTED\nou DECLINED, ao menos uma QUOTED
+    state "PARTIAL" as PARTIAL <<ativo>> : outcomeReason nulo\nao menos uma oferta, mais pendência\nou falha técnica de outra seguradora
+    state "NEEDS_INFORMATION" as NI <<espera>> : MISSING_LICENSE_DATE (elig-1)\nENRICHMENT_NOT_FOUND\nINSURER_NEEDS_INFORMATION\nmissingFields preenchido
+    state "INELIGIBLE" as INELIGIBLE <<terminal>> : SALVAGE_VEHICLE (elig-1)
+    state "NO_OFFER" as NO_OFFER <<terminal>> : NO_APPLICABLE_INSURER (sel-1)\nALL_INSURERS_DECLINED
+    state "TECHNICAL_FAILURE" as TF <<erro>> : ENRICHMENT_FAILED\nINSURER_TECHNICAL_FAILURE\nWORKFLOW_FAILED
+}
+TERMINAL : gsi2pk = SUMMARY_PENDING até o resumo do META ser conferido\noutbox QuoteCompleted (eventId UUIDv5 de quoteId|version|COMPLETED)
+
+[*] --> RECEIVED : POST /v1/quotes (V#0001)\nou POST /v1/quotes/{id}/versions (V#n+1)
+RECEIVED --> VALIDATING : load-snapshot
+VALIDATING --> ENRICHING : evaluate-eligibility com ELIGIBLE
+VALIDATING --> TERMINAL : consolidate depois de\nINELIGIBLE ou NEEDS_INFORMATION
+ENRICHING --> QUOTING : select-insurers com lista não vazia\n(RESULT PENDING por seguradora)
+ENRICHING --> TERMINAL : consolidate depois de NOT_FOUND, FAILED\nou lista vazia (fase fica ENRICHING até aqui)
+QUOTING --> TERMINAL : consolidate depois do Map
+
+RECEIVED -[#C62828,dashed]-> TERMINAL : reconciler
+VALIDATING -[#C62828,dashed]-> TERMINAL : reconciler
+ENRICHING -[#C62828,dashed]-> TERMINAL : reconciler
+QUOTING -[#C62828,dashed]-> TERMINAL : reconciler: execução FAILED,\nTIMED_OUT ou ABORTED
+
+note right of RECEIVED
+    As fases só avançam (Phase.atOrBefore). O resumo do META
+    (phase, outcome, offerCount) é gravado depois de cada passo,
+    sem regredir; a listagem de cotações lê esse resumo.
+end note
+
+note left of QUOTING
+    Uma nova versão grava supersededAt na versão anterior,
+    sem mudar a fase: a execução antiga segue até o fim, e as
+    ofertas dela ficam com unavailabilityReason = VERSION_SUPERSEDED.
+end note
+
+note bottom of TERMINAL
+    A precedência que escolhe o outcome está em atividade-consolidacao.puml.
+    Na finalização pelo reconciler, os RESULT ainda abertos viram TIMED_OUT
+    (WORKFLOW_FAILED, WORKFLOW_TIMED_OUT ou WORKFLOW_ABORTED), a consolidação
+    roda pelo mesmo código e a ocorrência WORKFLOW_FAILED é aberta;
+    com uma oferta já gravada, o outcome pode ser PARTIAL.
+end note
+
+legend right
+    <b>Leitura</b>
+    <back:$COR_APLICACAO>    </back> Fase inicial
+    <back:$COR_ENTRADA>    </back> Fase de espera
+    <back:$COR_DOMINIO>    </back> Fase ativa ou outcome com oferta
+    <back:$COR_INFRA>    </back> Fim sem oferta
+    <back:$COR_ERRO>    </back> Falha técnica
+    Seta tracejada vermelha: finalização pelo reconciler
+endlegend
+@enduml

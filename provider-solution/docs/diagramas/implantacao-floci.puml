@@ -1,0 +1,60 @@
+@startuml implantacao-floci
+!include ../../../docs/diagramas/tema-plataforma.iuml
+!include <C4/C4_Deployment>
+!include <tupadr3/font-awesome-5/laptop_code>
+
+!$LEGEND_TITLE_TEXT = "Legenda"
+UpdateElementStyle("node", $bgColor="#F7F9FA", $fontColor="#37474F", $borderColor="#455A64", $legendText="Nó de implantação")
+UpdateElementStyle("container", $bgColor="#ECEFF1", $fontColor="#37474F", $borderColor="#455A64", $legendText="Recurso emulado pelo Floci")
+UpdateElementStyle("person", $bgColor="#FFFDE7", $fontColor="#37474F", $borderColor="#F9A825", $legendText="Ator")
+AddElementTag("lambda", $bgColor="#1565C0", $fontColor="#FFFFFF", $borderColor="#0D47A1", $legendText="Lambda Java 21 em contêiner Docker real")
+AddElementTag("simulador", $bgColor="#FCE4EC", $fontColor="#37474F", $borderColor="#AD1457", $legendText="Fornecedor simulado")
+AddElementTag("limite", $bgColor="#FFEBEE", $fontColor="#37474F", $borderColor="#C62828", $legendText="Criado, mas sem efeito no Floci")
+AddRelTag("assincrono", $textColor="#6A1B9A", $lineColor="#6A1B9A", $lineStyle=DashedLine(), $legendText="Assíncrono")
+
+title $I_FLOCI provider-solution — implantação local no Floci (stage local)
+
+Person(dev, "Desenvolvedor", "pnpm deploy:local ou pnpm deploy:provider", $sprite="user")
+
+Deployment_Node(host, "Máquina do desenvolvedor", "Docker Compose (compose.yaml), rede floci", $sprite="laptop_code") {
+    Deployment_Node(cli, "Serverless Framework v4 + serverless-localstack", "sls deploy --stage local, credenciais test, região us-east-1", $sprite="laptop_code") {
+        Container(pkg, "Pacotes", "mvn -B -q package -DskipTests", "provider-api-lambda.zip, provider-simulators-lambda.zip, provider-functions-lambda.zip", $sprite="archive")
+    }
+    Deployment_Node(floci, "Contêiner floci", "floci/floci:2.4.0, porta 4566, FLOCI_HOSTNAME=floci, volume floci-data persistente", $sprite="docker") {
+        Deployment_Node(stack, "Stack provider-solution-local", "CloudFormation emulado") {
+            Container(apigw, "API Gateway local-provider-solution", "REST", "http://localhost:4566/restapis/{api-id}/local/_user_request_", $sprite="globe")
+            ContainerDb(tables, "Tabelas queries e simulators", "DynamoDB, stream e TTL", "", $sprite="database")
+            ContainerDb(bucket, "Bucket payloads", "S3, path-style (s3PathStyleAccess = true)", "", $sprite="archive")
+            ContainerQueue(queues, "9 filas", "SQS", "3 de pedidos, sim-callbacks, 4 DLQs e stream-failures", $sprite="inbox")
+            Container(secrets, "query-key-secret e callback-secret", "Secrets Manager", "", $sprite="key")
+            Container(sched, "Agendamento do reconciler", "EventBridge Scheduler, rate(1 minute)", "", $sprite="clock")
+            Container(alarms, "16 alarmes e AlarmsTopic", "CloudWatch e SNS", "Aparecem no DescribeAlarms, mas não disparam", $sprite="bell", $tags="limite")
+        }
+        Deployment_Node(platform, "Stack platform-local", "platform/events, implantada antes (pnpm deploy:platform)") {
+            Container(bus, "platform-local-events", "EventBridge", "Regras da provider: source mmda.quote", $sprite="exchange_alt")
+        }
+    }
+    Deployment_Node(runtime, "Contêineres de Lambda", "criados pelo Floci pelo socket do Docker; init de até 120 s", $sprite="docker") {
+        Container(fns, "api, enrichmentWorker, insurerWorker, reconcileWorker, outboxRelay, reconciler", "java21, 1769 MB (só teto de memória)", "AWS_ENDPOINT_URL = http://floci:4566", $sprite="bolt", $tags="lambda")
+        Container(sims, "simulators e simCallbackSender", "java21", "PROVIDERS_BASE_URL e CALLBACKS_BASE_URL = http://floci:4566/restapis/{api}/local/_user_request_", $sprite="robot", $tags="simulador")
+    }
+    Deployment_Node(ui, "Contêiner floci-ui", "floci/floci-ui:0.7.0, porta 4500", $sprite="docker") {
+        Container(console, "Console web", "porta 4500 do host", "Navega pelos recursos do Floci", $sprite="globe")
+    }
+}
+
+Rel(dev, cli, "Implanta")
+Rel(cli, floci, "Deploy em localhost:4566")
+Rel(fns, tables, "SDK com endpoint do Floci")
+Rel(fns, bus, "PutEvents", $tags="assincrono")
+Rel(bus, queues, "Regras para as filas de pedidos", $tags="assincrono")
+Rel(queues, fns, "ESM", $tags="assincrono")
+Rel(fns, apigw, "Chamadas aos simuladores", "HTTP, floci:4566 .../_user_request_")
+Rel(apigw, sims, "/sim/{proxy+}")
+Rel(sims, apigw, "Callback assinado")
+Rel(apigw, fns, "/v1/providers/{provider}/callbacks")
+Rel(sched, fns, "Invoca o reconciler", $tags="assincrono")
+Rel(console, floci, "API do emulador", "HTTP, floci:4566")
+
+SHOW_LEGEND()
+@enduml

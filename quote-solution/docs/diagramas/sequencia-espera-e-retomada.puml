@@ -1,0 +1,75 @@
+@startuml sequencia-espera-e-retomada
+!include ../../../docs/diagramas/tema-plataforma.iuml
+
+title $I_SEGREDO Espera por task token: ResolveEnrichment e RequestInsurerQuote
+
+autonumber
+box "Aplicação" #F5FAFF
+    participant "$I_MAQUINA\nquote-flow" as sfn <<aplicacao>>
+    participant "$I_LAMBDA\ndispatch" as dispatch <<aplicacao>>
+    participant "$I_OUTBOX\noutboxRelay" as relay <<aplicacao>>
+    participant "$I_LAMBDA\nresume\nResultResumer" as resume <<aplicacao>>
+    participant "$I_LAMBDA\nworkflowSteps\nrecord-*-outcome" as steps <<aplicacao>>
+end box
+box "Infraestrutura" #F7F9FA
+    database "$I_DYNAMODB\nquotes" as table <<infra>>
+    participant "$I_SEGREDO\ntoken-key" as secret <<infra>>
+    participant "$I_EVENTBRIDGE\nplatform-<stage>-events" as bus <<saida>>
+    queue "$I_SQS\nresults" as results <<infra>>
+end box
+participant "$I_SEGURADORA\nprovider-solution" as provider <<externo>>
+
+== Pedido ==
+sfn -> dispatch : lambda:invoke.waitForTaskToken\n{kind, quoteId, version, insurerId, executionArn, taskToken, timeoutSeconds}
+dispatch -> dispatch : workRef = wr_ + SHA-256 de quoteId|version|kind|insurerId\ndeadlineAt = min(agora + timeoutSeconds, deadlineAt da versão)
+dispatch -> secret : GetSecretValue (chave = HMAC-SHA256 do segredo)
+alt #E8F5E9 primeira vez (sem waiter)
+    dispatch -> table : TransactWriteItems: WAITER WAITING (token cifrado, AES-256-GCM),\nOUTBOX EnrichmentRequested ou InsurerQuoteRequested (eventId = UUIDv5 do workRef);\nna seguradora, RESULT PENDING → PROCESSING
+else #FFF3E0 nova tentativa da tarefa, waiter WAITING
+    dispatch -> table : UpdateItem tokenCiphertext (condição status = WAITING), sem outbox novo
+else #FFF3E0 resultado já gravado (resumePayload)
+    dispatch -> sfn : SendTaskSuccess(token novo, resumePayload)
+end
+dispatch --> sfn : {workRef, status}; a tarefa segue esperando o token
+table -> relay : stream: INSERT de OUTBOX
+relay -> bus : PutEvents (source mmda.quote)
+bus -> provider : regra da provider: fila enrichment-requests ou insurer-requests
+
+== Resultado ==
+provider -> bus : EnrichmentResolved ou InsurerResultRecorded\n(source mmda.provider, com o workRef)
+bus -> results : ProviderResultsRule
+results -> resume : ESM, batchSize 1
+resume -> table : GetItem WAITER#<workRef>
+alt #ECEFF1 detail-type fora dos dois (antes da leitura) ou workRef sem waiter
+    resume --> results : IGNORED ou UNKNOWN_WORK (só log; a mensagem sai da fila)
+else #FFEBEE EnrichmentResolved fora do contrato (queryId, evidenceId, policyVersion, reuseDecision)
+    resume --> results : <color:#C62828>erro: batchItemFailures; depois de 5 recebimentos, results-dlq</color>
+else #FFF3E0 agora ≥ expiresAt do waiter
+    resume -> table : TransactWriteItems: LATE + CONSUMED#<eventId>
+else #E8F5E9 no prazo
+    resume -> table : TransactWriteItems: WAITER WAITING → RESUMING (resultEventId, resumePayload),\nRESULT terminal + OFFER (seguradora) ou EVIDENCE (enriquecimento), CONSUMED#<eventId>
+    alt #FFF3E0 cancelada por ConditionalCheckFailed
+        resume -> table : relê o waiter e o CONSUMED#
+        note right of resume : mesmo resultEventId em RESUMING: refaz a retomada;\nCONSUMED# existente: DISCARDED (só a linha de log);\nsenão LATE ou DUPLICATE com o CONSUMED#
+    end
+    resume -> secret : decifra o token
+    resume -> sfn : SendTaskSuccess(token, resumePayload)
+    alt #E8F5E9 aceito
+        resume -> table : WAITER RESUMING → DONE
+    else #FFEBEE TaskTimedOut ou InvalidToken
+        resume -> table : WAITER RESUMING → EXPIRED (gsi2pk = WAITER_EXPIRED)
+    end
+    resume -> table : refreshSummary do META (best-effort)
+end
+
+== Timeout da espera ==
+sfn -> steps : Catch States.Timeout ou States.ALL:\nrecord-enrichment-outcome ou record-insurer-outcome
+steps -> table : WAITER WAITING → EXPIRED (ou cria EXPIRED sem waiter)
+alt #E8F5E9 o waiter já tinha resumePayload
+    steps --> sfn : usa o resultado gravado
+else #FFEBEE sem resultado
+    steps -> table : RESULT TIMED_OUT (STEP_TIMEOUT) ou UNAVAILABLE (TASK_FAILED),\nsó se ainda PENDING ou PROCESSING; no enriquecimento, {resultType: FAILED}
+end
+
+$legenda_erros()
+@enduml

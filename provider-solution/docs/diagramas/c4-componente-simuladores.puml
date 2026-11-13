@@ -1,0 +1,60 @@
+@startuml c4-componente-simuladores
+!include ../../../docs/diagramas/tema-plataforma.iuml
+!include <C4/C4_Component>
+
+!$LEGEND_TITLE_TEXT = "Legenda"
+UpdateElementStyle("container", $bgColor="#ECEFF1", $fontColor="#37474F", $borderColor="#455A64", $legendText="Recurso AWS")
+UpdateElementStyle("component", $bgColor="#FCE4EC", $fontColor="#37474F", $borderColor="#AD1457", $legendText="Componente do provider-simulators")
+UpdateElementStyle("external_system", $bgColor="#E3F2FD", $fontColor="#37474F", $borderColor="#1565C0", $legendText="Lambda da plataforma")
+UpdateBoundaryStyle($bgColor="#FFFFFF", $fontColor="#37474F", $borderColor="#90A4AE", $legendText="Limite da Lambda")
+AddElementTag("entrada", $bgColor="#FFF3E0", $fontColor="#37474F", $borderColor="#EF6C00", $legendText="Rota HTTP ou entrada da Lambda")
+AddElementTag("saida", $bgColor="#F3E5F5", $fontColor="#37474F", $borderColor="#6A1B9A", $legendText="Adaptador AWS")
+AddRelTag("assincrono", $textColor="#6A1B9A", $lineColor="#6A1B9A", $lineStyle=DashedLine(), $legendText="Assíncrono (SQS)")
+
+title $I_SIMULADOR Fornecedores simulados — componentes (C4 nível 3)
+
+System_Ext(workers, "Workers e reconciler", "provider-functions, pela PROVIDERS_BASE_URL", $sprite="bolt")
+System_Ext(api, "api", "POST /v1/providers/beta/callbacks", $sprite="bolt")
+
+Boundary(sims, "simulators", "Lambda, timeout 29 s, papel SimulatorsRole, rota ANY /sim/{proxy+}") {
+    Component(handler, "StreamLambdaHandler", "serverless-java-container", "Contexto Spring criado uma vez por container", $sprite="bolt", $tags="entrada")
+    Component(enrichment, "EnrichmentSimulatorController", "POST /sim/enrichment/profiles", "Perfil do catálogo ou sintético; 404 com notFoundRefs para unknown ou not-found; 503 nas 2 primeiras chamadas do vehicle-flaky; 504 no vehicle-enrichment-down", $sprite="globe", $tags="entrada")
+    Component(alpha, "AlphaInsurerSimulatorController", "POST /sim/insurers/alpha/quotes", "Seguradora síncrona: oferta, DECLINED no vehicle-alpha-declines, 503 no vehicle-alpha-down", $sprite="globe", $tags="entrada")
+    Component(beta, "BetaInsurerSimulatorController", "POST e GET /sim/insurers/beta/quotes", "202 com providerRequestId; agenda os callbacks do cenário; situação PROCESSING até o readyAt e COMPLETED depois", $sprite="globe", $tags="entrada")
+    Component(catalog, "LabCatalog e SyntheticData", "fixtures/catalog.json no classpath", "Dados do catálogo; fora dele, dados determinísticos pela referência", $sprite="car")
+    Component(counters, "DynamoScenarioCounters", "ScenarioCounters", "FLAKY#{clientReference}, TTL de 1 h", $sprite="database", $tags="saida")
+    Component(quotes, "DynamoBetaQuotes", "BetaQuotes", "BETA#{providerRequestId} e BETAREF#{clientReference}, TTL de 1 dia", $sprite="database", $tags="saida")
+    Component(scheduled, "SqsScheduledCallbacks", "ScheduledCallbacks", "CallbackOrder na sim-callbacks com DelaySeconds até 900 s", $sprite="inbox", $tags="saida")
+}
+
+Boundary(senderl, "simCallbackSender", "Lambda, timeout 15 s, papel SimCallbackSenderRole") {
+    Component(senderh, "SimCallbackSenderHandler", "RequestStreamHandler, sem Spring", "Lê o evento SQS como JSON cru e devolve batchItemFailures", $sprite="bolt", $tags="entrada")
+    Component(sender, "SimCallbackSender", "java.net.http, timeout 10 s", "Monta o corpo só em ASCII, assina com HMAC-SHA256 e faz o POST; fora de 2xx falha a mensagem", $sprite="paper_plane")
+    Component(secret, "CallbackSecret", "Secrets Manager", "callback-secret lido uma vez por container", $sprite="key", $tags="saida")
+}
+
+ContainerDb(simtable, "provider-solution-{stage}-simulators", "DynamoDB, só pk, TTL", "Estado dos cenários", $sprite="database")
+ContainerQueue(simq, "sim-callbacks", "SQS, visibilidade 90 s, DLQ depois de 5 recebimentos", "Callbacks agendados", $sprite="inbox")
+Container(sm, "provider-solution/{stage}/callback-secret", "Secrets Manager", "Chave da assinatura", $sprite="key")
+
+Rel(workers, handler, "HTTP via API Gateway")
+Rel(handler, enrichment, "rota")
+Rel(handler, alpha, "rota")
+Rel(handler, beta, "rota")
+Rel(enrichment, catalog, "perfil")
+Rel(alpha, catalog, "coberturas do perfil pedido")
+Rel(beta, catalog, "coberturas do perfil pedido")
+Rel(enrichment, counters, "increment")
+Rel(beta, quotes, "save, find")
+Rel(beta, scheduled, "schedule(CallbackOrder, atraso)")
+Rel(counters, simtable, "UpdateItem")
+Rel(quotes, simtable, "PutItem, GetItem")
+Rel(scheduled, simq, "SendMessage", "SQS", $tags="assincrono")
+Rel(simq, senderh, "Lote 1", "ESM", $tags="assincrono")
+Rel(senderh, sender, "send(corpo da mensagem)")
+Rel(sender, secret, "value()")
+Rel(secret, sm, "GetSecretValue")
+Rel(sender, api, "POST com X-Signature", "HTTP, CALLBACKS_BASE_URL")
+
+SHOW_LEGEND()
+@enduml

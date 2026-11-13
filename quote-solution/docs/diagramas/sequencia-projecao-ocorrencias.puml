@@ -1,0 +1,55 @@
+@startuml sequencia-projecao-ocorrencias
+!include ../../../docs/diagramas/tema-plataforma.iuml
+
+title $I_ALARME Ocorrências da provider na quote: fila issues e GET /v1/operations/issues
+
+autonumber
+participant "$I_SEGURADORA\nprovider-solution" as provider <<externo>>
+box "Infraestrutura" #F7F9FA
+    participant "$I_EVENTBRIDGE\nplatform-<stage>-events" as bus <<saida>>
+    queue "$I_SQS\nissues" as issues <<infra>>
+    queue "$I_DLQ\nissues-dlq" as dlq <<infra>>
+end box
+box "Aplicação" #F5FAFF
+    participant "$I_LAMBDA\nissueProjector\nIssueProjector" as projector <<aplicacao>>
+end box
+box "Infraestrutura" #F7F9FA
+    database "$I_DYNAMODB\nquotes" as table <<infra>>
+end box
+box "Entrada" #FFFAF3
+    participant "$I_LAMBDA\napi\nOperationsResource" as api <<entrada>>
+end box
+participant "$I_OPERADOR\nOperador" as operador <<ator>>
+
+== Projeção ==
+provider -> bus : OperationIssueRaised ou OperationIssueUpdated\n{issueId, organizationId?, type, status, queryId?, quoteId?, revision, ...}
+bus -> issues : ProviderIssuesRule (source mmda.provider)
+issues -> projector : ESM, batchSize 1, ReportBatchItemFailures
+alt #ECEFF1 outra source ou outro detail-type
+    projector --> issues : IGNORED (só log; sai da fila)
+else #FFEBEE evento malformado (campo ausente, tipo fora dos quatro da provider, status fora do enum, revision < 1)
+    projector --> issues : <color:#C62828>erro: batchItemFailures</color>
+    issues -> dlq : depois de 5 recebimentos (issuesMaxReceiveCount)
+    note right of dlq : o reconciler reenvia à issues abaixo de\ndlqMaxAttempts (3) e, no limite, apaga\ncom a ocorrência DEAD_LETTER da quote
+else #E8F5E9 válido
+    projector -> table : TransactWriteItems\nUpdate ISSUE#<issueId>: source = provider, issueType = type do evento, status,\nfirstSeenAt, lastSeenAt, safeSummary, reconcilable, revision, projectedAt\n(+ gsi1pk = ISSUES#<organizationId> quando há organização);\ncondição attribute_not_exists(revision) OR revision < :r\n+ QUERYREF#<queryId> (com queryId e organizationId; if_not_exists na organização)\n+ Put CONSUMED#<eventId> (attribute_not_exists)
+    alt #FFEBEE cancelada por condição
+        projector --> issues : DISCARDED: "event already consumed" ou\n"revision not newer than the projected one"
+    else #E8F5E9 ok
+        projector --> issues : PROJECTED
+    end
+end
+
+== Listagem ==
+operador -> api : GET /v1/operations/issues?type&status&cursor&limit
+api -> api : caller.require(OPERATIONS_READ)
+api -> table : Query gsi1: gsi1pk = ISSUES#<organizationId do token>,\ngsi1sk decrescente; issueType e status em FilterExpression;\naté 10 consultas por página
+api --> operador : <color:#2E7D32>200 {items: id, queryId, quoteId, type, status, firstSeenAt,</color>\n<color:#2E7D32>lastSeenAt, safeSummary, allowedActions (RECONCILE); nextCursor}</color>
+
+note over api, operador
+    Ocorrência sem organização (callback sem correlação, DEAD_LETTER sem organização)
+    não tem gsi1pk e não aparece em nenhuma listagem no MVP.
+end note
+
+$legenda_erros()
+@enduml

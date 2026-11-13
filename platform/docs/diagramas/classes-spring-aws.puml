@@ -1,0 +1,80 @@
+@startuml classes-spring-aws
+!include ../../../docs/diagramas/tema-plataforma.iuml
+set separator none
+hide empty members
+hide stereotype
+title $I_SPRING Pacote com.mmda.serverless.platform.spring.aws (spring-aws)
+
+package "com.mmda.serverless.platform.spring.aws" {
+    class AwsClientsAutoConfiguration <<serviço>>
+    class AwsClientsProperties <<valor>> {
+        s3 : S3
+    }
+    class "AwsClientsProperties.S3" as S3Props <<valor>> {
+        pathStyleAccess : boolean
+    }
+    class "DynamoDbClientConfiguration" as Ddb <<serviço>> {
+        ~ dynamoDbClient() : DynamoDbClient
+    }
+    class "SqsClientConfiguration" as Sqs <<serviço>> {
+        ~ sqsClient() : SqsClient
+    }
+    class "SnsClientConfiguration" as Sns <<serviço>> {
+        ~ snsClient() : SnsClient
+    }
+    class "EventBridgeClientConfiguration" as Eb <<serviço>> {
+        ~ eventBridgeClient() : EventBridgeClient
+    }
+    class "S3ClientConfiguration" as S3c <<serviço>> {
+        ~ s3Client(properties : AwsClientsProperties) : S3Client
+    }
+    class "SecretsManagerClientConfiguration" as Sm <<serviço>> {
+        ~ secretsManagerClient() : SecretsManagerClient
+    }
+    class "SsmClientConfiguration" as Ssm <<serviço>> {
+        ~ ssmClient() : SsmClient
+    }
+    class "SchedulerClientConfiguration" as Sch <<serviço>> {
+        ~ schedulerClient() : SchedulerClient
+    }
+    class "SfnClientConfiguration" as Sfn <<serviço>> {
+        ~ sfnClient() : SfnClient
+    }
+}
+
+AwsClientsAutoConfiguration *-- Ddb
+AwsClientsAutoConfiguration *-- Sqs
+AwsClientsAutoConfiguration *-- Sns
+AwsClientsAutoConfiguration *-- Eb
+AwsClientsAutoConfiguration *-- S3c
+AwsClientsAutoConfiguration *-- Sm
+AwsClientsAutoConfiguration *-- Ssm
+AwsClientsAutoConfiguration *-- Sch
+AwsClientsAutoConfiguration *-- Sfn
+AwsClientsAutoConfiguration ..> AwsClientsProperties : @EnableConfigurationProperties
+AwsClientsProperties *-- S3Props
+S3c ..> AwsClientsProperties : forcePathStyle
+
+note top of AwsClientsAutoConfiguration
+  @AutoConfiguration, registrada em
+  META-INF/spring/org.springframework.boot.
+  autoconfigure.AutoConfiguration.imports
+end note
+note bottom of Sfn
+  Cada configuração interna: @ConditionalOnClass(client do SDK)
+  e @Bean @ConditionalOnMissingBean. O client usa
+  httpClientBuilder(AwsCrtHttpClient.builder()); região,
+  credenciais e endpoint vêm das cadeias padrão do SDK.
+end note
+note bottom of S3Props
+  @ConfigurationProperties(prefix = "mmda.aws")
+  mmda.aws.s3.path-style-access, padrão false
+end note
+
+legend right
+    <b>Leitura</b>
+    <back:#E3F2FD>    </back> Configuração Spring (uma por client)
+    <back:#F1F8E9>    </back> Propriedades (record)
+    Losango cheio: classe interna estática
+endlegend
+@enduml

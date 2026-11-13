@@ -1,0 +1,44 @@
+@startuml c4-conteiner
+!include ../../../docs/diagramas/tema-plataforma.iuml
+!$LEGEND_TITLE_TEXT = "Legenda"
+!include <C4/C4_Container>
+
+UpdateElementStyle("external_system", $bgColor="#FCE4EC", $fontColor="#37474F", $borderColor="#AD1457", $legendText="Solução que usa a plataforma")
+UpdateElementStyle("container", $bgColor="#F3E5F5", $fontColor="#37474F", $borderColor="#6A1B9A", $legendText="Recurso implantado (stack platform-<stage>)")
+UpdateSystemBoundaryStyle($bgColor="#FFFFFF", $fontColor="#37474F", $borderColor="#90A4AE", $type="Pasta platform/", $legendText="Parte da plataforma")
+AddElementTag("maven", $bgColor="#E8F5E9", $fontColor="#37474F", $borderColor="#2E7D32", $legendText="Artefato Maven (só no build)")
+AddRelTag("evento", $textColor="#6A1B9A", $lineColor="#6A1B9A", $lineStyle=DashedLine(), $legendText="Evento no barramento da plataforma")
+AddRelTag("build", $textColor="#2E7D32", $lineColor="#2E7D32", $lineStyle=DottedLine(), $legendText="Herança ou dependência Maven")
+
+title $I_EVENTBRIDGE Plataforma — barramento, parents e spring-aws (C4 nível 2)
+
+System_Boundary(events, "platform/events (serviço platform)") {
+    ContainerQueue(bus, "platform-<stage>-events", "EventBridge, AWS::Events::EventBus PlatformEventBus", "Sem funções nem regras próprias; saídas PlatformEventBusName e PlatformEventBusArn", $sprite="exchange_alt")
+}
+
+System_Boundary(build, "Parents e biblioteca Maven") {
+    Container(springparent, "spring-parent", "pom", "BOMs do Spring Boot, Spring Cloud e AWS SDK; exclusões de clients HTTP; zip da Lambda", $sprite="leaf", $tags="maven")
+    Container(quarkusparent, "quarkus-parent", "pom", "BOMs do Quarkus e do Quarkus Amazon Services; <artifactId>-lambda.zip", $sprite="cubes", $tags="maven")
+    Container(springaws, "spring-aws", "jar", "AwsClientsAutoConfiguration: clients síncronos com AwsCrtHttpClient", $sprite="leaf", $tags="maven")
+}
+
+System_Ext(quote, "quote-solution", "Quarkus; source mmda.quote", $sprite="cubes")
+System_Ext(provider, "provider-solution", "Spring; source mmda.provider", $sprite="leaf")
+System_Ext(sample, "sample-solution", "Spring; barramento próprio (ADR 0011)", $sprite="leaf")
+System_Ext(receipt, "receipt-solution", "Quarkus; barramento próprio (ADR 0011)", $sprite="cubes")
+
+Rel(quote, bus, "PutEvents: QuoteAccepted, EnrichmentRequested, InsurerQuoteRequested, QuoteCompleted, OfferSelected, QueryReconcileRequested", "outboxRelay e reconciler", $tags="evento")
+Rel(bus, provider, "Regras da provider: EnrichmentRequested, InsurerQuoteRequested e QueryReconcileRequested para as filas -enrichment-requests, -insurer-requests e -reconcile-requests", $tags="evento")
+Rel(provider, bus, "PutEvents: EnrichmentResolved, InsurerResultRecorded, QueryReconciled, OperationIssueRaised e OperationIssueUpdated", "outboxRelay e reconciler", $tags="evento")
+Rel(bus, quote, "Regras da quote: resultados para -results e ocorrências para -issues", $tags="evento")
+
+Rel(springaws, springparent, "Herda", $tags="build")
+Rel(sample, springparent, "Herda", $tags="build")
+Rel(provider, springparent, "Herda", $tags="build")
+Rel(sample, springaws, "Depende (api e functions)", $tags="build")
+Rel(provider, springaws, "Depende (api, functions e simulators)", $tags="build")
+Rel(receipt, quarkusparent, "Herda", $tags="build")
+Rel(quote, quarkusparent, "Herda", $tags="build")
+
+SHOW_LEGEND()
+@enduml

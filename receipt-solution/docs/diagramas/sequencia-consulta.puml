@@ -1,0 +1,26 @@
+@startuml sequencia-consulta
+!include ../../../docs/diagramas/tema-plataforma.iuml
+hide stereotype
+title $I_API Consulta do comprovante: GET /receipts/{requestId}
+autonumber
+participant "$I_CLIENTE\nCliente HTTP" as cliente <<ator>>
+box "Entrada" #FFFAF3
+    participant "$I_API\nAPI Gateway" as gw <<entrada>>
+    participant "$I_LAMBDA\napi\n(ReceiptResource)" as api <<entrada>>
+end box
+box "Infraestrutura" #F7F9FA
+    database "$I_DYNAMODB\nreceipt-solution-\n<stage>-receipts" as ddb <<infra>>
+end box
+
+cliente -> gw : GET /receipts/{requestId}
+gw -> api : evento proxy
+api -> ddb : GetItem(key = requestId, consistentRead = true)
+alt #FFEBEE item ausente
+    ddb --> api : sem item
+    api --> cliente : <color:#C62828>404 sem corpo</color>
+else #E8F5E9 item presente
+    ddb --> api : requestId, signature, payloadBytes, issuedAt
+    api --> cliente : <color:#2E7D32>200 Receipt (Receipt.fromItem)</color>
+end
+$legenda_erros()
+@enduml

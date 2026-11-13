@@ -1,0 +1,72 @@
+@startuml sequencia-execucao-versao
+!include ../../../docs/diagramas/tema-plataforma.iuml
+
+title $I_MAQUINA Execução de uma versão: quote-flow do RECEIVED ao TERMINAL (caminho com duas seguradoras)
+
+autonumber
+box "Aplicação" #F5FAFF
+    participant "$I_MAQUINA\nquote-flow" as sfn <<aplicacao>>
+    participant "$I_LAMBDA\nworkflowSteps" as steps <<aplicacao>>
+    participant "$I_LAMBDA\ndispatch" as dispatch <<aplicacao>>
+    participant "$I_LAMBDA\nresume" as resume <<aplicacao>>
+end box
+box "Domínio" #F6FBF6
+    participant "$I_QUARKUS\nquote-domain" as domain <<dominio>>
+end box
+box "Infraestrutura" #F7F9FA
+    database "$I_DYNAMODB\nquotes" as table <<infra>>
+end box
+participant "$I_SEGURADORA\nprovider-solution\n(via barramento e filas)" as provider <<externo>>
+
+== Validação ==
+sfn -> steps : load-snapshot
+steps -> table : V#n: RECEIVED → VALIDATING; resumo do META
+steps --> sfn : {organizationId, deadlineAt}
+sfn -> steps : evaluate-eligibility
+steps -> domain : EligibilityRule.evaluate(snapshot) (elig-1)
+steps -> table : eligibilityDecision, eligibilityRuleVersion;\ncom ELIGIBLE, fase ENRICHING (condição attribute_not_exists(eligibilityRuleVersion))
+alt #FFEBEE INELIGIBLE ou NEEDS_INFORMATION
+    sfn -> steps : consolidate (direto)
+end
+
+== Enriquecimento ==
+sfn -> dispatch : waitForTaskToken, kind = ENRICHMENT (20 s)
+dispatch -> table : WAITER + outbox EnrichmentRequested
+provider --> resume : EnrichmentResolved (HIT, JOIN ou MISS)
+resume -> table : EVIDENCE da versão
+resume -> sfn : SendTaskSuccess {resultType, evidenceId, queryId, reuseDecision}
+alt #FFEBEE NOT_FOUND, FAILED ou timeout
+    sfn -> steps : consolidate
+end
+
+== Seleção de seguradoras ==
+sfn -> steps : select-insurers
+steps -> table : lê a EVIDENCE FOUND
+steps -> domain : InsurerSelectionRule.select (sel-1): ano do perfil enriquecido,\nuso do snapshot, no máximo maxInsurers
+steps -> table : selectedInsurers, selectionRuleVersion, fase QUOTING,\nRESULT PENDING para alpha e beta (insurerName de Insurers)
+steps --> sfn : {insurers: [alpha, beta], count: 2}
+
+== Cotação (Map, MaxConcurrency 2) ==
+par alpha (síncrona na provider)
+    sfn -> dispatch : waitForTaskToken, kind = INSURER, insurerId = alpha
+    dispatch -> table : RESULT PENDING → PROCESSING + outbox InsurerQuoteRequested
+    provider --> resume : InsurerResultRecorded QUOTED
+    resume -> table : RESULT QUOTED + OFFER (já visível no GET)
+    resume -> sfn : SendTaskSuccess
+else beta (assíncrona: 202 e callback na provider)
+    sfn -> dispatch : waitForTaskToken, kind = INSURER, insurerId = beta
+    dispatch -> table : RESULT PENDING → PROCESSING + outbox InsurerQuoteRequested
+    provider --> resume : InsurerResultRecorded (depois do callback)
+    resume -> table : RESULT terminal (+ OFFER se QUOTED)
+    resume -> sfn : SendTaskSuccess
+end
+
+== Consolidação ==
+sfn -> steps : consolidate
+steps -> domain : Consolidation.consolidate(elegibilidade, enriquecimento,\nselectedInsurers, resultados)
+steps -> table : TransactWriteItems: V#n TERMINAL, outcome, outcomeReason, missingFields,\ngsi2pk = SUMMARY_PENDING (condição revision = :lida) + outbox QuoteCompleted
+steps -> table : refreshSummary: META phase, outcome, offerCount; tira do SUMMARY_PENDING
+steps --> sfn : {outcome, outcomeReason}
+
+$legenda_camadas()
+@enduml

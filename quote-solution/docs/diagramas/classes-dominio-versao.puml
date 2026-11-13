@@ -1,0 +1,177 @@
+@startuml classes-dominio-versao
+!include ../../../docs/diagramas/tema-plataforma.iuml
+hide empty members
+hide stereotype
+skinparam linetype ortho
+
+title $I_QUARKUS quote-domain (com.mmda.serverless.quote.domain) — versão, regras e consolidação
+
+package "Snapshot da versão" #F6FBF6 {
+    class QuoteSnapshot <<agregado>> {
+        product : String
+        applicantRef : String
+        applicant : Party
+        risk : Risk
+        coverageProfile : String
+        coverage : CoverageProfile
+        desiredStartDate : String
+    }
+    class "QuoteSnapshot.Risk" as Risk <<valor>> {
+        vehicleRef : String
+        usage : Usage
+        principalDriverRef : String
+        vehicle : Vehicle
+        principalDriver : Driver
+    }
+    class "QuoteSnapshot.Vehicle" as Vehicle <<valor>> {
+        id, label, make, model : String
+        year : int
+        salvage : boolean
+    }
+    class "QuoteSnapshot.Driver" as Driver <<valor>> {
+        id, label : String
+        licenseDate : String (nulo = sem habilitação)
+    }
+    class "QuoteSnapshot.CoverageProfile" as CoverageProfile <<valor>> {
+        code, label, summary : String
+        coverages : List<Coverage>
+    }
+    enum Usage {
+        PERSONAL
+        COMMERCIAL
+    }
+}
+
+package "Regras de laboratório" #F5FAFF {
+    class EligibilityRule <<serviço>> {
+        VERSION = "elig-1"
+        {static} evaluate(QuoteSnapshot) : EligibilityResult
+    }
+    class InsurerSelectionRule <<serviço>> {
+        VERSION = "sel-1"
+        MIN_VEHICLE_YEAR = 2000
+        {static} select(QuoteSnapshot, JsonNode perfil, int maxInsurers) : InsurerSelection
+        {static} select(Usage, int vehicleYear, int maxInsurers) : InsurerSelection
+    }
+    class Consolidation <<serviço>> {
+        {static} consolidate(EligibilityResult, EnrichmentOutcome,\n  List<String> selectedInsurers, List<InsurerResultView>) : ConsolidationResult
+    }
+    class Insurers <<serviço>> {
+        ALPHA = "alpha" (Alpha Seguros)
+        BETA = "beta" (Beta Seguros)
+        {static} all() : List<String>
+        {static} nameOf(insurerId) : Optional<String>
+    }
+    class MissingFieldLabels <<serviço>> {
+        {static} labelOf(path) : String
+    }
+}
+
+package "Resultados" #FBF6FC {
+    class EligibilityResult <<valor>> {
+        decision : EligibilityDecision
+        reasonCode : OutcomeReason
+        missingFields : List<MissingField>
+        ruleVersion : String
+    }
+    class EnrichmentOutcome <<valor>> {
+        resultType : ResultType (FOUND, NOT_FOUND, FAILED)
+        notFoundRefs : List<String>
+        missingFields() : List<MissingField>
+    }
+    class "InsurerSelectionRule.InsurerSelection" as InsurerSelection <<valor>> {
+        insurerIds : List<String>
+        ruleVersion : String
+    }
+    class "Consolidation.InsurerResultView" as InsurerResultView <<valor>> {
+        insurerId : String
+        status : InsurerStatus
+        missingFields : List<MissingField>
+    }
+    class "Consolidation.ConsolidationResult" as ConsolidationResult <<valor>> {
+        outcome : Outcome
+        outcomeReason : OutcomeReason
+        missingFields : List<MissingField>
+    }
+    class MissingField <<valor>> {
+        path : String
+        reasonCode : String
+    }
+}
+
+package "Enums da versão" #FFFAF3 {
+    enum Phase {
+        RECEIVED
+        VALIDATING
+        ENRICHING
+        QUOTING
+        TERMINAL
+        atOrBefore() : List<Phase>
+    }
+    enum Outcome {
+        COMPLETED
+        PARTIAL
+        NEEDS_INFORMATION
+        INELIGIBLE
+        NO_OFFER
+        TECHNICAL_FAILURE
+    }
+    enum OutcomeReason {
+        SALVAGE_VEHICLE
+        MISSING_LICENSE_DATE
+        ENRICHMENT_NOT_FOUND
+        ENRICHMENT_FAILED
+        NO_APPLICABLE_INSURER
+        ALL_INSURERS_DECLINED
+        INSURER_NEEDS_INFORMATION
+        INSURER_TECHNICAL_FAILURE
+        WORKFLOW_FAILED
+    }
+    enum InsurerStatus {
+        PENDING
+        PROCESSING
+        QUOTED
+        DECLINED
+        NEEDS_INFORMATION
+        UNAVAILABLE
+        TIMED_OUT
+        isTerminal() : boolean
+        isTechnicalFailure() : boolean
+    }
+    enum EligibilityDecision {
+        ELIGIBLE
+        INELIGIBLE
+        NEEDS_INFORMATION
+    }
+}
+
+QuoteSnapshot *-- Risk
+QuoteSnapshot *-- CoverageProfile
+Risk *-- Vehicle
+Risk *-- Driver
+Risk --> Usage
+EligibilityRule ..> QuoteSnapshot : lê
+EligibilityRule ..> EligibilityResult : cria
+InsurerSelectionRule ..> QuoteSnapshot : uso e ano reserva
+InsurerSelectionRule ..> Insurers
+InsurerSelectionRule ..> InsurerSelection : cria
+Consolidation ..> EligibilityResult
+Consolidation ..> EnrichmentOutcome
+Consolidation ..> InsurerResultView
+Consolidation ..> ConsolidationResult : cria
+EligibilityResult --> EligibilityDecision
+EligibilityResult --> OutcomeReason
+ConsolidationResult --> Outcome
+ConsolidationResult --> OutcomeReason
+InsurerResultView --> InsurerStatus
+EligibilityResult o-- MissingField
+ConsolidationResult o-- MissingField
+
+legend right
+    <b>Leitura</b>
+    <back:$COR_DOMINIO>    </back> Snapshot imutável da versão (no V#n, em JSON)
+    <back:$COR_APLICACAO>    </back> Regra ou serviço estático, sem AWS
+    <back:#F1F8E9>    </back> Valor devolvido pelas regras
+    Java puro: só jackson-databind; a api e as functions mapeiam para o DynamoDB
+endlegend
+@enduml

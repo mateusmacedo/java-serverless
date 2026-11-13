@@ -1,0 +1,42 @@
+@startuml c4-conteiner
+!include ../../../docs/diagramas/tema-plataforma.iuml
+!$LEGEND_TITLE_TEXT = "Legenda"
+!include <C4/C4_Container>
+
+UpdateElementStyle("person", $bgColor="#FFFDE7", $fontColor="#37474F", $borderColor="#F9A825", $legendText="Ator")
+UpdateElementStyle("external_system", $bgColor="#FCE4EC", $fontColor="#37474F", $borderColor="#AD1457", $legendText="Outra solução")
+UpdateElementStyle("container", $bgColor="#1565C0", $fontColor="#FFFFFF", $borderColor="#0D47A1", $legendText="Lambda Java 21 (Quarkus, modo JVM)")
+UpdateSystemBoundaryStyle($bgColor="#FFFFFF", $fontColor="#37474F", $borderColor="#90A4AE", $type="Solução", $legendText="Limite da solução")
+AddElementTag("entrada", $bgColor="#FFF3E0", $fontColor="#37474F", $borderColor="#EF6C00", $legendText="Entrada HTTP")
+AddElementTag("orquestracao", $bgColor="#E3F2FD", $fontColor="#0D47A1", $borderColor="#1565C0", $legendText="Orquestração (Step Functions)")
+AddElementTag("dados", $bgColor="#ECEFF1", $fontColor="#37474F", $borderColor="#455A64", $legendText="Dados")
+AddElementTag("mensageria", $bgColor="#F3E5F5", $fontColor="#37474F", $borderColor="#6A1B9A", $legendText="Mensageria (EventBridge)")
+AddRelTag("assincrono", $textColor="#6A1B9A", $lineColor="#6A1B9A", $lineStyle=DashedLine(), $legendText="Assíncrono (evento)")
+
+title $I_QUARKUS receipt-solution — contêineres (C4 nível 2)
+
+Person(cliente, "Cliente HTTP", "Consulta e emite comprovantes", $sprite="user")
+System_Ext(sample, "sample-solution", "Publica RequestCompleted no barramento sample-solution-<stage>-events", $sprite="exchange_alt")
+
+System_Boundary(receipt, "receipt-solution-<stage>") {
+    Container(apigw, "API REST <stage>-receipt-solution", "API Gateway", "GET /receipts/{requestId} e POST /receipts, sem autorizador", $sprite="globe", $tags="entrada")
+    Container(api, "api", "Lambda, Quarkus REST (quarkus-amazon-lambda-rest)", "ReceiptResource", $sprite="bolt")
+    Container(flow, "receipt-flow", "Step Functions", "Issue e Announce, com Retry de 2 novas tentativas e sem Catch", $sprite="project_diagram", $tags="orquestracao")
+    Container(issue, "issue", "Lambda, quarkus-amazon-lambda", "IssueReceiptHandler: gravação condicional idempotente", $sprite="bolt")
+    Container(announce, "announce", "Lambda, quarkus-amazon-lambda", "AnnounceReceiptHandler: publica ReceiptIssued", $sprite="bolt")
+    ContainerDb(table, "receipts", "DynamoDB", "PK requestId; um comprovante por pedido", $sprite="database", $tags="dados")
+    ContainerQueue(bus, "events", "EventBridge", "Barramento próprio; nenhuma regra no repositório", $sprite="exchange_alt", $tags="mensageria")
+}
+
+Rel(sample, flow, "RequestCompleted (source mmda.sample); regra declarada pela receipt no barramento da sample", "EventBridge, alvo nativo", $tags="assincrono")
+Rel(cliente, apigw, "GET /receipts/{requestId} e POST /receipts", "HTTPS, JSON")
+Rel(apigw, api, "Evento proxy", "Lambda proxy")
+Rel(api, table, "GetItem com leitura consistente")
+Rel(api, flow, "StartExecution {detail: corpo}")
+Rel(flow, issue, "InputPath $.detail")
+Rel(flow, announce, "Receipt")
+Rel(issue, table, "PutItem condicional; GetItem na repetição")
+Rel(announce, bus, "PutEvents ReceiptIssued (source mmda.receipt)", $tags="assincrono")
+
+SHOW_LEGEND()
+@enduml

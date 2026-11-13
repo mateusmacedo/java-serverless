@@ -1,0 +1,36 @@
+@startuml estados-requisicao
+!include ../../../docs/diagramas/tema-plataforma.iuml
+hide empty description
+title $I_API Ciclo de vida de uma requisição entre tentativas (sem enum no código)
+
+state "$I_S3 Recebida\npayload em requests/<requestId>.json" as Recebida <<inicial>>
+state "$I_MAQUINA Em execução\nexecução requestId (attempt 1)\nou requestId-attempt" as EmExecucao <<espera>>
+state "$I_DYNAMODB Concluída\nitem na tabela requests\ne RequestCompleted emitido" as Concluida <<ativo>>
+state "$I_DLQ Na DLQ\nmensagem com error" as NaDlq <<erro>>
+state "Descartada\nlog WARN Discarding request" as Descartada <<terminal>>
+
+[*] --> Recebida : POST /requests (api)\nPutObject
+Recebida --> EmExecucao : StartExecution, attempt = 1
+EmExecucao --> Concluida : Validate, Persist e Notify sem erro
+EmExecucao -[#C62828]-> NaDlq : qualquer erro (Catch States.ALL)
+NaDlq -[#1565C0,dashed]-> EmExecucao : reprocess com attempt < maxAttempts\nattempt + 1, nova execução requestId-attempt
+NaDlq -[#C62828]-> Descartada : reprocess com attempt >= maxAttempts (padrão 3)
+Concluida --> [*]
+Descartada --> [*]
+
+note right of Concluida
+  O objeto no S3 nunca é apagado pelo código.
+  Se o Notify falhar depois do Persist, a tentativa
+  seguinte sobrescreve o item (PutItem sem condição)
+  e o SNS pode receber a requisição de novo.
+end note
+
+legend right
+    <b>Leitura</b>
+    <back:#FFF3E0>    </back> Execução em andamento
+    <back:#E8F5E9>    </back> Concluída
+    <back:#FFEBEE>    </back> Aguardando o reprocess
+    <back:#ECEFF1>    </back> Descartada (fim sem sucesso)
+    Seta tracejada azul: ação agendada ou manual do reprocess
+endlegend
+@enduml

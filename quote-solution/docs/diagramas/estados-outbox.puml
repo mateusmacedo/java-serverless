@@ -1,0 +1,41 @@
+@startuml estados-outbox
+!include ../../../docs/diagramas/tema-plataforma.iuml
+hide stereotype
+
+title $I_OUTBOX Item de outbox (OUTBOX#<eventId>) — estados implícitos (sem enum no código)
+
+state "$I_OUTBOX Pendente" as Pendente <<inicial>> : gsi2pk = OUTBOX_PENDING\ngsi2sk = createdAt\nattempts = 0
+state "Pendente com falha permanente" as Falhou <<erro>> : attempts + 1, lastError\ngsi2sk = instante da última falha
+state "Publicado" as Publicado <<terminal>> : publishedAt (SET)\nsai do gsi2
+
+[*] --> Pendente : Put com attribute_not_exists na mesma transação\nda mudança (API, dispatch, consolidate ou reconciler)
+Pendente --> Publicado : outboxRelay pelo INSERT no stream:\nPutEvents com FailedEntryCount 0,\nou StartExecution (StartQuoteRequested)
+Pendente --> Pendente : falha transitória (throttling, 5xx, SDK):\nbatchItemFailures; o stream reentrega
+Pendente -[#C62828]-> Falhou : falha permanente\n(condição attribute_exists(gsi2pk))
+Falhou --> Falhou : nova falha permanente
+Pendente -[#1565C0,dashed]-> Publicado : reconciler republica o gsi2sk\nmais velho que outboxRepublishAfterSeconds (30 s)
+Falhou -[#1565C0,dashed]-> Publicado : reconciler republica\n(vai para o fim da fila pelo gsi2sk)
+Publicado --> [*]
+
+note right of Publicado
+    A publicação é pelo menos uma vez: o eventId vai no detail,
+    ExecutionAlreadyExists conta como sucesso e o publishedAt
+    é gravado com SET. Depois do StartExecution, a relay grava
+    executionArn e executionName no V#n.
+end note
+
+note left of Falhou
+    O registro que esgota maximumRetryAttempts (3) no ESM
+    vai para a stream-failures (só shard e faixa de sequência)
+    e volta só pelo reconciler, que lê a tabela.
+    O alarme outbox-pending-age mede a idade pelo createdAt.
+end note
+
+legend right
+    <b>Leitura</b>
+    <back:$COR_APLICACAO>    </back> Pendente no índice OUTBOX_PENDING
+    <back:$COR_ERRO>    </back> Pendente com falha permanente registrada
+    <back:$COR_INFRA>    </back> Publicado
+    Seta tracejada azul: republicação pelo reconciler
+endlegend
+@enduml

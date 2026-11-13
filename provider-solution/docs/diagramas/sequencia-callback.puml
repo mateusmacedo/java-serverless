@@ -1,0 +1,83 @@
+@startuml sequencia-callback
+!include ../../../docs/diagramas/tema-plataforma.iuml
+
+title $I_API Callback da beta: POST /v1/providers/{provider}/callbacks com inbox e encontro no CORR#
+autonumber
+
+box "Fornecedor simulado" #FCF5F8
+    participant "$I_SIMULADOR\nbeta (simulators)" as beta <<externo>>
+    participant "$I_SQS\nsim-callbacks" as simq <<infra>>
+    participant "$I_SIMULADOR\nsimCallbackSender" as sender <<externo>>
+end box
+box "Entrada" #FFFAF3
+    participant "$I_API\nAPI Gateway +\nCallbackController" as api <<entrada>>
+end box
+box "Aplicação" #F5FAFF
+    participant "$I_LAMBDA\nCallbackInbox" as inbox <<aplicacao>>
+    participant "$I_LAMBDA\ninsurerWorker\n(PendingCallbacks)" as worker <<aplicacao>>
+end box
+box "Infraestrutura" #F7F9FA
+    participant "$I_DYNAMODB\nqueries" as db <<infra>>
+    participant "$I_S3\npayloads" as s3 <<infra>>
+end box
+
+== Agendamento e envio (fornecedor simulado) ==
+beta -> simq : SendMessage CallbackOrder, DelaySeconds do cenário\n(3 s; 120 s na AWS e 30 s no local para o vehicle-beta-late; 0 no early)
+simq -> sender : SQSEvent, lote 1, depois do atraso
+sender -> api : POST com X-Signature: sha256=<hex do HMAC-SHA256>\ncorpo só em ASCII (externalEventId, providerRequestId, clientReference, sentAt, result)
+
+== Validação, antes de qualquer gravação ==
+alt #FFEBEE assinatura ausente, fora do formato ou que não confere
+    api --> sender : <color:#C62828>401 INVALID_SIGNATURE</color> (nada é gravado)
+else #FFEBEE provedor fora de callbacks.providers (só beta)
+    api --> sender : <color:#C62828>404 UNKNOWN_PROVIDER</color>
+else #FFEBEE corpo acima de 256 KiB
+    api --> sender : <color:#C62828>413 CALLBACK_TOO_LARGE</color>
+else #FFEBEE não é objeto JSON ou envelope fora do contrato
+    api --> sender : <color:#C62828>400 INVALID_CALLBACK</color>
+end
+
+== Inbox ==
+api -> inbox : receive(provider, envelope, corpo)
+inbox -> db : PutItem INBOX#beta#<externalEventId> RECEIVED\n(attribute_not_exists; gsi2pk = INBOX_RECEIVED, gsi2sk = receivedAt)
+alt repetição de um callback já PROCESSED
+    inbox --> api : PROCESSED, duplicate = true
+    api --> sender : <color:#2E7D32>200</color>
+end
+
+== Correlação ==
+alt clientReference aponta QUERY# do mesmo provedor (e do mesmo providerRequestId, se já gravado)
+    inbox -> inbox : processa este callback
+else encontro no CORR# pelo providerRequestId
+    inbox -> db : UpdateItem CORR#beta#<providerRequestId> ADD pendingEvents :externalEventId, ALL_NEW
+    alt só a metade da api (sem queryId)
+        inbox --> api : RECEIVED
+        api --> sender : <color:#EF6C00>202 RECEIVED</color> (callback retido na inbox)
+    else as duas metades
+        inbox -> inbox : processa as pendências em ordem de externalEventId
+    end
+end
+
+== Conclusão de cada callback pendente ==
+inbox -> s3 : PutObject raw/<queryId>/callback-<externalEventId>.json
+inbox -> db : Transação: INBOX# PROCESSED (remove gsi2pk), QUERY# COMPLETED ou FAILED\n(condição state IN (IN_FLIGHT, UNKNOWN)), EVIDENCE#, ATTEMPT# finishedAt,\nOUTBOX# InsurerResultRecorded (UUIDv5 do queryId), CONSUMED# do pedido
+alt consulta já concluída (outro callback, resposta síncrona ou reconciliação)
+    inbox -> db : só INBOX# PROCESSED, sem novo outbox (evidência tardia)
+end
+inbox --> api : PROCESSED
+api --> sender : <color:#2E7D32>200 PROCESSED</color>
+note over api : SdkException antes de a inbox ficar consistente: <color:#C62828>503 SERVICE_UNAVAILABLE</color>,\no fornecedor reenvia o mesmo callback
+
+== Metade do worker, depois do 202 da beta ==
+worker -> db : UpdateItem CORR#beta#<providerRequestId> SET queryId, ALL_NEW
+alt pendingEvents presentes
+    worker -> db : mesma transação de conclusão para cada pendência (CallbackLedger)
+end
+
+== Falha na entrega ==
+alt resposta fora de 2xx ou erro de rede
+    sender --> simq : batchItemFailures: volta pela visibilidade (90 s), DLQ depois de 5 recebimentos
+end
+
+$legenda_erros()
+@enduml

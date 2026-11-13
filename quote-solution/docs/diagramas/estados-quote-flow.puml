@@ -1,0 +1,71 @@
+@startuml estados-quote-flow
+!include ../../../docs/diagramas/tema-plataforma.iuml
+hide stereotype
+
+title $I_MAQUINA Máquina de estado quote-flow (quote-solution-<stage>-quote-flow)
+
+state "$I_LAMBDA LoadQuoteSnapshot" as LoadQuoteSnapshot <<inicial>> : workflow-steps, step = load-snapshot\nfase VALIDATING\n$.context = {organizationId, deadlineAt}
+state "$I_LAMBDA EvaluateEligibility" as EvaluateEligibility <<ativo>> : workflow-steps, step = evaluate-eligibility\nelig-1; com ELIGIBLE, fase ENRICHING\n$.eligibility = {decision, reasonCode, missingFields}
+state IsEligible <<choice>>
+state "$I_LAMBDA ResolveEnrichment" as ResolveEnrichment <<espera>> : dispatch, kind = ENRICHMENT\nlambda:invoke.waitForTaskToken\nTimeoutSeconds = enrichmentTimeoutSeconds (20)\nresultado em $.enrichment
+state "$I_LAMBDA RecordEnrichmentOutcome" as RecordEnrichmentOutcome <<erro>> : workflow-steps, step = record-enrichment-outcome\nusa o resumePayload do waiter, se existe;\nsenão {resultType: FAILED, errorClass}
+state IsEnrichmentFound <<choice>>
+state "$I_LAMBDA SelectInsurers" as SelectInsurers <<ativo>> : workflow-steps, step = select-insurers\nsel-1 sobre o perfil da evidência FOUND\ncom lista, fase QUOTING e RESULT PENDING\n$.selection = {insurers, count}
+state HasInsurers <<choice>>
+
+state "QuoteInsurers (Map)" as QuoteInsurers {
+    state "$I_LAMBDA RequestInsurerQuote" as RequestInsurerQuote <<espera>> : dispatch, kind = INSURER\nlambda:invoke.waitForTaskToken\nTimeoutSeconds = insurerTimeoutSeconds (90; 20 no local)
+    state "$I_LAMBDA RecordInsurerTimeout" as RecordInsurerTimeout <<erro>> : workflow-steps, record-insurer-outcome\noutcome = TIMED_OUT (STEP_TIMEOUT)
+    state "$I_LAMBDA RecordInsurerFailure" as RecordInsurerFailure <<erro>> : workflow-steps, record-insurer-outcome\noutcome = UNAVAILABLE (TASK_FAILED)
+    [*] --> RequestInsurerQuote : item {quoteId, version, insurerId, executionArn}
+    RequestInsurerQuote --> [*] : SendTaskSuccess
+    RequestInsurerQuote -[#C62828]-> RecordInsurerTimeout : Catch States.Timeout
+    RequestInsurerQuote -[#C62828]-> RecordInsurerFailure : Catch States.ALL
+    RecordInsurerTimeout --> [*]
+    RecordInsurerFailure --> [*]
+}
+QuoteInsurers : ItemsPath = $.selection.insurers\nMaxConcurrency = mapConcurrency (2)\nResultPath = null: resultados ficam no DynamoDB
+
+state "$I_LAMBDA ConsolidateQuote" as ConsolidateQuote <<terminal>> : workflow-steps, step = consolidate\nprecedência do PRD; fase TERMINAL,\noutcome, outcomeReason e outbox QuoteCompleted
+
+[*] --> LoadQuoteSnapshot : StartExecution pela outboxRelay\nnome q-<quoteId>-v<version>, entrada {quoteId, version}
+LoadQuoteSnapshot --> EvaluateEligibility
+EvaluateEligibility --> IsEligible
+IsEligible --> ResolveEnrichment : decision = ELIGIBLE
+IsEligible --> ConsolidateQuote : Default (INELIGIBLE, NEEDS_INFORMATION)
+ResolveEnrichment --> IsEnrichmentFound : SendTaskSuccess
+ResolveEnrichment -[#C62828]-> RecordEnrichmentOutcome : Catch States.Timeout\nou States.ALL
+RecordEnrichmentOutcome --> IsEnrichmentFound
+IsEnrichmentFound --> SelectInsurers : resultType = FOUND
+IsEnrichmentFound --> ConsolidateQuote : Default (NOT_FOUND, FAILED)
+SelectInsurers --> HasInsurers
+HasInsurers --> QuoteInsurers : count > 0
+HasInsurers --> ConsolidateQuote : Default (lista vazia)
+QuoteInsurers --> ConsolidateQuote
+ConsolidateQuote --> [*]
+
+note right of LoadQuoteSnapshot
+    Toda tarefa declara TimeoutSeconds e tem Retry só para
+    Lambda.ServiceException, Lambda.AWSLambdaException,
+    Lambda.SdkClientException e Lambda.TooManyRequestsException
+    (IntervalSeconds 1, MaxAttempts 3, BackoffRate 2).
+    States.Timeout nunca é repetido.
+end note
+
+note left of ConsolidateQuote
+    TimeoutSeconds da máquina = workflowTimeoutSeconds (360).
+    Esse timeout encerra a execução em TIMED_OUT sem Catch;
+    o reconciler finaliza a versão (WORKFLOW_FAILED).
+end note
+
+legend right
+    <b>Leitura</b>
+    <back:$COR_APLICACAO>    </back> Primeiro estado
+    <back:$COR_DOMINIO>    </back> Passo simples (lambda:invoke)
+    <back:$COR_ENTRADA>    </back> Espera por task token
+    <back:$COR_ERRO>    </back> Desfecho registrado por Catch
+    <back:$COR_INFRA>    </back> Consolidação e fim
+    Losango: estado Choice
+    Seta vermelha: Catch
+endlegend
+@enduml

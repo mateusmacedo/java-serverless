@@ -1,0 +1,39 @@
+@startuml estados-operacao
+!include ../../../docs/diagramas/tema-plataforma.iuml
+hide stereotype
+
+title $I_OPERADOR Reconciliação manual (OPERATION#<operationId>) — OperationStatus na quote
+
+state "QUEUED" as QUEUED <<inicial>> : revision 0\nsafeSummary de espera\nreason e requestedBy (sub)
+state "SUCCEEDED" as SUCCEEDED <<ativo>> : revision 2\nconsulta concluída antes ou agora
+state "FAILED" as FAILED <<erro>> : revision 2\nconsulta UNKNOWN, ainda em voo,\ninexistente ou de outra organização
+
+[*] --> QUEUED : POST /v1/operations/queries/{queryId}/reconcile\n202, numa transação com IDEMPOTENCY (RECONCILE)\ne o outbox QueryReconcileRequested
+QUEUED --> SUCCEEDED : issue-projector projeta QueryReconciled\n(status SUCCEEDED, revision 2)
+QUEUED --> FAILED : issue-projector projeta QueryReconciled\n(status FAILED, revision 2)
+SUCCEEDED --> [*]
+FAILED --> [*]
+
+note right of QUEUED
+    RUNNING (revisão 1) existe só na tabela da provider
+    e não é publicado: na quote, a operação passa de
+    QUEUED direto ao resultado.
+    A condição revision < :r e a mesma organização
+    descartam o evento antigo ou de outra organização
+    (FOREIGN_ORGANIZATION, só com WARN no log).
+end note
+
+note left of FAILED
+    O QueryReconcileRequested descartado da DLQ
+    pela provider também termina em FAILED,
+    com o QueryReconciled de revisão 2.
+end note
+
+legend right
+    <b>Leitura</b>
+    <back:$COR_APLICACAO>    </back> Gravado pela API
+    <back:$COR_DOMINIO>    </back> Resultado com sucesso
+    <back:$COR_ERRO>    </back> Resultado com falha
+    GET /v1/operations/{operationId} lê o item (operations:read)
+endlegend
+@enduml

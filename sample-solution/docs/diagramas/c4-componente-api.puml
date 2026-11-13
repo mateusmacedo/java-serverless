@@ -1,0 +1,39 @@
+@startuml c4-componente-api
+!include ../../../docs/diagramas/tema-plataforma.iuml
+!$LEGEND_TITLE_TEXT = "Legenda"
+!include <C4/C4_Component>
+
+UpdateElementStyle("person", $bgColor="#FFFDE7", $fontColor="#37474F", $borderColor="#F9A825", $legendText="Ator")
+UpdateElementStyle("component", $bgColor="#E3F2FD", $fontColor="#0D47A1", $borderColor="#1565C0", $legendText="Componente da aplicação")
+UpdateElementStyle("container", $bgColor="#ECEFF1", $fontColor="#37474F", $borderColor="#455A64", $legendText="Recurso AWS")
+UpdateContainerBoundaryStyle($bgColor="#FFFFFF", $fontColor="#37474F", $borderColor="#90A4AE", $type="Lambda", $legendText="Lambda e o que roda dentro dela")
+AddElementTag("entrada", $bgColor="#FFF3E0", $fontColor="#37474F", $borderColor="#EF6C00", $legendText="Entrada (handler e controller)")
+AddElementTag("biblioteca", $bgColor="#F3E5F5", $fontColor="#37474F", $borderColor="#6A1B9A", $legendText="Biblioteca (fora do módulo)")
+
+title $I_LAMBDA Lambda api da sample-solution — componentes (C4 nível 3)
+
+Person(cliente, "Cliente HTTP", "", $sprite="user")
+Container(apigw, "API REST <stage>-sample-solution", "API Gateway", "Integração Lambda proxy", $sprite="globe")
+
+Container_Boundary(api, "sample-solution-<stage>-api (api-lambda.zip, timeout 29 s, 1769 MB)") {
+    Component(handler, "StreamLambdaHandler", "RequestStreamHandler", "Cria o contexto Spring uma vez por contêiner, no bloco estático", $sprite="bolt", $tags="entrada")
+    Component(container, "SpringBootLambdaContainerHandler", "aws-serverless-java-container-springboot4", "Converte o evento proxy em requisição do Spring MVC", $tags="biblioteca")
+    Component(controller, "RequestController", "@RestController /requests", "POST com application/json; gera requestId e s3Key", $sprite="globe", $tags="entrada")
+    Component(props, "ApiProperties", "@ConfigurationProperties sample", "bucketName e stateMachineArn")
+    Component(clients, "AwsClientsAutoConfiguration", "spring-aws", "S3Client (path style opcional) e SfnClient com AwsCrtHttpClient", $tags="biblioteca")
+}
+
+ContainerDb(bucket, "payloads", "S3", "requests/<requestId>.json", $sprite="archive")
+Container(flow, "request-flow", "Step Functions", "Entrada {requestId, s3Key, attempt: 1}", $sprite="project_diagram")
+
+Rel(cliente, apigw, "POST /requests")
+Rel(apigw, handler, "handleRequest(InputStream, OutputStream)")
+Rel(handler, container, "proxyStream")
+Rel(container, controller, "create(String payload)")
+Rel(controller, props, "Lê")
+Rel(controller, clients, "Usa os beans")
+Rel(clients, bucket, "PutObject")
+Rel(clients, flow, "StartExecution, nome = requestId")
+
+SHOW_LEGEND()
+@enduml

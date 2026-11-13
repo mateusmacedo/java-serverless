@@ -1,0 +1,87 @@
+@startuml classes-dominio-base
+!include ../../../docs/diagramas/tema-plataforma.iuml
+
+hide empty members
+hide stereotype
+title $I_DYNAMODB Pacote com.mmda.serverless.provider.domain — estado da consulta, identificadores e políticas
+
+enum QueryState {
+    IN_FLIGHT
+    COMPLETED
+    FAILED
+    UNKNOWN
+    isSettled() : boolean (todos menos IN_FLIGHT)
+}
+interface "CallOutcome<R>" as CallOutcome <<sealed>>
+class "Responded(statusCode, reply)" as Responded <<valor>>
+class "NotSent(errorClass)" as NotSent <<valor>>
+class "NoResponse(errorClass)" as NoResponse <<valor>>
+class Identities <<serviço>> {
+    {static} workRef(quoteId, version, kind, insurerId)
+    {static} queryId(workRef) : q_ + 32 hex do SHA-256
+    {static} evidenceId(queryId, sequência) : ev_ + 32 hex
+    {static} attemptRef(queryId, sequência) : queryId#nnnn
+    {static} issueId(tipo, alvo) : is_ + 32 hex
+}
+class EventIds <<serviço>> {
+    NAMESPACE = 6ba7b811-9dad-11d1-80b4-00c04fd430c8
+    {static} enrichmentResolved(queryId, workRef)
+    {static} insurerResultRecorded(queryId)
+    {static} operationIssue(issueId, revision)
+    {static} queryReconciled(operationId, revision)
+    {static} request(workRef) : chave do CONSUMED#
+}
+class QueryKeys <<serviço>> {
+    {static} compute(segredo, organizationId, provider, operation,\ncontractVersion, vehicleRef, principalDriverRef)
+}
+class RetryPolicy <<valor>> {
+    {field} retries : int (workerRetries)
+    {field} backoffMax : Duration (retryBackoffMaxSeconds)
+    maxAttempts() : retries + 1
+    backoffBefore(retry, jitter) : Duration
+}
+class QuotaWindow <<valor>> {
+    {field} id : yyyyMMdd'T'HHmmss (UTC)
+    start, end : Instant
+    {static} of(agora, duração)
+    key(provider, credentialRef) : QUOTA#...
+    secondsUntilEnd(agora) : long
+}
+class ErrorClasses <<serviço>> {
+    DEADLINE_EXCEEDED_BEFORE_CALL, QUOTA_EXHAUSTED
+    PROVIDER_UNAVAILABLE, PROVIDER_NO_RESPONSE
+    INVALID_PROVIDER_RESPONSE, UNDECLARED_NOT_FOUND
+    UNSUPPORTED_INSURER
+    INTERRUPTED_ATTEMPT, INTERRUPTED_BEFORE_CALL
+    {static} http(status) : HTTP_<status>
+}
+class "Digests, Timestamps, Decimals" as Utils <<serviço>> {
+    SHA-256, HMAC-SHA256, UUIDv5
+    ISO 8601 em UTC com milissegundos
+    {field} decimal ^\d+(\.\d+)?$
+}
+
+CallOutcome <|.. Responded
+CallOutcome <|.. NotSent
+CallOutcome <|.. NoResponse
+Identities ..> Utils
+EventIds ..> Utils
+QueryKeys ..> Utils
+
+note right of CallOutcome
+    NotSent: ConnectException ou timeout de conexão (falha antes do envio).
+    NoResponse: qualquer outra falha de rede, inclusive timeout de leitura:
+    a chamada pode ter chegado ao fornecedor e nunca é repetida.
+end note
+note bottom of QueryState
+    Os pacotes enrichment, insurer e operations estão em
+    classes-dominio-enriquecimento, classes-dominio-seguradora
+    e classes-dominio-operacoes.
+end note
+
+legend right
+    <b>Leitura</b>
+    <back:#F1F8E9>    </back> Valor imutável (record)
+    <back:$COR_APLICACAO>    </back> Função pura, sem SDK AWS
+endlegend
+@enduml

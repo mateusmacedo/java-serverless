@@ -1,0 +1,59 @@
+@startuml sequencia-reconciliacao-manual
+!include ../../../docs/diagramas/tema-plataforma.iuml
+
+title $I_OPERADOR Reconciliação manual: QueryReconcileRequested até QueryReconciled
+autonumber
+
+actor "$I_OPERADOR\nOperador" as operador <<ator>>
+box "quote-solution" #FCF5F8
+    participant "$I_API\nPOST /v1/operations/\nqueries/{id}/reconcile" as quote <<externo>>
+end box
+box "Barramento" #F7F9FA
+    participant "$I_EVENTBRIDGE\nplatform-{stage}-events" as bus <<infra>>
+    participant "$I_SQS\nreconcile-requests" as fila <<infra>>
+end box
+box "Aplicação" #F5FAFF
+    participant "$I_LAMBDA\nreconcileWorker\n(ReconcileRequestHandler)" as worker <<aplicacao>>
+    participant "$I_LAMBDA\nQueryReconciliation" as qr <<aplicacao>>
+end box
+box "Infraestrutura" #F7F9FA
+    participant "$I_DYNAMODB\nqueries" as db <<infra>>
+end box
+box "Fornecedor" #FCF5F8
+    participant "$I_SEGURADORA\nGET /sim/insurers/beta/quotes/{ref}" as beta <<externo>>
+end box
+
+operador -> quote : pedido com motivo e Idempotency-Key (operations:reconcile)
+quote -> bus : QueryReconcileRequested (via outbox da quote)
+bus -> fila : regra source mmda.quote
+fila -> worker : SQSEvent, lote 1
+worker -> db : Put OPERATION#<operationId> RUNNING, revision 1 (attribute_not_exists)
+alt operação já tem resultado (SUCCEEDED ou FAILED)
+    worker -> worker : reentrega: nada a fazer, fim do processamento
+end
+worker -> db : GetItem QUERY#<queryId>
+alt #FFEBEE consulta inexistente ou de outra organização
+    worker -> worker : NOT_FOUND (a de outra organização não é tocada)
+else consulta da organização do pedido
+    worker -> qr : reconcile(query), sem teto de leituras
+    alt COMPLETED ou FAILED
+        qr --> worker : SETTLED
+    else IN_FLIGHT dentro do prazo ou com entrega viva
+        qr --> worker : IN_PROGRESS
+    else IN_FLIGHT vencida ou UNKNOWN
+        qr -> db : mesmo caminho do reconciler (estados-consulta)
+        opt UNKNOWN de seguradora com API de situação
+            qr -> beta : GET da situação
+        end
+        qr --> worker : CONCLUDED ou UNKNOWN
+    end
+end
+alt #E8F5E9 SETTLED ou CONCLUDED
+    worker -> db : Transação: OPERATION# SUCCEEDED, revision 2 (condição status = RUNNING)\n+ OUTBOX# QueryReconciled (UUIDv5 de operationId|2)
+else #FFEBEE NOT_FOUND, IN_PROGRESS ou UNKNOWN
+    worker -> db : Transação: OPERATION# FAILED, revision 2 + OUTBOX# QueryReconciled
+end
+note over bus : o RUNNING não é publicado; a quote projeta o QueryReconciled pela fila issues
+
+$legenda_erros()
+@enduml

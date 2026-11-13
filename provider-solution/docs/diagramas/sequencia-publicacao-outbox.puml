@@ -1,0 +1,52 @@
+@startuml sequencia-publicacao-outbox
+!include ../../../docs/diagramas/tema-plataforma.iuml
+
+title $I_OUTBOX Publicação do outbox: OUTBOX# até o barramento da plataforma
+autonumber
+
+box "Aplicação" #F5FAFF
+    participant "$I_LAMBDA\nworkers, api,\nreconciler e reconcileWorker" as writer <<aplicacao>>
+end box
+box "Infraestrutura" #F7F9FA
+    participant "$I_DYNAMODB\nqueries" as db <<infra>>
+    participant "$I_DYNAMODB\nDynamoDB Streams" as stream <<infra>>
+end box
+box "Saída" #FBF6FC
+    participant "$I_OUTBOX\noutboxRelay\n(OutboxRelayFunction)" as relay <<saida>>
+    participant "$I_EVENTBRIDGE\nplatform-{stage}-events" as bus <<saida>>
+end box
+box "Infraestrutura" #F7F9FA
+    participant "$I_DLQ\nstream-failures" as sf <<infra>>
+    participant "$I_AGENDADOR\nreconciler" as rec <<infra>>
+end box
+
+writer -> db : Transação do efeito + Put OUTBOX#<eventId> (type = OUTBOX,\ngsi2pk = OUTBOX_PENDING, gsi2sk = createdAt)
+db -> stream : INSERT (NEW_IMAGE)
+stream -> relay : lote de até 100, filtro eventName INSERT e NewImage.type.S = OUTBOX
+loop cada registro, um por vez
+    relay -> bus : PutEvents (source mmda.provider, detail-type, detail)
+    alt #E8F5E9 FailedEntryCount 0
+        relay -> db : UpdateItem SET publishedAt, REMOVE gsi2pk, gsi2sk
+    else #FFEBEE transitório (cliente, 5xx, throttling ou entrada com erro retentável)
+        relay --> stream : batchItemFailures com o número de sequência: reentrega a partir dele
+    else #FFEBEE permanente
+        relay -> db : ADD attempts, lastError, lastAttemptAt, gsi2sk = agora\n(continua OUTBOX_PENDING, vai para o fim do índice)
+    end
+end
+alt #FFEBEE maximumRetryAttempts (3) esgotado, com divisão do lote
+    stream -> sf : onFailure: shard e faixa de sequência, sem o registro (só para o alarme)
+end
+
+== Republicação, a cada minuto ==
+rec -> db : Query gsi2 OUTBOX_PENDING, em ordem de gsi2sk, até 100 itens
+rec -> bus : PutEvents dos itens com gsi2sk mais antigo que outboxRepublishAfterSeconds (30 s)
+rec -> db : STALE_OUTBOX se o createdAt passou de staleOutboxAfterSeconds (120 s),\nmenos para OperationIssueRaised e OperationIssueUpdated
+note over bus
+    A quote assina com regras source mmda.provider: EnrichmentResolved e
+    InsurerResultRecorded vão para a fila results; QueryReconciled,
+    OperationIssueRaised e OperationIssueUpdated, para a fila issues.
+    A entrega é pelo menos uma vez: o consumidor descarta a repetição pelo eventId.
+end note
+
+$legenda_erros()
+@enduml

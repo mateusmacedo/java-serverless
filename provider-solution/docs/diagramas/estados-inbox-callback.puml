@@ -1,0 +1,30 @@
+@startuml estados-inbox-callback
+!include ../../../docs/diagramas/tema-plataforma.iuml
+
+hide stereotype
+title $I_SQS Callback na inbox INBOX#<provider>#<externalEventId> — processingStatus
+
+state "$I_SQS RECEIVED" as RECEIVED <<espera>> : gsi2pk = INBOX_RECEIVED\ngsi2sk = receivedAt
+state "PROCESSED" as PROCESSED <<ativo>> : queryId, processedAt\nsem gsi2pk
+state "$I_DLQ UNMATCHED" as UNMATCHED <<erro>> : unmatchedAt\ngsi2pk = INBOX_UNMATCHED\ngsi2sk = receivedAt, depois a última revisão
+
+[*] --> RECEIVED : api: PutItem com attribute_not_exists,\ndepois de conferir a assinatura e o envelope
+RECEIVED --> RECEIVED : só a metade da api no CORR# (202 RECEIVED);\nrepetição do callback refaz a associação
+RECEIVED --> PROCESSED : encontro pelo clientReference ou pelas duas metades do CORR#,\nna api, no insurerWorker ou no reconciler: transação de conclusão;\ncom a consulta já concluída, só a inbox muda
+RECEIVED -[#C62828]-> UNMATCHED : reconciler: parado há mais de 30 s (inboxStuckAfterSeconds),\nsem correlação e com receivedAt há mais de 60 s;\nabre UNMATCHED_CALLBACK
+UNMATCHED --> UNMATCHED : reconciler sem correlação: gsi2sk = agora;\nrepetição do callback responde 202 RECEIVED
+UNMATCHED -[#2E7D32]-> PROCESSED : a correlação aparece (reconciler ou repetição do callback);\na ocorrência se resolve na revisão seguinte
+PROCESSED --> [*]
+
+note right of PROCESSED
+    Repetição de um callback PROCESSED:
+    200 com duplicate = true, nada muda.
+end note
+
+legend right
+    <b>Leitura</b>
+    <back:$COR_ENTRADA>    </back> À espera do encontro no CORR#
+    <back:$COR_DOMINIO>    </back> Resultado gravado ou evidência tardia
+    <back:$COR_ERRO>    </back> Sem correlação, visível no alarme unmatched-callbacks
+endlegend
+@enduml

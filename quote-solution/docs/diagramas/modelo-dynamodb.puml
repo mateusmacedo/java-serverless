@@ -1,0 +1,169 @@
+@startuml modelo-dynamodb
+!include ../../../docs/diagramas/tema-plataforma.iuml
+hide circle
+hide stereotype
+hide empty methods
+skinparam linetype ortho
+skinparam nodesep 40
+skinparam ranksep 50
+
+title $I_DYNAMODB Tabela quote-solution-<stage>-quotes — chaves, índices e tipos de item
+
+package "Partição QUOTE#<quoteId>" #F6FBF6 {
+    entity "<b>QUOTE</b> (META)" as meta <<agregado>> {
+        * pk = QUOTE#<quoteId>
+        * sk = META
+        --
+        quoteId, organizationId, createdBy, createdAt
+        currentVersion
+        phase, outcome, offerCount (resumo da versão atual)
+        selectionId, selectedVersion, selectedOfferId
+        updatedAt
+        --
+        gsi1pk = ORG#<organizationId>
+        gsi1sk = <createdAt>#<quoteId>
+    }
+    entity "<b>VERSION</b>" as version <<agregado>> {
+        * pk = QUOTE#<quoteId>
+        * sk = V#<nnnn>
+        --
+        snapshot (JSON), inputHash, deadlineAt
+        phase, outcome, outcomeReason, missingFields
+        eligibilityDecision, eligibilityReasonCode,
+        eligibilityMissingFields, eligibilityRuleVersion
+        selectedInsurers, selectionRuleVersion
+        workflowVersion, executionName, executionArn
+        supersededAt, revision, createdAt, updatedAt
+        --
+        gsi2pk = ACTIVE_VERSION (gsi2sk = deadlineAt)
+        ou SUMMARY_PENDING (gsi2sk = consolidação)
+    }
+    entity "<b>RESULT</b>" as result <<valor>> {
+        * pk = QUOTE#<quoteId>
+        * sk = V#<nnnn>#RESULT#<insurerId>
+        --
+        insurerName, status, reasonCode, missingFields
+        queryRef, attemptRef, resultEventId
+        revision, updatedAt
+    }
+    entity "<b>OFFER</b>" as offer <<valor>> {
+        * pk = QUOTE#<quoteId>
+        * sk = V#<nnnn>#OFFER#<offerId>
+        --
+        offerId, insurerId, insurerName, externalOfferId
+        premiumTotal, currency, installments, coverages,
+        deductibles, validUntil, rawResponseRef, queryId
+        createdAt
+    }
+    entity "<b>SELECTION</b>" as selection <<valor>> {
+        * pk = QUOTE#<quoteId>
+        * sk = V#<nnnn>#SELECTION
+        --
+        selectionId, offerId, selectedAt, selectedBy
+    }
+    entity "<b>EVIDENCE</b> (evidência usada)" as evidence <<valor>> {
+        * pk = QUOTE#<quoteId>
+        * sk = V#<nnnn>#EVIDENCE#<workRef>
+        --
+        evidenceId, queryId, reuseDecision, resultType
+        policyVersion, summary, resultEventId, receivedAt
+    }
+    entity "<b>LATE</b> (resultado tardio)" as late <<valor>> {
+        * pk = QUOTE#<quoteId>
+        * sk = V#<nnnn>#LATE#<alvo>#<queryId>
+        --
+        reason (LATE ou DUPLICATE), eventId, status
+        queryRef, attemptRef, rawResponseRef, offerSummary
+        evidenceId, reuseDecision, policyVersion, receivedAt
+    }
+}
+
+package "Controle do workflow" #F5FAFF {
+    entity "<b>IDEMPOTENCY</b>" as idem <<serviço>> {
+        * pk = IDEMPOTENCY#<orgId>#<operation>#<scope>#<key>
+        * sk = META
+        --
+        requestHash, resourceRef, createdAt
+        e o que o reenvio devolve
+    }
+    entity "<b>WAITER</b>" as waiter <<serviço>> {
+        * pk = WAITER#<workRef>
+        * sk = META
+        --
+        tokenCiphertext, quoteId, version, kind, insurerId
+        executionArn, expiresAt, status
+        resultEventId, resumePayload, updatedAt
+        --
+        gsi2pk = WAITER_RESUMING ou WAITER_EXPIRED
+    }
+    entity "<b>OUTBOX</b>" as outbox <<evento>> {
+        * pk = OUTBOX#<eventId>
+        * sk = META
+        --
+        eventId, detailType, detail, quoteId, version
+        createdAt, publishedAt, attempts, lastError
+        --
+        gsi2pk = OUTBOX_PENDING (até publicar)
+    }
+    entity "<b>CONSUMED</b>" as consumed <<serviço>> {
+        * pk = CONSUMED#<eventId>
+        * sk = META
+        --
+        consumedAt
+    }
+}
+
+package "Operações" #FBF6FC {
+    entity "<b>ISSUE</b>" as issue <<evento>> {
+        * pk = ISSUE#<issueId>
+        * sk = META
+        --
+        issueId, organizationId, source, issueType, status
+        queryId, quoteId, version, firstSeenAt, lastSeenAt
+        safeSummary, reconcilable, revision
+        projectedAt, resolvedAt
+        --
+        gsi1pk = ISSUES#<organizationId>
+        gsi1sk = <lastSeenAt>#<issueId>
+        gsi2pk = ISSUE_OPEN (só STUCK_VERSION aberta)
+    }
+    entity "<b>QUERYREF</b>" as queryref <<valor>> {
+        * pk = QUERYREF#<queryId>
+        * sk = META
+        --
+        queryId, organizationId, firstSeenAt
+    }
+    entity "<b>OPERATION</b>" as operation <<valor>> {
+        * pk = OPERATION#<operationId>
+        * sk = META
+        --
+        operationId, organizationId, queryId, reason
+        requestedBy, requestedAt, status, safeSummary
+        revision, updatedAt
+    }
+}
+
+meta ||--|{ version : currentVersion
+version ||--o{ result : "uma por seguradora selecionada"
+version ||--o{ offer : "uma por resultado QUOTED"
+version ||--o| selection : "no máximo uma"
+version ||--o| evidence : "uma por enriquecimento"
+version ||--o{ late : "LATE ou DUPLICATE"
+waiter }o..|| version : "quoteId, version"
+outbox }o..|| version : "quoteId, version"
+issue }o..o| version : "quoteId, version (ocorrências da quote)"
+queryref ||..o{ operation : "autoriza o RECONCILE"
+
+legend right
+    <b>Tabela e índices</b>
+    pk (HASH) e sk (RANGE), PAY_PER_REQUEST
+    Todo item tem o atributo type (QUOTE, VERSION, RESULT, OFFER,
+    SELECTION, EVIDENCE, LATE, IDEMPOTENCY, WAITER, OUTBOX,
+    CONSUMED, ISSUE, QUERYREF, OPERATION)
+    gsi1 (gsi1pk, gsi1sk), projeção ALL: listagens por organização
+    gsi2 (gsi2pk, gsi2sk), projeção ALL, esparso: trabalho pendente
+    Stream NEW_IMAGE; o ESM da outboxRelay só recebe INSERT com type = OUTBOX
+    <nnnn>: versão com quatro dígitos (1 a 9999)
+    <alvo> do LATE: insurerId ou ENRICHMENT; sem queryId, o eventId
+endlegend
+@enduml

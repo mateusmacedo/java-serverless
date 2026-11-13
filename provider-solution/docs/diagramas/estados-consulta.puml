@@ -1,0 +1,44 @@
+@startuml estados-consulta
+!include ../../../docs/diagramas/tema-plataforma.iuml
+
+hide stereotype
+title $I_DYNAMODB Consulta QUERY#<queryId> META — estados (QueryState)
+
+state "$I_LAMBDA IN_FLIGHT" as IN_FLIGHT <<espera>> : gsi2pk = QUERY_IN_FLIGHT\ngsi2sk = deadlineAt do pedido
+state "COMPLETED" as COMPLETED <<ativo>> : resultado de negócio gravado\n(evidência, evento e CONSUMED#)
+state "FAILED" as FAILED <<terminal>> : FAILED no enriquecimento,\nUNAVAILABLE na seguradora
+state "$I_DLQ UNKNOWN" as UNKNOWN <<erro>> : gsi2pk = QUERY_UNKNOWN\ngsi2sk = instante em que ficou UNKNOWN\nou da última conferência
+
+[*] --> IN_FLIGHT : liderança do enriquecimento ou primeira reserva da seguradora\n(Put attribute_not_exists, ATTEMPT#0001, débito da QUOTA#)
+[*] --> FAILED : conclusão sem chamada: deadlineAt vencido, quota esgotada\nsem caber no prazo ou insurerId sem rota (UNSUPPORTED_INSURER)
+IN_FLIGHT --> IN_FLIGHT : retry grava nova ATTEMPT# e reserva quota;\n202 da beta grava providerRequestId e acceptedAt
+IN_FLIGHT --> COMPLETED : resposta FOUND, NOT_FOUND, QUOTED, DECLINED\nou NEEDS_INFORMATION; callback da beta
+IN_FLIGHT --> FAILED : erro sem retry ou retries esgotados;\nreconciler: prazo vencido sem tentativa aberta\n(DEADLINE_EXCEEDED_BEFORE_CALL, se não existe ATTEMPT#<n+1>)
+IN_FLIGHT -[#C62828]-> UNKNOWN : sem resposta depois do envio;\nreentrega ou reconciler, sem entrega viva,\ncom tentativa aberta ou 202
+UNKNOWN -[#2E7D32]-> COMPLETED : callback que faltava ou API de situação\nda beta com COMPLETED (só seguradora)
+UNKNOWN --> FAILED : callback ou situação com resultado ilegível\n(UNAVAILABLE, INVALID_PROVIDER_RESPONSE)
+COMPLETED --> [*]
+FAILED --> [*]
+
+note right of UNKNOWN
+    Nunca há nova chamada: só o callback ou a API de situação concluem.
+    Sem API de situação (alpha e enriquecimento), o reconciler abre
+    UNKNOWN_QUERY (reconcilable) e tira a consulta do índice;
+    ela continua UNKNOWN, e a reconciliação manual termina FAILED.
+end note
+note left of IN_FLIGHT
+    Entrega viva: última ATTEMPT# (startedAt ou finishedAt)
+    mais nova que workerTimeoutSeconds (25 s) + 5 s.
+    A reentrega nesse intervalo é adiada com DelaySeconds
+    e não toca a consulta.
+end note
+
+legend right
+    <b>Leitura</b>
+    <back:$COR_ENTRADA>    </back> Em espera (no índice QUERY_IN_FLIGHT)
+    <back:$COR_DOMINIO>    </back> Concluída com resultado
+    <back:$COR_INFRA>    </back> Concluída com falha
+    <back:$COR_ERRO>    </back> Sem resposta, à espera da reconciliação
+    Uma consulta concluída nunca volta a IN_FLIGHT.
+endlegend
+@enduml

@@ -1,0 +1,79 @@
+@startuml c4-componente-workflow
+!include ../../../docs/diagramas/tema-plataforma.iuml
+!$LEGEND_TITLE_TEXT = "Legenda"
+!include <C4/C4_Component>
+
+UpdateElementStyle("component", $legendText="Componente")
+UpdateElementStyle("external_component", $bgColor="#ECEFF1", $fontColor="#37474F", $borderColor="#455A64", $legendText="Recurso fora das Lambdas")
+UpdateBoundaryStyle($elementName="container", $bgColor="#FAFCFF", $fontColor="#1A237E", $borderColor="#1565C0", $type="zip quote-functions-lambda.zip", $legendText="Fronteira do módulo")
+AddElementTag("entrada", $bgColor="#FFF3E0", $fontColor="#37474F", $borderColor="#EF6C00", $legendText="Handler (@Named, escolhido por QUARKUS_LAMBDA_HANDLER)")
+AddElementTag("aplicacao", $bgColor="#E3F2FD", $fontColor="#0D47A1", $borderColor="#1565C0", $legendText="Lógica do passo ou do consumidor")
+AddElementTag("saida", $bgColor="#F3E5F5", $fontColor="#4A148C", $borderColor="#6A1B9A", $legendText="Acesso a DynamoDB e Secrets Manager")
+AddElementTag("dominio", $bgColor="#E8F5E9", $fontColor="#1B5E20", $borderColor="#2E7D32", $legendText="quote-domain (Java puro)")
+AddRelTag("assincrono", $textColor="#6A1B9A", $lineColor="#6A1B9A", $lineStyle=DashedLine(), $legendText="Gatilho assíncrono (stream ou SQS)")
+AddRelTag("retomada", $textColor="#2E7D32", $lineColor="#2E7D32", $legendText="Retomada da execução (SendTaskSuccess)")
+
+LAYOUT_TOP_DOWN()
+
+title $I_LAMBDA quote-functions — componentes das Lambdas do workflow (C4 nível 3)
+
+Component_Ext(sfn, "quote-flow", "Step Functions", "Máquina de estado da versão", $sprite="project_diagram")
+Component_Ext(stream, "Stream da tabela", "DynamoDB Streams", "INSERT de OUTBOX, lotes de 100", $sprite="database")
+Component_Ext(results, "results", "SQS", "batchSize 1, ReportBatchItemFailures", $sprite="inbox")
+Component_Ext(issues, "issues", "SQS", "batchSize 1, ReportBatchItemFailures", $sprite="inbox")
+
+Container_Boundary(functions, "quote-functions (quarkus-amazon-lambda)") {
+    Component(stepsHandler, "WorkflowStepsHandler", "workflow-steps", "Despacha pelo campo step", $sprite="bolt", $tags="entrada")
+    Component(dispatchHandler, "DispatchHandler", "dispatch", "Waiter e outbox do pedido; nova tentativa troca o token", $sprite="bolt", $tags="entrada")
+    Component(resumeHandler, "ResumeHandler", "resume", "Uma falha volta em batchItemFailures", $sprite="bolt", $tags="entrada")
+    Component(projectorHandler, "IssueProjectorHandler", "issue-projector", "Uma falha volta em batchItemFailures", $sprite="bolt", $tags="entrada")
+    Component(relayHandler, "OutboxRelayHandler", "outbox-relay", "Registro a registro; falha transitória para o lote ali", $sprite="paper_plane", $tags="entrada")
+
+    Component(steps, "WorkflowSteps", "passos idempotentes", "load-snapshot, evaluate-eligibility, select-insurers, record-*-outcome e consolidate", $tags="aplicacao")
+    Component(resumer, "ResultResumer", "Disposition", "RESUMED, DISCARDED, LATE, DUPLICATE, UNKNOWN_WORK ou IGNORED", $tags="aplicacao")
+    Component(projector, "IssueProjector", "Disposition", "PROJECTED, DISCARDED, FOREIGN_ORGANIZATION ou IGNORED", $tags="aplicacao")
+    Component(publisher, "OutboxPublisher", "Result", "PUBLISHED, TRANSIENT_FAILURE ou PERMANENT_FAILURE", $tags="aplicacao")
+    Component(events, "LambdaEvents", "JSON cru", "SQS e stream sem aws-lambda-java-events; NewImage vira AttributeValue", $tags="aplicacao")
+
+    Component(table, "QuoteTable", "DynamoDB SDK v2, client CRT", "Leituras consistentes, transações, refreshSummary e ocorrências", $sprite="database", $tags="saida")
+    Component(cipher, "TokenCipher", "AES-256-GCM", "Cifra o task token com o workRef como dado associado", $sprite="key", $tags="saida")
+
+    Component(domain, "quote-domain", "Java puro", "EligibilityRule, InsurerSelectionRule, Consolidation, Deadlines, WorkRef, QuoteEvents, QuoteKeys", $sprite="cubes", $tags="dominio")
+}
+
+Component_Ext(dynamo, "quote-solution-<stage>-quotes", "DynamoDB", "Tabela única", $sprite="database")
+Component_Ext(secret, "quote-solution/<stage>/token-key", "Secrets Manager", "Segredo da cifra", $sprite="key")
+Component_Ext(bus, "platform-<stage>-events", "EventBridge", "source mmda.quote", $sprite="exchange_alt")
+
+Rel(sfn, stepsHandler, "{step, quoteId, version, ...}", "lambda:invoke")
+Rel(sfn, dispatchHandler, "{kind, quoteId, version, insurerId, executionArn, taskToken, timeoutSeconds}", "waitForTaskToken")
+Rel(stream, relayHandler, "Registros filtrados", $tags="assincrono")
+Rel(results, resumeHandler, "EnrichmentResolved, InsurerResultRecorded", $tags="assincrono")
+Rel(issues, projectorHandler, "QueryReconciled, OperationIssueRaised, OperationIssueUpdated", $tags="assincrono")
+
+Rel(stepsHandler, steps, "Chama o passo")
+Rel(resumeHandler, resumer, "handle(body)")
+Rel(projectorHandler, projector, "handle(body)")
+Rel(relayHandler, publisher, "publish(item)")
+Rel(resumeHandler, events, "Lê o evento")
+Rel(projectorHandler, events, "Lê o evento")
+Rel(relayHandler, events, "Lê o evento")
+
+Rel(steps, domain, "Regras, consolidação e QuoteCompleted")
+Rel(dispatchHandler, domain, "WorkRef, Deadlines e pedidos")
+Rel(steps, table, "Fases, RESULT, waiter EXPIRED e TERMINAL")
+Rel(dispatchHandler, table, "Waiter WAITING, outbox e RESULT PROCESSING")
+Rel(dispatchHandler, cipher, "encrypt")
+Rel(dispatchHandler, sfn, "SendTaskSuccess com o resumePayload já gravado", $tags="retomada")
+Rel(resumer, table, "Waiter RESUMING, RESULT, OFFER, evidência, LATE e CONSUMED#")
+Rel(resumer, cipher, "decrypt")
+Rel(resumer, sfn, "SendTaskSuccess", $tags="retomada")
+Rel(projector, table, "ISSUE#, QUERYREF#, OPERATION# e CONSUMED#")
+Rel(publisher, sfn, "StartExecution (StartQuoteRequested)")
+Rel(publisher, bus, "PutEvents")
+Rel(publisher, table, "publishedAt, executionArn, attempts e lastError")
+Rel(cipher, secret, "GetSecretValue")
+Rel(table, dynamo, "SDK")
+
+SHOW_LEGEND()
+@enduml

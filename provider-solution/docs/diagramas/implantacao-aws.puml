@@ -1,0 +1,66 @@
+@startuml implantacao-aws
+!include ../../../docs/diagramas/tema-plataforma.iuml
+!include <C4/C4_Deployment>
+!include <tupadr3/font-awesome-5/laptop_code>
+!include <tupadr3/font-awesome-5/cloud>
+
+!$LEGEND_TITLE_TEXT = "Legenda"
+UpdateElementStyle("node", $bgColor="#F7F9FA", $fontColor="#37474F", $borderColor="#455A64", $legendText="Nó de implantação")
+UpdateElementStyle("container", $bgColor="#ECEFF1", $fontColor="#37474F", $borderColor="#455A64", $legendText="Recurso AWS")
+UpdateElementStyle("person", $bgColor="#FFFDE7", $fontColor="#37474F", $borderColor="#F9A825", $legendText="Ator")
+AddElementTag("lambda", $bgColor="#1565C0", $fontColor="#FFFFFF", $borderColor="#0D47A1", $legendText="Lambda Java 21, 1769 MB")
+AddElementTag("simulador", $bgColor="#FCE4EC", $fontColor="#37474F", $borderColor="#AD1457", $legendText="Fornecedor simulado")
+AddElementTag("opcional", $bgColor="#FFF3E0", $fontColor="#37474F", $borderColor="#EF6C00", $legendText="Condicional (HasAlarmEmail)")
+AddRelTag("assincrono", $textColor="#6A1B9A", $lineColor="#6A1B9A", $lineStyle=DashedLine(), $legendText="Assíncrono")
+
+title $I_SPRING provider-solution — implantação na AWS (stage dev, params.default)
+
+Person(dev, "Desenvolvedor", "sls deploy --stage dev --param=alarmEmail=<e-mail>", $sprite="user")
+Person(operacao, "Operação", "Confirma a assinatura e recebe os alarmes", $sprite="user_cog")
+
+Deployment_Node(conta, "Conta AWS", "região us-east-1 (provider.region)", $sprite="cloud") {
+    Deployment_Node(deploybucket, "Bucket de deploy do Serverless", "serverless-framework-deployments-us-east-1-{id}, versionado") {
+        Container(zips, "Pacotes das Lambdas", "S3", "provider-api-lambda.zip, provider-simulators-lambda.zip, provider-functions-lambda.zip", $sprite="archive")
+    }
+    Deployment_Node(platform, "Stack platform-dev", "CloudFormation, implantada antes") {
+        Container(bus, "platform-dev-events", "EventBridge", "Barramento da plataforma", $sprite="exchange_alt")
+    }
+    Deployment_Node(stack, "Stack provider-solution-dev", "CloudFormation gerado pelo Serverless v4") {
+        Container(apigw, "API Gateway dev-provider-solution", "REST", "https://{api}.execute-api.us-east-1.amazonaws.com/dev", $sprite="globe")
+        Container(fns, "api, enrichmentWorker, insurerWorker, reconcileWorker, outboxRelay, reconciler", "Lambda java21, 1769 MB", "Sem AWS_ENDPOINT_URL (HasAwsEndpointUrl falsa); S3 virtual-hosted", $sprite="bolt", $tags="lambda")
+        Container(sims, "simulators e simCallbackSender", "Lambda java21, 1769 MB", "Chamados pela própria API (providersBaseUrl com Fn::Sub)", $sprite="robot", $tags="simulador")
+        Container(roles, "Papéis IAM", "IAM", "Papel compartilhado das funções de trabalho; SimulatorsRole, CallbacksApiRole e SimCallbackSenderRole", $sprite="user_shield")
+        ContainerDb(tables, "provider-solution-dev-queries e -simulators", "DynamoDB on-demand", "Stream NEW_IMAGE, gsi2 e TTL na de consultas", $sprite="database")
+        ContainerDb(bucket, "provider-solution-dev-payloads", "S3", "Nome global, conferir antes do primeiro deploy", $sprite="archive")
+        ContainerQueue(queues, "9 filas SQS", "SQS", "Pedidos, sim-callbacks, 4 DLQs com 14 dias de retenção e stream-failures", $sprite="inbox")
+        Container(secrets, "provider-solution/dev/query-key-secret e /callback-secret", "Secrets Manager", "Gerados pela stack (48 caracteres)", $sprite="key")
+        Container(rules, "3 regras no barramento da plataforma", "EventBridge", "EnrichmentRequested, InsurerQuoteRequested, QueryReconcileRequested", $sprite="exchange_alt")
+        Container(sched, "Agendamento do reconciler", "EventBridge Scheduler", "rate(1 minute), entrada {maxItems: 100}", $sprite="clock")
+        Container(alarms, "16 alarmes", "CloudWatch", "AlarmActions no AlarmsTopic", $sprite="bell")
+        Container(topic, "provider-solution-dev-alarms", "SNS", "AlarmsTopic", $sprite="bullhorn")
+        Container(sub, "AlarmsEmailSubscription", "SNS e-mail", "Só com o param alarmEmail preenchido", $sprite="paper_plane", $tags="opcional")
+    }
+    Deployment_Node(cw, "CloudWatch", "Logs /aws/lambda/provider-solution-dev-* e métricas EMF mmda/provider-solution") {
+        Container(logs, "Logs e métricas", "CloudWatch Logs", "Linhas EMF das Lambdas viram métricas", $sprite="bell")
+    }
+}
+
+Rel(dev, stack, "sls deploy --stage dev")
+Rel(dev, zips, "Envia os pacotes")
+Rel(rules, bus, "Declaradas no barramento por nome (sem referência entre stacks)")
+Rel(bus, queues, "Pedidos da quote", $tags="assincrono")
+Rel(queues, fns, "ESM", $tags="assincrono")
+Rel(fns, apigw, "HTTPS aos simuladores")
+Rel(apigw, sims, "/sim/{proxy+}")
+Rel(sims, apigw, "Callback assinado")
+Rel(apigw, fns, "/v1/providers/{provider}/callbacks")
+Rel(fns, tables, "SDK pela região")
+Rel(fns, bus, "PutEvents", $tags="assincrono")
+Rel(sched, fns, "Invoca o reconciler", $tags="assincrono")
+Rel(fns, logs, "Logs e EMF")
+Rel(alarms, topic, "AlarmActions", $tags="assincrono")
+Rel(topic, sub, "Entrega", $tags="assincrono")
+Rel(sub, operacao, "E-mail", $tags="assincrono")
+
+SHOW_LEGEND()
+@enduml

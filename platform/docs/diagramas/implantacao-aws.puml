@@ -1,0 +1,34 @@
+@startuml implantacao-aws
+!include ../../../docs/diagramas/tema-plataforma.iuml
+!$LEGEND_TITLE_TEXT = "Legenda"
+!include <C4/C4_Deployment>
+
+UpdateElementStyle("node", $bgColor="#F7F9FA", $fontColor="#37474F", $borderColor="#455A64", $legendText="Nó de implantação")
+UpdateElementStyle("person", $bgColor="#FFFDE7", $fontColor="#37474F", $borderColor="#F9A825", $legendText="Ator")
+UpdateElementStyle("container", $bgColor="#ECEFF1", $fontColor="#37474F", $borderColor="#455A64", $legendText="Stack de solução")
+AddElementTag("plataforma", $bgColor="#F3E5F5", $fontColor="#37474F", $borderColor="#6A1B9A", $legendText="Stack da plataforma")
+AddElementTag("pendente", $bgColor="#FFEBEE", $fontColor="#37474F", $borderColor="#C62828", $legendText="Sem preparação para a AWS")
+AddRelTag("ordem", $textColor="#1565C0", $lineColor="#1565C0", $legendText="Ordem de implantação (remoção na ordem inversa)")
+AddRelTag("evento", $textColor="#6A1B9A", $lineColor="#6A1B9A", $lineStyle=DashedLine(), $legendText="Regras e PutEvents pelo nome do barramento")
+
+title $I_EVENTBRIDGE Plataforma — implantação no stage dev da AWS (preparada, não executada)
+
+Person(dev, "Desenvolvedor", "Credenciais da cadeia padrão; pnpm sls deploy --stage dev", $sprite="user_cog")
+
+Deployment_Node(conta, "Conta AWS", "região us-east-1, fixa em provider.region") {
+    Deployment_Node(deploy, "Bucket de implantação do Serverless", "serverless-framework-deployments-us-east-1-<id>, criado no primeiro deploy da região") {
+    }
+    Container(platform, "1. platform-dev", "platform/events", "Barramento platform-dev-events; saídas PlatformEventBusName e PlatformEventBusArn", $sprite="exchange_alt", $tags="plataforma")
+    Container(provider, "2. provider-solution-dev", "provider-solution, --param alarmEmail", "8 Lambdas, filas com DLQ, 3 regras no barramento", $sprite="leaf")
+    Container(quote, "3. quote-solution-dev", "quote-solution, --param alarmEmail", "7 Lambdas, quote-flow, 2 regras no barramento", $sprite="cubes")
+    Container(fora, "sample-solution e receipt-solution", "params só no stage local", "Fora do guia de implantação na AWS", $tags="pendente")
+}
+
+Rel(dev, platform, "(cd platform/events && pnpm sls deploy --stage dev)", $tags="ordem")
+Rel(platform, provider, "depois", $tags="ordem")
+Rel(provider, quote, "depois", $tags="ordem")
+Rel_U(provider, platform, "Regras e PutEvents em platform-dev-events", $tags="evento")
+Rel_U(quote, platform, "Regras e PutEvents em platform-dev-events", $tags="evento")
+
+SHOW_LEGEND()
+@enduml

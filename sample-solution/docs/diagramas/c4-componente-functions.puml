@@ -1,0 +1,52 @@
+@startuml c4-componente-functions
+!include ../../../docs/diagramas/tema-plataforma.iuml
+!$LEGEND_TITLE_TEXT = "Legenda"
+!include <C4/C4_Component>
+
+UpdateElementStyle("component", $bgColor="#E3F2FD", $fontColor="#0D47A1", $borderColor="#1565C0", $legendText="Função (bean java.util.function.Function)")
+UpdateElementStyle("container", $bgColor="#ECEFF1", $fontColor="#37474F", $borderColor="#455A64", $legendText="Recurso AWS")
+UpdateContainerBoundaryStyle($bgColor="#FFFFFF", $fontColor="#37474F", $borderColor="#90A4AE", $type="zip", $legendText="Pacote compartilhado pelas quatro Lambdas")
+AddElementTag("entrada", $bgColor="#FFF3E0", $fontColor="#37474F", $borderColor="#EF6C00", $legendText="Entrada (biblioteca)")
+AddElementTag("apoio", $bgColor="#F1F8E9", $fontColor="#37474F", $borderColor="#2E7D32", $legendText="Configuração e clients")
+AddRelTag("falha", $textColor="#C62828", $lineColor="#C62828", $lineStyle=DashedLine(), $legendText="Reprocessamento da DLQ")
+
+title $I_LAMBDA Módulo functions da sample-solution — componentes (C4 nível 3)
+
+Container(flow, "request-flow", "Step Functions", "Invoca validate, persist e notify", $sprite="project_diagram")
+Container(scheduler, "Agendamento", "EventBridge Scheduler", "rate(5 minutes)", $sprite="clock")
+
+Container_Boundary(zip, "functions-lambda.zip: validate, persist, notify e reprocess (timeout 60 s, 1769 MB)") {
+    Component(invoker, "FunctionInvoker", "spring-cloud-function-adapter-aws", "Sobe FunctionsApplication (MAIN_CLASS) e escolhe o bean por SPRING_CLOUD_FUNCTION_DEFINITION", $sprite="bolt", $tags="entrada")
+    Component(validate, "ValidateFunction", "@Component validate", "RequestContext para RequestContext; InvalidRequestException se vazio ou acima do limite")
+    Component(persist, "PersistFunction", "@Component persist", "PutItem com persistedAt")
+    Component(notify, "NotifyFunction", "@Component notify", "Publish no SNS e RequestCompleted (mmda.sample)")
+    Component(reprocess, "ReprocessFunction", "@Component reprocess", "ReprocessCommand para ReprocessResult; maxAttempts 3")
+    Component(props, "FunctionsProperties", "@ConfigurationProperties sample", "Nomes dos recursos e maxAttempts", $tags="apoio")
+    Component(clients, "AwsClientsAutoConfiguration", "spring-aws", "Um client síncrono por SDK no classpath; beans lazy (spring.main.lazy-initialization)", $tags="apoio")
+}
+
+ContainerDb(config, "max-payload-bytes e signing-key", "SSM e Secrets Manager", "", $sprite="key")
+ContainerDb(bucket, "payloads", "S3", "", $sprite="archive")
+ContainerDb(table, "requests", "DynamoDB", "", $sprite="database")
+ContainerQueue(topic, "notifications", "SNS", "", $sprite="bullhorn")
+ContainerQueue(bus, "events", "EventBridge", "", $sprite="exchange_alt")
+ContainerQueue(dlq, "dlq", "SQS", "", $sprite="exclamation_triangle")
+
+Rel(flow, invoker, "Invoca a Lambda do estado")
+Rel(scheduler, invoker, "{maxMessages: 10}")
+Rel(invoker, validate, "validate")
+Rel(invoker, persist, "persist")
+Rel(invoker, notify, "notify")
+Rel(invoker, reprocess, "reprocess")
+Rel(validate, config, "GetParameter e GetSecretValue")
+Rel(validate, bucket, "GetObject")
+Rel(persist, table, "PutItem")
+Rel(notify, topic, "Publish")
+Rel(notify, bus, "PutEvents; falha se FailedEntryCount > 0")
+Rel(reprocess, dlq, "GetQueueUrl, ReceiveMessage e DeleteMessage", $tags="falha")
+Rel(reprocess, flow, "StartExecution requestId-attempt", $tags="falha")
+Rel_U(props, invoker, "Injetadas nas funções")
+Rel_U(clients, invoker, "Injetados nas funções")
+
+SHOW_LEGEND()
+@enduml

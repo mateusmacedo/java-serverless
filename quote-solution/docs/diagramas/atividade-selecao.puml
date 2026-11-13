@@ -1,0 +1,51 @@
+@startuml atividade-selecao
+!include ../../../docs/diagramas/tema-plataforma.iuml
+
+title $I_QUARKUS Selections.decide: resposta da seleção antes de gravar
+
+start
+:Recebe version, currentVersion, seleção do META (selectedVersion, selectedOfferId),\nofferId, oferta encontrada na versão, validUntil e o relógio do servidor;
+if (version > currentVersion?) then (sim)
+    :NOT_FOUND\n404, sem revelar o motivo; <<#FFEBEE>>
+    stop
+endif
+if (META já tem seleção?) then (sim)
+    if (Mesma versão e mesma offerId?) then (sim)
+        :EXISTING\n201 com a seleção existente (T28),\nmesmo com outra chave ou oferta expirada; <<#E8F5E9>>
+    elseif (version ≠ currentVersion?) then (sim)
+        :VERSION_SUPERSEDED\n409; <<#FFEBEE>>
+    else (não)
+        :SELECTION_ALREADY_EXISTS\n409 (T28); <<#FFEBEE>>
+    endif
+    stop
+endif
+if (version ≠ currentVersion?) then (sim)
+    :VERSION_SUPERSEDED\n409 (T17); <<#FFEBEE>>
+    stop
+endif
+if (Oferta pertence à versão?) then (não)
+    :NOT_FOUND\n404; <<#FFEBEE>>
+    stop
+endif
+if (validUntil posterior ao relógio do servidor?) then (não)
+    :OFFER_EXPIRED\n409 (T18); <<#FFEBEE>>
+    stop
+endif
+:RECORD\ntransação com SELECTION, META, ConditionCheck da OFFER e outbox OfferSelected; <<#E8F5E9>>
+stop
+
+note right
+    Antes desta decisão, o registro de idempotência
+    já gravado decide: mesmo hash devolve a seleção,
+    outro hash responde 409 IDEMPOTENCY_CONFLICT.
+    Em nenhuma recusa algo é gravado.
+end note
+
+legend right
+    <b>Leitura</b>
+    <back:$COR_DOMINIO>    </back> 201 (grava ou devolve a existente)
+    <back:$COR_ERRO>    </back> 404 ou 409, sem gravar nada
+    A mesma precedência das ofertas indisponíveis vale no GET
+    (QuoteActions.unavailabilityReason).
+endlegend
+@enduml

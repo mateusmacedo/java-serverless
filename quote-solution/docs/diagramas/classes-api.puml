@@ -1,0 +1,147 @@
+@startuml classes-api
+!include ../../../docs/diagramas/tema-plataforma.iuml
+hide empty members
+hide stereotype
+left to right direction
+
+title $I_API quote-api (com.mmda.serverless.quote.api) — resources, stores e montagem das respostas
+
+package "Entrada (JAX-RS)" #FFFAF3 {
+    class QuoteResource <<porta>> {
+        create(Idempotency-Key, body) : 202
+        createVersion(quoteId, Idempotency-Key, body) : 202
+        list(cursor, limit, phase, outcome, createdFrom, createdTo) : QuotesPage
+        select(quoteId, version, Idempotency-Key, body) : 201
+        version(quoteId, version) : QuoteVersion
+        offers(quoteId, version, cursor, limit) : OffersPage
+    }
+    class OperationsResource <<porta>> {
+        issues(cursor, limit, type, status) : IssuesPage
+        reconcile(queryId, Idempotency-Key, body) : 202
+        operation(operationId) : Operation
+    }
+    class CatalogResource <<porta>> {
+        customers / vehicles / drivers(search, cursor, limit)
+        coverageProfiles(search, cursor, limit)
+    }
+    class MeResource <<porta>> {
+        me() : Me
+    }
+}
+
+package "Segurança e erros" #FFFDE7 {
+    class Caller <<serviço>> {
+        organizationId() : org_<id> único
+        permissions() : List<Permission>
+        require(Permission) : organizationId ou 403
+        userId() : sub
+    }
+    class CognitoAccessTokenAugmentor <<serviço>> {
+        augment() : exige token_use = access\ne client_id do app client
+    }
+    class ApiExceptionMappers <<serviço>> {
+        ApiException, 401, 403, 404, 405, 415\ne erro inesperado no formato do contrato
+    }
+    class RequestCorrelation <<serviço>> {
+        X-Correlation-Id
+    }
+    class ApiException <<exceção>> {
+        status, code, fieldErrors
+        {static} validation(...) : 400
+        {static} notFound() : 404
+        {static} forbidden() : 403
+    }
+}
+
+package "Validação e respostas" #F5FAFF {
+    class CreateQuoteRequest <<valor>> {
+        {static} parse(JsonNode)
+        resolve(Organization, Catalog) : QuoteSnapshot
+    }
+    class CreateVersionRequest <<valor>> {
+        expectedVersion : int
+        quote : CreateQuoteRequest
+    }
+    class MutationRequests <<serviço>> {
+        requireIdempotencyKey, offerId (até 128),\nreason (até 500), characters (code points)
+    }
+    class Paging <<serviço>> {
+        limit(texto) : 1 a 100, padrão 20
+    }
+    class QuoteViews <<serviço>> {
+        version(...) : QuoteVersion
+        offers(...) : OffersPage
+        encodeCursor / decodeCursor (base64url)
+    }
+    class OperationViews <<serviço>> {
+        Issue.of(item, permissions)
+        Operation.of(item)
+    }
+    class Catalog <<serviço>> {
+        RESOURCE = fixtures/catalog.json
+        organization(id) : Optional<Organization>
+        coverageProfile(code)
+    }
+}
+
+package "Saída (DynamoDB)" #FBF6FC {
+    class QuoteStore <<serviço>> {
+        create(NewQuote) : CreatedQuote
+        createVersion(NewVersion) : CreatedQuote
+        select(NewSelection, META) : RecordedSelection
+        listQuotes(org, QuoteFilter, after, limit) : Page
+        meta(quoteId), versionItems(quoteId, version)
+    }
+    class OperationsStore <<serviço>> {
+        issues(org, IssueFilter, after, limit) : Page
+        knownQuery(queryId, org) : boolean
+        request(NewReconcile) : AcceptedOperation
+        operation(operationId, org) : Optional
+    }
+    class IndexPages <<serviço>> {
+        {static} read(dynamoDb, table, partition, Filter, after, limit) : Page
+        MAX_POSITION_BYTES = 1024
+    }
+    class Items <<serviço>> {
+        {static} fitsKey(id) : até 128 caracteres
+    }
+    class QuoteApiConfig <<valor>> {
+        tableName, deadlineSeconds,\nretryAfterSeconds, workflowVersion,\nauth.clientId
+    }
+}
+
+QuoteResource --> Caller
+QuoteResource --> QuoteStore
+QuoteResource --> QuoteViews
+QuoteResource --> Catalog
+QuoteResource ..> CreateQuoteRequest
+QuoteResource ..> CreateVersionRequest
+QuoteResource ..> MutationRequests
+QuoteResource ..> Paging
+OperationsResource --> Caller
+OperationsResource --> OperationsStore
+OperationsResource ..> OperationViews
+OperationsResource ..> MutationRequests
+CatalogResource --> Catalog
+CatalogResource --> Caller
+MeResource --> Caller
+Caller ..> CognitoAccessTokenAugmentor
+CognitoAccessTokenAugmentor ..> QuoteApiConfig
+QuoteStore --> IndexPages
+OperationsStore --> IndexPages
+QuoteStore ..> QuoteApiConfig
+QuoteStore ..> ApiException : 409 e 503
+OperationsStore ..> ApiException
+ApiExceptionMappers ..> ApiException
+ApiExceptionMappers ..> RequestCorrelation
+IndexPages ..> Items
+
+legend right
+    <b>Leitura</b>
+    <back:$COR_ENTRADA>    </back> Resource JAX-RS
+    <back:$COR_APLICACAO>    </back> Serviço ou validação
+    <back:#F1F8E9>    </back> Valor ou configuração (quote.*)
+    <back:$COR_ERRO>    </back> Exceção traduzida em resposta HTTP
+    Seta cheia: dependência injetada; tracejada: uso
+endlegend
+@enduml

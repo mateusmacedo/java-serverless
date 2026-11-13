@@ -1,0 +1,103 @@
+@startuml classes-dominio-operacoes
+!include ../../../docs/diagramas/tema-plataforma.iuml
+
+hide empty members
+hide stereotype
+title $I_ALARME Pacote com.mmda.serverless.provider.domain.operations — ocorrências, reconciliação e DLQs
+
+enum IssueType {
+    {field} UNKNOWN_QUERY (reconcilable)
+    UNMATCHED_CALLBACK
+    DEAD_LETTER
+    STALE_OUTBOX
+    reconcilable() : boolean
+    selfResolving() : boolean (todos menos DEAD_LETTER)
+}
+enum IssueStatus {
+    OPEN
+    RESOLVED
+}
+enum IssueTransition {
+    NONE
+    RAISE
+    UPDATE
+    {static} of(atual, desejado, recorrência) : IssueTransition
+}
+class OperationIssue <<evento>> {
+    {field} eventId = UUIDv5(issueId|revision)
+    occurredAt, schemaVersion = "1"
+    issueId, organizationId
+    type : IssueType
+    status : IssueStatus
+    queryId, quoteId
+    firstSeenAt, lastSeenAt, safeSummary
+    reconcilable : boolean
+    {field} revision : long (>= 1)
+}
+class "OperationIssue.State" as IssueState <<agregado>> {
+    issueId, organizationId, type, status
+    queryId, quoteId, firstSeenAt, lastSeenAt
+    safeSummary, revision
+    event(occurredAt) : OperationIssue
+    detailType() : Raised (revision 1) ou Updated
+}
+class QueryReconcileRequest <<valor>> {
+    eventId, operationId, organizationId
+    queryId, reason, requestedBy
+}
+enum ReconcileStatus {
+    RUNNING
+    SUCCEEDED
+    FAILED
+}
+class QueryReconciled <<evento>> {
+    {field} eventId = UUIDv5(operationId|revision)
+    occurredAt, schemaVersion = "1"
+    operationId, organizationId, queryId
+    status : SUCCEEDED ou FAILED
+    safeSummary, revision : long
+    {static} of(pedido, status, resumo, revision, occurredAt)
+}
+class DeadLetterPolicy <<serviço>> {
+    {field} maxAttempts : int (dlqMaxAttempts)
+    decide(tentativa, deadlineAt, agora) : Decision
+}
+interface "DeadLetterPolicy.Decision" as Decision <<sealed>>
+class "Redrive(nextAttempt)" as Redrive <<valor>>
+class "Discard(reason)" as Discard <<valor>>
+enum "DeadLetterPolicy.Reason" as Reason {
+    MAX_ATTEMPTS
+    DEADLINE_EXCEEDED
+    UNREADABLE
+}
+
+IssueState --> IssueType
+IssueState --> IssueStatus
+IssueState ..> OperationIssue : event()
+IssueTransition ..> IssueStatus : compara
+QueryReconciled --> ReconcileStatus
+QueryReconcileRequest ..> QueryReconciled : of(...)
+DeadLetterPolicy ..> Decision : decide
+Decision <|.. Redrive
+Decision <|.. Discard
+Discard --> Reason
+
+note right of IssueTransition
+    Sem ocorrência: OPEN = RAISE.
+    Status diferente: UPDATE (resolve ou reabre).
+    Mesmo status OPEN com recorrência (DEAD_LETTER): UPDATE.
+    Senão: NONE, nada é publicado.
+end note
+note bottom of Reason
+    UNREADABLE não sai do decide: o DeadLetterReprocessor
+    o usa quando o corpo da mensagem não é JSON legível.
+end note
+
+legend right
+    <b>Leitura</b>
+    <back:$COR_DOMINIO>    </back> Estado persistido (ISSUE#)
+    <back:#F1F8E9>    </back> Valor imutável (record)
+    <back:$COR_APLICACAO>    </back> Política pura
+    <back:$COR_SAIDA>    </back> Evento publicado
+endlegend
+@enduml

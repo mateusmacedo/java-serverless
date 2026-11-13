@@ -1,0 +1,40 @@
+@startuml c4-componente-functions
+!include ../../../docs/diagramas/tema-plataforma.iuml
+!$LEGEND_TITLE_TEXT = "Legenda"
+!include <C4/C4_Component>
+
+UpdateElementStyle("component", $bgColor="#E3F2FD", $fontColor="#0D47A1", $borderColor="#1565C0", $legendText="Handler (RequestHandler com @Named)")
+UpdateElementStyle("container", $bgColor="#ECEFF1", $fontColor="#37474F", $borderColor="#455A64", $legendText="Recurso AWS")
+UpdateContainerBoundaryStyle($bgColor="#FFFFFF", $fontColor="#37474F", $borderColor="#90A4AE", $type="zip", $legendText="Pacote compartilhado pelas duas Lambdas")
+AddElementTag("entrada", $bgColor="#FFF3E0", $fontColor="#37474F", $borderColor="#EF6C00", $legendText="Entrada (extensão do Quarkus)")
+AddElementTag("apoio", $bgColor="#F1F8E9", $fontColor="#37474F", $borderColor="#2E7D32", $legendText="Configuração, relógio e clients")
+
+title $I_LAMBDA Módulo receipt-functions — componentes (C4 nível 3)
+
+Container(flow, "receipt-flow", "Step Functions", "Issue (InputPath $.detail) e depois Announce", $sprite="project_diagram")
+
+Container_Boundary(zip, "receipt-functions-lambda.zip: issue e announce (timeout 30 s, 1769 MB)") {
+    Component(handler, "QuarkusStreamHandler", "quarkus-amazon-lambda", "Escolhe o handler por QUARKUS_LAMBDA_HANDLER (padrão do zip: issue)", $sprite="bolt", $tags="entrada")
+    Component(issue, "IssueReceiptHandler", "@Named issue", "CompletedRequest para Receipt; PutItem com attribute_not_exists(requestId)")
+    Component(announce, "AnnounceReceiptHandler", "@Named announce", "Receipt para Receipt; PutEvents ReceiptIssued, falha se FailedEntryCount > 0")
+    Component(config, "ReceiptConfig", "@ConfigMapping receipt", "tableName e eventBusName", $tags="apoio")
+    Component(clock, "ClockProducer", "@Produces Clock", "Clock.systemUTC(); trocado nos testes", $tags="apoio")
+    Component(clients, "DynamoDbClient e EventBridgeClient", "Quarkus Amazon Services", "sync-client.type=aws-crt", $tags="apoio")
+}
+
+ContainerDb(table, "receipts", "DynamoDB", "PK requestId", $sprite="database")
+ContainerQueue(bus, "events", "EventBridge", "receipt-solution-<stage>-events", $sprite="exchange_alt")
+
+Rel(flow, handler, "Invoca a Lambda do estado")
+Rel(handler, issue, "issue")
+Rel(handler, announce, "announce")
+Rel(issue, clients, "Usa")
+Rel(announce, clients, "Usa")
+Rel(issue, clock, "issuedAt = Instant.now(clock)")
+Rel(issue, config, "Lê")
+Rel(announce, config, "Lê")
+Rel(clients, table, "PutItem condicional e GetItem consistente")
+Rel(clients, bus, "PutEvents")
+
+SHOW_LEGEND()
+@enduml

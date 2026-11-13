@@ -1,0 +1,61 @@
+@startuml estados-resultado-seguradora
+!include ../../../docs/diagramas/tema-plataforma.iuml
+hide stereotype
+
+title $I_SEGURADORA Resultado da seguradora (V#<nnnn>#RESULT#<insurerId>) — InsurerStatus
+
+state "PENDING" as PENDING <<inicial>> : criado com insurerName\n(Insurers.nameOf)
+state "PROCESSING" as PROCESSING <<espera>> : pedido InsurerQuoteRequested\nno outbox
+state "QUOTED" as QUOTED <<ativo>> : OFFER gravada na mesma transação\n(offerId = of_ + SHA-256 de offer|workRef)
+state "DECLINED" as DECLINED <<terminal>> : recusa comercial
+state "NEEDS_INFORMATION" as NEEDS_INFORMATION <<espera>> : missingFields da seguradora
+state "UNAVAILABLE" as UNAVAILABLE <<erro>> : reasonCode da provider ou TASK_FAILED
+state "TIMED_OUT" as TIMED_OUT <<erro>> : STEP_TIMEOUT ou WORKFLOW_*
+
+[*] --> PENDING : select-insurers (fase QUOTING)
+PENDING --> PROCESSING : dispatch, kind = INSURER\n(condição status = PENDING)
+PROCESSING --> QUOTED : resume
+PROCESSING --> DECLINED : resume
+PROCESSING --> NEEDS_INFORMATION : resume
+PROCESSING --> UNAVAILABLE : resume
+PROCESSING -[#C62828]-> TIMED_OUT : record-insurer-outcome\n(Catch States.Timeout)
+PROCESSING -[#C62828]-> UNAVAILABLE : record-insurer-outcome\n(Catch States.ALL, TASK_FAILED)
+PENDING -[#C62828]-> UNAVAILABLE : record-insurer-outcome\n(Catch States.ALL; a dispatch\nnão chegou a gravar)
+PENDING -[#C62828]-> TIMED_OUT : record-insurer-outcome\n(Catch States.Timeout)
+PENDING -[#C62828,dashed]-> TIMED_OUT : reconciler finaliza
+PROCESSING -[#C62828,dashed]-> TIMED_OUT : reconciler finaliza\n(WORKFLOW_FAILED, WORKFLOW_TIMED_OUT\nou WORKFLOW_ABORTED)
+
+QUOTED --> [*]
+DECLINED --> [*]
+NEEDS_INFORMATION --> [*]
+UNAVAILABLE --> [*]
+TIMED_OUT --> [*]
+
+note right of PROCESSING
+    Toda escrita que encerra o resultado exige
+    status IN (PENDING, PROCESSING): um resultado
+    terminal nunca é sobrescrito. O resume, o
+    record-insurer-outcome e o reconciler disputam
+    pela mesma condição; quem perde não muda o
+    RESULT (o resume grava a evidência tardia LATE).
+    A dispatch grava o waiter e o PROCESSING na mesma
+    transação: sem waiter, o resume não acha o pedido.
+end note
+
+note bottom of QUOTED
+    O resume aceita só QUOTED, DECLINED, NEEDS_INFORMATION e UNAVAILABLE
+    vindos do InsurerResultRecorded; TIMED_OUT nasce só na quote.
+    Cada mudança soma 1 ao revision do RESULT.
+end note
+
+legend right
+    <b>Leitura</b>
+    <back:$COR_APLICACAO>    </back> Criado pela seleção
+    <back:$COR_ENTRADA>    </back> À espera ou pendência de dados
+    <back:$COR_DOMINIO>    </back> Oferta
+    <back:$COR_INFRA>    </back> Recusa
+    <back:$COR_ERRO>    </back> Falha técnica
+    Seta vermelha: Catch da máquina
+    Seta tracejada: finalização pelo reconciler
+endlegend
+@enduml

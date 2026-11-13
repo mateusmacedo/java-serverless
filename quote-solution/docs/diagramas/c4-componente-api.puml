@@ -1,0 +1,73 @@
+@startuml c4-componente-api
+!include ../../../docs/diagramas/tema-plataforma.iuml
+!$LEGEND_TITLE_TEXT = "Legenda"
+!include <C4/C4_Component>
+
+UpdateElementStyle("component", $legendText="Componente")
+UpdateElementStyle("external_component", $bgColor="#ECEFF1", $fontColor="#37474F", $borderColor="#455A64", $legendText="Recurso fora da Lambda")
+UpdateElementStyle("container", $bgColor="#FFF3E0", $fontColor="#37474F", $borderColor="#EF6C00", $legendText="Contêiner vizinho")
+UpdateBoundaryStyle($elementName="container", $bgColor="#FAFCFF", $fontColor="#1A237E", $borderColor="#1565C0", $type="Lambda api, zip quote-api-lambda.zip", $legendText="Fronteira da Lambda")
+AddElementTag("entrada", $bgColor="#FFF3E0", $fontColor="#37474F", $borderColor="#EF6C00", $legendText="Resource JAX-RS (entrada)")
+AddElementTag("seguranca", $bgColor="#FFFDE7", $fontColor="#37474F", $borderColor="#F9A825", $legendText="Segurança e correlação")
+AddElementTag("aplicacao", $bgColor="#E3F2FD", $fontColor="#0D47A1", $borderColor="#1565C0", $legendText="Validação e montagem das respostas")
+AddElementTag("saida", $bgColor="#F3E5F5", $fontColor="#4A148C", $borderColor="#6A1B9A", $legendText="Acesso ao DynamoDB (saída)")
+AddElementTag("dominio", $bgColor="#E8F5E9", $fontColor="#1B5E20", $borderColor="#2E7D32", $legendText="quote-domain (Java puro)")
+
+LAYOUT_TOP_DOWN()
+
+title $I_API api — componentes (C4 nível 3)
+
+Container(apigw, "API Gateway REST", "AWS_PROXY", "/v1/{proxy+}")
+
+Container_Boundary(api, "quote-api (quarkus-amazon-lambda-rest)") {
+    Component(quoteResource, "QuoteResource", "@Path /v1/quotes", "Criação, nova versão, listagem, GET da versão, ofertas e seleção", $sprite="globe", $tags="entrada")
+    Component(operationsResource, "OperationsResource", "@Path /v1/operations", "Ocorrências, reconciliação manual e GET da operação", $sprite="globe", $tags="entrada")
+    Component(catalogResource, "CatalogResource", "@Path /v1/catalog", "Clientes, veículos, condutores e perfis de cobertura", $sprite="globe", $tags="entrada")
+    Component(meResource, "MeResource", "@Path /v1/me", "Usuário, organização e permissões", $sprite="globe", $tags="entrada")
+
+    Component(caller, "Caller + CognitoAccessTokenAugmentor", "smallrye-jwt", "token_use = access, client_id do app client; organização do grupo org_*, permissões dos perm_*; 403 sem a permissão", $sprite="key", $tags="seguranca")
+    Component(correlation, "RequestCorrelation + ApiExceptionMappers", "filtros e ExceptionMapper", "X-Correlation-Id e erro no formato do contrato", $tags="seguranca")
+
+    Component(requests, "CreateQuoteRequest, CreateVersionRequest, MutationRequests, Paging", "validação", "Campos desconhecidos, Idempotency-Key, limites em code points e limit de 1 a 100", $tags="aplicacao")
+    Component(views, "QuoteViews + OperationViews", "montagem", "allowedActions, selectable, unavailabilityReason, revision e serverTime", $tags="aplicacao")
+    Component(catalog, "Catalog", "classpath fixtures/catalog.json", "Resolve as referências do pedido no catálogo da organização", $sprite="archive", $tags="aplicacao")
+
+    Component(quoteStore, "QuoteStore", "DynamoDB SDK v2, client CRT", "Transações de criação, nova versão e seleção; leitura da versão; listagem", $sprite="database", $tags="saida")
+    Component(operationsStore, "OperationsStore", "DynamoDB SDK v2, client CRT", "Listagem de ocorrências, QUERYREF#, OPERATION# e transação da reconciliação", $sprite="database", $tags="saida")
+    Component(indexPages, "IndexPages", "Query no gsi1", "Cursor pelo gsi1sk, até 10 consultas por página", $tags="saida")
+
+    Component(domain, "quote-domain", "Java puro", "Idempotency, Selections, QuoteActions, Operations, QuoteEvents, QuoteKeys, Retries", $sprite="cubes", $tags="dominio")
+}
+
+Component_Ext(table, "quote-solution-<stage>-quotes", "DynamoDB", "Tabela única da solução", $sprite="database")
+Component_Ext(cognito, "User pool da stack", "Cognito", "JWKS em <JWT_ISSUER>/.well-known/jwks.json", $sprite="user_shield")
+
+Rel(apigw, quoteResource, "Requisição com Bearer")
+Rel(apigw, operationsResource, "Requisição com Bearer")
+Rel(apigw, catalogResource, "Requisição com Bearer")
+Rel(apigw, meResource, "Requisição com Bearer")
+Rel(caller, cognito, "Valida a assinatura e o issuer")
+Rel(quoteResource, caller, "require(Permission)")
+Rel(operationsResource, caller, "require(Permission)")
+Rel(catalogResource, caller, "require(QUOTES_WRITE)")
+Rel(meResource, caller, "Organização e permissões")
+Rel(quoteResource, requests, "Valida body e cabeçalhos")
+Rel(operationsResource, requests, "Valida body e cabeçalhos")
+Rel(quoteResource, catalog, "Resolve applicantRef, vehicleRef, principalDriverRef e coverageProfile")
+Rel(catalogResource, catalog, "Itens da organização")
+Rel(quoteResource, quoteStore, "create, createVersion, select, versionItems, listQuotes")
+Rel(operationsResource, operationsStore, "issues, knownQuery, request, operation")
+Rel(quoteResource, views, "Monta a resposta")
+Rel(operationsResource, views, "Monta a resposta")
+Rel(quoteStore, indexPages, "Listagem de cotações")
+Rel(operationsStore, indexPages, "Listagem de ocorrências")
+Rel(quoteStore, domain, "Selections.decide, Idempotency, chaves, eventos do outbox e repetição de TransactionConflict")
+Rel(operationsStore, domain, "Chaves, QueryReconcileRequested e repetição")
+Rel(views, domain, "QuoteActions e Operations.issueActions")
+Rel(requests, domain, "Idempotency.isValidKey")
+Rel(quoteStore, table, "TransactWriteItems, GetItem, Query")
+Rel(operationsStore, table, "TransactWriteItems, GetItem")
+Rel(indexPages, table, "Query no gsi1")
+
+SHOW_LEGEND()
+@enduml

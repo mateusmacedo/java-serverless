@@ -1,0 +1,34 @@
+@startuml estados-mensagem-dlq
+!include ../../../docs/diagramas/tema-plataforma.iuml
+
+hide stereotype
+title $I_DLQ Mensagem de uma fila de trabalho — ciclo de vida com dlqAttempt
+
+state "$I_SQS Na fila de origem" as FILA <<espera>> : dlqAttempt ausente = tentativa 1
+state "$I_DLQ Na DLQ" as DLQ <<erro>> : retenção de 14 dias\nalarmes de idade e volume
+state "Consumida" as CONSUMIDA <<ativo>>
+state "Descartada" as DESCARTADA <<terminal>> : ocorrência DEAD_LETTER
+
+[*] --> FILA : regra do barramento (pedidos)\nou agendamento da beta (sim-callbacks)
+FILA --> CONSUMIDA : processada; o ESM apaga a mensagem
+FILA --> FILA : falha: volta depois da visibilidade (150 s nos pedidos, 90 s na sim-callbacks);\nreenvio adiado dos workers com DelaySeconds preserva o dlqAttempt
+FILA -[#C62828]-> DLQ : maxReceiveCount atingido\n(3 nos pedidos, 5 na sim-callbacks)
+DLQ -[#2E7D32]-> FILA : reconciler: dlqAttempt < dlqMaxAttempts (3) e antes do deadlineAt;\nSendMessage com dlqAttempt + 1 e DeleteMessage
+DLQ --> DESCARTADA : reconciler: dlqAttempt >= 3, deadlineAt vencido ou corpo ilegível;\nno pedido de reconciliação, o OPERATION# termina FAILED
+CONSUMIDA --> [*]
+DESCARTADA --> [*]
+
+note right of DLQ
+    Prazo só nos pedidos com chamada externa (EnrichmentRequested
+    e InsurerQuoteRequested). QueryReconcileRequested e callbacks
+    agendados param só no limite de tentativas.
+end note
+
+legend right
+    <b>Leitura</b>
+    <back:$COR_ENTRADA>    </back> Em processamento
+    <back:$COR_ERRO>    </back> Na DLQ, à espera do reconciler (até 10 por ciclo)
+    <back:$COR_DOMINIO>    </back> Processada
+    <back:$COR_INFRA>    </back> Descartada com ocorrência
+endlegend
+@enduml

@@ -1,0 +1,160 @@
+@startuml classes-funcoes-registros
+!include ../../../docs/diagramas/tema-plataforma.iuml
+
+hide empty members
+hide stereotype
+skinparam nodesep 25
+title $I_LAMBDA Pacote com.mmda.serverless.provider.functions — registros e conclusões na tabela de consultas
+
+class QueryLedger <<porta>> {
+    load(queryId) : Optional<QueryRecord>
+    isConsumed(eventId) : boolean
+    lead(draft, Lead, quota, agora) : Leading
+    reserveFirst(draft, quota, agora) : Reservation
+    reserveNext(queryId, sequência, quota, agora) : Reservation
+    recordAccepted(queryId, sequência, providerRequestId, ...)
+    settle(Settlement, agora) : boolean
+    settleAsLeader(Settlement, LeaderTerm, ...) : LeaderSettlement
+    settleWithoutNewAttempt(Settlement, n, agora) : boolean
+    resolve(outbox, consumedId, workRef, agora) : boolean
+    indexedQueries(gsi2pk, antes, limite)
+    pendingFanOuts(antes, limite), markFannedOut(queryId, agora)
+    leaveUnknownIndex(queryId), deferUnknown(queryId, agora)
+    ownerOf(queryId) : Optional<QueryOwner>
+}
+enum "QueryLedger.Leading" as Leading {
+    LEADING
+    LEADERSHIP_CHANGED
+    REUSE_CHANGED
+    QUERY_EXISTS
+    QUOTA_EXHAUSTED
+}
+enum "QueryLedger.Reservation" as Reservation {
+    RESERVED
+    QUERY_EXISTS
+    NOT_IN_FLIGHT
+    QUOTA_EXHAUSTED
+}
+enum "QueryLedger.LeaderSettlement" as LeaderSettlement {
+    SETTLED
+    SETTLED_ALREADY_ANSWERED
+    FENCED
+    REUSE_CHANGED
+    ALREADY_SETTLED
+}
+class ReuseLedger <<porta>> {
+    reuseEntry(queryKey) : Optional<ReuseIndexEntry>
+    leadership(queryKey) : Optional<Leadership>
+    isFollower(queryKey, Leadership, workRef) : boolean
+    followers(queryKey, de, até) : List<Follower>
+    register(queryKey, versão, pedido, agora) : Registration
+    lead(...), complete(...), putReuse(...), reuseUnchanged(...)
+}
+enum "ReuseLedger.Registration" as Registration {
+    REGISTERED
+    ALREADY_REGISTERED
+    LEADERSHIP_CHANGED
+}
+class CallbackLedger <<porta>> {
+    joinAsWorker(provider, providerRequestId, queryId, agora) : Optional<Correlation>
+    loadInbox(provider, externalEventId)
+    inboxIndexed(gsi2pk, antes, limite)
+    markUnmatched(...), deferUnmatched(...)
+    correlatedQuery(provider, providerRequestId)
+    settle(CallbackSettlement, agora) : Processing
+    markProcessed(provider, externalEventId, queryId, agora)
+}
+enum "CallbackLedger.Processing" as Processing {
+    SETTLED
+    INBOX_ONLY
+    ALREADY_PROCESSED
+}
+class OutboxStore <<porta>> {
+    put(OutboxEvent, agora) : TransactWriteItem
+    markPublished(eventId, agora)
+    recordFailure(eventId, erro, agora)
+    pending(limite) : List<PendingOutbox>
+    isPending(eventId) : boolean
+}
+class OperationLedger <<porta>> {
+    start(pedido, agora) : Optional<ReconcileStatus>
+    finish(pedido, status, resumo, agora) : boolean
+    status(operationId)
+}
+class OperationIssues <<porta>> {
+    raise(Observation, recorrência) : boolean
+    resolve(tipo, alvo, resumo) : boolean
+    deferReview(issueId, agora)
+    openSelfResolving(limite) : List<OpenIssue>
+}
+class Transactions <<serviço>> {
+    write(itens) : Result
+    MAX_CONFLICT_RETRIES = 3
+}
+class Settlement <<valor>> {
+    queryId
+    newQuery : QueryDraft
+    finalState : QueryState
+    attempt : AttemptResult
+    evidence : EvidenceDraft
+    event : OutboxEvent
+    consumedEventId, workRef
+}
+class QueryRecord <<valor>> {
+    queryId, state, providerRequestId
+    queryKey, fencingVersion
+    attempts : List<Attempt>
+    provider, workRef, quoteId, version
+    insurerId, requestEventId, operation
+    organizationId, deadlineAt
+    isLeader(), hasOpenAttempt()
+    busyUntil(workerTimeout) : + 5 s (CLOCK_SKEW)
+}
+class LeaderTerm <<valor>> {
+    queryKey
+    fencingVersion, firstFencingVersion : long
+}
+class EnrichmentResolutions <<serviço>> {
+    settle(...), settleInterrupted(...)
+    publishHit(...), publishRecorded(...)
+    redoFanOut(...), resumeFanOut(...)
+}
+class PendingCallbacks <<serviço>> {
+    meet(provider, providerRequestId, queryId)
+    process(QueryRecord, provider, externalEventId) : boolean
+}
+
+QueryLedger ..> Leading
+QueryLedger ..> Reservation
+QueryLedger ..> LeaderSettlement
+QueryLedger ..> Settlement
+QueryLedger ..> QueryRecord
+QueryLedger --> OutboxStore
+QueryLedger --> ReuseLedger
+QueryLedger --> Transactions
+ReuseLedger ..> Registration
+CallbackLedger ..> Processing
+CallbackLedger --> OutboxStore
+CallbackLedger --> Transactions
+OperationLedger --> OutboxStore
+OperationIssues --> OutboxStore
+EnrichmentResolutions --> QueryLedger
+EnrichmentResolutions --> ReuseLedger
+EnrichmentResolutions ..> LeaderTerm
+PendingCallbacks --> CallbackLedger
+PendingCallbacks --> QueryLedger
+
+note bottom of Transactions
+    Cancelamento por ConditionalCheckFailed volta como Result
+    (motivo por item, na ordem da transação); TransactionConflict
+    é repetido até 3 vezes com backoff e jitter.
+end note
+
+legend right
+    <b>Leitura</b>
+    <back:$COR_ENTRADA>    </back> Registro (adaptador DynamoDB)
+    <back:$COR_APLICACAO>    </back> Serviço que compõe registros
+    <back:#F1F8E9>    </back> Valor imutável (record)
+    Todo efeito grava OUTBOX# e CONSUMED# na mesma transação.
+endlegend
+@enduml

@@ -1,0 +1,39 @@
+@startuml estados-waiter
+!include ../../../docs/diagramas/tema-plataforma.iuml
+hide stereotype
+
+title $I_SEGREDO Waiter (WAITER#<workRef>) — espera por task token
+
+state "WAITING" as WAITING <<espera>> : tokenCiphertext (AES-256-GCM)\nexpiresAt = deadlineAt do pedido\nsem gsi2
+state "RESUMING" as RESUMING <<ativo>> : resultEventId e resumePayload\ngsi2pk = WAITER_RESUMING
+state "DONE" as DONE <<terminal>> : sai do gsi2
+state "EXPIRED" as EXPIRED <<erro>> : gsi2pk = WAITER_EXPIRED\n(exceto no fechamento pela finalização)
+
+[*] --> WAITING : dispatch, primeira vez:\nPut com attribute_not_exists\n+ outbox do pedido na mesma transação
+WAITING --> WAITING : dispatch repetida (Retry da tarefa):\nsó troca o tokenCiphertext
+WAITING --> RESUMING : resume, numa transação com o resultado\ne o CONSUMED# (condição status = WAITING)
+RESUMING --> DONE : SendTaskSuccess aceito (resume, ou reconciler\ncom o RESUMING parado há mais de\nresumingRetryAfterSeconds, 30 s)
+RESUMING -[#C62828]-> EXPIRED : SendTaskSuccess devolve\nTaskTimedOut ou InvalidToken
+WAITING -[#C62828]-> EXPIRED : record-*-outcome (Catch da espera)
+[*] -[#C62828]-> EXPIRED : record-*-outcome sem waiter:\ncria já EXPIRED
+WAITING -[#C62828,dashed]-> EXPIRED : reconciler fecha os waiters\nda versão finalizada
+EXPIRED --> [*] : reconciler confere a entrega e tira do índice;\nabre TASK_EXPIRED só com resultado gravado\nque o GetExecutionHistory não mostra entregue
+DONE --> [*]
+
+note right of RESUMING
+    Com resumePayload gravado (RESUMING, DONE ou EXPIRED),
+    uma dispatch repetida chama SendTaskSuccess com o token
+    novo e esse resumePayload, sem gravar nada.
+    Depois do expiresAt, o resume não toca o waiter:
+    grava LATE com o CONSUMED#.
+end note
+
+legend right
+    <b>Leitura</b>
+    <back:$COR_ENTRADA>    </back> À espera do resultado
+    <back:$COR_DOMINIO>    </back> Resultado gravado, retomada em curso
+    <back:$COR_INFRA>    </back> Entregue à execução
+    <back:$COR_ERRO>    </back> Expirado (conferido pelo reconciler)
+    Seta tracejada: finalização pelo reconciler
+endlegend
+@enduml

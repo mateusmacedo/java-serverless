@@ -1,0 +1,57 @@
+@startuml sequencia-nova-versao
+!include ../../../docs/diagramas/tema-plataforma.iuml
+
+title $I_API Nova versão: POST /v1/quotes/{quoteId}/versions
+
+autonumber
+participant "$I_CLIENTE\nFrontend" as cliente <<ator>>
+box "Entrada" #FFFAF3
+    participant "$I_LAMBDA\napi\nQuoteResource.createVersion" as api <<entrada>>
+end box
+box "Aplicação" #F5FAFF
+    participant "$I_LAMBDA\nQuoteStore" as store <<aplicacao>>
+end box
+box "Infraestrutura" #F7F9FA
+    database "$I_DYNAMODB\nquotes" as table <<infra>>
+end box
+
+== Validação ==
+cliente -> api : POST {expectedVersion, quote}\nBearer, Idempotency-Key
+api -> api : caller.require(QUOTES_WRITE)
+api -> table : GetItem META da cotação
+alt #FFEBEE sem a permissão
+    api --> cliente : <color:#C62828>403</color>
+else #FFEBEE cotação inexistente ou de outra organização
+    api --> cliente : <color:#C62828>404</color>
+else #FFEBEE Idempotency-Key, JSON, campos ou referência fora do catálogo
+    api --> cliente : <color:#C62828>400 VALIDATION_ERROR</color>
+else #E8F5E9 válido
+    api -> api : resolve o novo snapshot no catálogo; n = expectedVersion + 1
+end
+
+== Transação ==
+api -> store : createVersion(NewVersion)
+store -> table : TransactWriteItems\n1. Put IDEMPOTENCY (CREATE_VERSION, escopo quoteId)\n2. Update META: currentVersion = n e resumo inicial,\n   condição currentVersion = :expected AND attribute_not_exists(selectionId) AND organizationId = :org\n3. Update V#<expected>: supersededAt, updatedAt, revision + 1\n4. Put V#<n> (RECEIVED, ACTIVE_VERSION)\n5. Outbox StartQuoteRequested e QuoteAccepted da nova versão
+alt #FFEBEE cancelada, com registro de idempotência
+    api --> cliente : <color:#2E7D32>202 da mesma versão</color> ou <color:#C62828>409 IDEMPOTENCY_CONFLICT</color>
+else #FFEBEE cancelada pela condição do META (2ª ação)
+    store -> table : relê o META
+    alt #FFEBEE com selectionId
+        api --> cliente : <color:#C62828>409 QUOTE_ALREADY_SELECTED</color>
+    else #FFEBEE sem selectionId
+        api --> cliente : <color:#C62828>409 VERSION_CONFLICT</color>
+    end
+else #FFEBEE outro cancelamento ou falha da AWS antes da aceitação
+    api --> cliente : <color:#C62828>503 SERVICE_UNAVAILABLE</color>
+else #E8F5E9 ok
+    api --> cliente : <color:#2E7D32>202 {quoteId, version: n, phase: RECEIVED, statusUrl} + Location</color>
+end
+
+note over api, table
+    A execução da versão antiga segue até o fim, sem StopExecution; os resultados dela ficam nela.
+    A versão substituída fica sem allowedActions, e as ofertas dela, com unavailabilityReason = VERSION_SUPERSEDED.
+    A nova execução começa pelo outbox, como na criação (sequencia-criacao-cotacao.puml).
+end note
+
+$legenda_erros()
+@enduml
