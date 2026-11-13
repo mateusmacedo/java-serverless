@@ -139,7 +139,8 @@ record CreateQuoteRequest(
 
     private static String reference(JsonNode node, String field, String path, List<ErrorResponse.FieldError> errors) {
         String value = text(node, field, path, errors);
-        if (value != null && value.length() > MAX_REF_LENGTH) {
+        // WHY: o maxLength do JSON Schema conta caracteres Unicode, e um caractere fora do BMP ocupa dois char
+        if (value != null && value.codePointCount(0, value.length()) > MAX_REF_LENGTH) {
             errors.add(new ErrorResponse.FieldError(path, "Referência longa demais."));
             return null;
         }
