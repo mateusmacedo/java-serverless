@@ -28,13 +28,18 @@ final class TestRequests {
     }
 
     static Request enrichment(String vehicleRef, Instant deadlineAt, String provider) {
+        return enrichment(vehicleRef, "driver-ana", deadlineAt, provider);
+    }
+
+    /** Pedido com outro condutor: a {@code queryKey} muda, então não reutiliza consultas de outros testes. */
+    static Request enrichment(String vehicleRef, String principalDriverRef, Instant deadlineAt, String provider) {
         String quoteId = "quote-" + UUID.randomUUID();
         String workRef = Identities.workRef(quoteId, 1, Identities.ENRICHMENT, null);
         Map<String, Object> detail = envelopeFields(workRef, quoteId, deadlineAt);
         detail.put("provider", provider);
         detail.put("operation", "VEHICLE_DRIVER_PROFILE");
         detail.put("contractVersion", "1");
-        detail.put("params", Map.of("vehicleRef", vehicleRef, "principalDriverRef", "driver-ana"));
+        detail.put("params", Map.of("vehicleRef", vehicleRef, "principalDriverRef", principalDriverRef));
         return request("EnrichmentRequested", detail, workRef, quoteId);
     }
 

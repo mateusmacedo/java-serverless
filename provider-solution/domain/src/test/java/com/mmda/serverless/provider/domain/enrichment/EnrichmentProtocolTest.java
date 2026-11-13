@@ -112,7 +112,7 @@ class EnrichmentProtocolTest {
                 "enrichment-sim", "VEHICLE_DRIVER_PROFILE", "1",
                 new EnrichmentRequest.Params("vehicle-1", "driver-1"), Instant.parse("2026-11-11T15:05:00Z"));
 
-        EnrichmentResolved failed = EnrichmentResolved.of(request, "q_1", "ev_1", ReuseDecision.MISS,
+        EnrichmentResolved failed = EnrichmentResolved.of(request, "q_1", "ev_1", ReuseDecision.MISS, "reuse-v1",
                 EnrichmentResolved.Outcome.failed(ErrorClasses.PROVIDER_UNAVAILABLE), "2026-11-11T15:00:00.000Z");
 
         assertThat(failed.resultType()).isEqualTo(EnrichmentResultType.FAILED);
@@ -120,7 +120,39 @@ class EnrichmentProtocolTest {
         assertThat(failed.notFoundRefs()).isNull();
         assertThat(failed.errorClass()).isEqualTo(ErrorClasses.PROVIDER_UNAVAILABLE);
         assertThatThrownBy(() -> new EnrichmentResolved("e", "t", "1", "wr", "q", 1, "q_1", "ev", ReuseDecision.MISS,
-                EnrichmentResultType.FOUND, null, null, null, null))
+                "reuse-v1", EnrichmentResultType.FOUND, null, null, null, null))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void resolvedEventRejectsMissingReferencesAndFieldsIncoherentWithTheResultType() {
+        EnrichmentRequest request = new EnrichmentRequest("evt-1", "wr_1", "org-acme", "quote-1", 1,
+                "enrichment-sim", "VEHICLE_DRIVER_PROFILE", "1",
+                new EnrichmentRequest.Params("vehicle-1", "driver-1"), Instant.parse("2026-11-11T15:05:00Z"));
+        EnrichmentProfile profile = new EnrichmentProfile(
+                new EnrichmentProfile.Vehicle("vehicle-1", "Fiat", "Argo", 2019, "68500.00"),
+                new EnrichmentProfile.Driver("driver-1", 8, 0));
+        String occurredAt = "2026-11-11T15:00:00.000Z";
+        String reusableUntil = "2026-11-11T15:15:00.000Z";
+
+        assertThatThrownBy(() -> EnrichmentResolved.of(request, "q_1", null, ReuseDecision.HIT, "reuse-v1",
+                EnrichmentResolved.Outcome.found(profile, reusableUntil), occurredAt))
+                .as("evidenceId").isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> EnrichmentResolved.of(request, null, "ev_1", ReuseDecision.JOIN, "reuse-v1",
+                EnrichmentResolved.Outcome.found(profile, reusableUntil), occurredAt))
+                .as("queryId").isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> EnrichmentResolved.of(request, "q_1", "ev_1", ReuseDecision.MISS, "reuse-v1",
+                EnrichmentResolved.Outcome.found(profile, null), occurredAt))
+                .as("FOUND without reusableUntil").isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> EnrichmentResolved.of(request, "q_1", "ev_1", ReuseDecision.MISS, "reuse-v1",
+                EnrichmentResolved.Outcome.notFound(List.of("vehicleRef"), null), occurredAt))
+                .as("NOT_FOUND without reusableUntil").isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> EnrichmentResolved.of(request, "q_1", "ev_1", ReuseDecision.MISS, "reuse-v1",
+                new EnrichmentResolved.Outcome(EnrichmentResultType.FAILED, null, null, reusableUntil,
+                        ErrorClasses.PROVIDER_UNAVAILABLE), occurredAt))
+                .as("FAILED is never reusable").isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> EnrichmentResolved.of(request, "q_1", "ev_1", ReuseDecision.MISS, "reuse v1",
+                EnrichmentResolved.Outcome.found(profile, reusableUntil), occurredAt))
+                .as("policyVersion outside the documented format").isInstanceOf(IllegalArgumentException.class);
     }
 }

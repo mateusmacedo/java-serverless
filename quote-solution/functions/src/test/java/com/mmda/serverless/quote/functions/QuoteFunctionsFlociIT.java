@@ -10,6 +10,7 @@ import com.mmda.serverless.quote.domain.QuoteKeys;
 import com.mmda.serverless.quote.domain.Usage;
 import com.mmda.serverless.quote.domain.WorkRef;
 import com.mmda.serverless.quote.functions.DispatchHandler.DispatchRequest;
+import com.mmda.serverless.quote.functions.QuoteFixtures.EvidenceRef;
 import io.quarkus.test.common.WithTestResource;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
@@ -118,7 +119,8 @@ class QuoteFunctionsFlociIT {
         JsonNode request = outboxDetail(workRef.requestEventId());
         assertThat(request.get("workRef").asText()).isEqualTo(workRef.value());
         assertThat(request.at("/risk/vehicle/year").asInt()).isEqualTo(2021);
-        assertThat(request.at("/enrichment/evidenceId").asText()).isEqualTo("ev_1");
+        assertThat(request.at("/enrichment/evidenceId").asText()).isEqualTo(
+                EvidenceRef.miss(WorkRef.of(quoteId, 1, WorkRef.Kind.ENRICHMENT, null).value()).evidenceId());
         assertThat(request.toString()).doesNotContain(task.token());
 
         LambdaEvents.BatchResponse response = resume.handleRequest(
@@ -249,30 +251,107 @@ class QuoteFunctionsFlociIT {
     }
 
     @Test
-    void enrichmentTimeoutAndNotFoundEndBeforeAnyInsurer() throws Exception {
-        String timedOut = newQuote(Usage.PERSONAL, 2021, false, "2012-03-15");
-        step("load-snapshot", timedOut);
-        step("evaluate-eligibility", timedOut);
+    void t04_reusedEnrichmentFollowsTheSameFlowAsAMissAndKeepsTheEvidenceReference() throws Exception {
+        EvidenceRef leader = EvidenceRef.shared(
+                WorkRef.of(UUID.randomUUID().toString(), 1, WorkRef.Kind.ENRICHMENT, null).value(), "MISS");
+        for (String decision : List.of("HIT", "JOIN")) {
+            String quoteId = eligibleQuote(Usage.COMMERCIAL);
+            WorkRef workRef = WorkRef.of(quoteId, 1, WorkRef.Kind.ENRICHMENT, null);
+            Task enrichment = newTask();
+            dispatch.handleRequest(enrichmentRequest(quoteId, enrichment), null);
+
+            assertThat(resumer.handle(QuoteFixtures.enrichmentResult(workRef.value(), quoteId,
+                    UUID.randomUUID().toString(), leader.withReuseDecision(decision), "FOUND", 2021, List.of())))
+                    .isEqualTo(ResultResumer.Disposition.RESUMED);
+            JsonNode resumed = succeededOutput(enrichment);
+            assertThat(resumed.get("resultType").asText()).isEqualTo("FOUND");
+            assertThat(resumed.get("reuseDecision").asText()).isEqualTo(decision);
+            Map<String, AttributeValue> used = evidence(quoteId, workRef);
+            assertThat(used.get("reuseDecision").s()).as(decision).isEqualTo(decision);
+            assertThat(used.get("evidenceId").s()).isEqualTo(leader.evidenceId());
+            assertThat(used.get("queryId").s()).isEqualTo(leader.queryId());
+            assertThat(used.get("policyVersion").s()).isEqualTo(EvidenceRef.POLICY_VERSION);
+
+            assertThat(step("select-insurers", quoteId).get("insurers")).isEqualTo(List.of("alpha"));
+            Task insurer = newTask();
+            dispatch.handleRequest(insurerRequest(quoteId, insurer), null);
+            WorkRef insurerRef = WorkRef.of(quoteId, 1, WorkRef.Kind.INSURER, "alpha");
+            JsonNode request = outboxDetail(insurerRef.requestEventId());
+            assertThat(request.at("/enrichment/evidenceId").asText()).isEqualTo(leader.evidenceId());
+            assertThat(request.at("/enrichment/queryId").asText()).isEqualTo(leader.queryId());
+            assertThat(request.at("/enrichment/reuseDecision").asText()).isEqualTo(decision);
+            resume.handleRequest(QuoteFixtures.sqs(QuoteFixtures.insurerResult(insurerRef.value(), quoteId, "QUOTED",
+                    UUID.randomUUID().toString())), null);
+            assertThat(succeededOutput(insurer).get("status").asText()).isEqualTo("QUOTED");
+
+            Map<String, Object> consolidation = step("consolidate", quoteId);
+            assertThat(consolidation.get("outcome")).as(decision).isEqualTo("COMPLETED");
+            assertThat(consolidation.get("outcomeReason")).isNull();
+            assertThat(offers(quoteId)).hasSize(1);
+            assertThat(outboxOf(quoteId, QuoteEvents.ENRICHMENT_REQUESTED)).hasSize(1);
+            assertThat(evidence(quoteId, workRef)).as("the evidence used stays as recorded").isEqualTo(used);
+        }
+    }
+
+    @Test
+    void t25_requiredEnrichmentNotFoundEndsAsNeedsInformationWithoutInsurers() throws Exception {
+        String quoteId = eligibleQuote(Usage.PERSONAL);
+        WorkRef workRef = WorkRef.of(quoteId, 1, WorkRef.Kind.ENRICHMENT, null);
+        Task task = newTask();
+        dispatch.handleRequest(enrichmentRequest(quoteId, task), null);
+
+        assertThat(resumer.handle(QuoteFixtures.enrichmentResult(workRef.value(), quoteId, UUID.randomUUID().toString(),
+                EvidenceRef.miss(workRef.value()), "NOT_FOUND", 0, List.of("vehicleRef", "principalDriverRef"))))
+                .isEqualTo(ResultResumer.Disposition.RESUMED);
+        assertThat(succeededOutput(task).get("resultType").asText()).isEqualTo("NOT_FOUND");
+        Map<String, AttributeValue> used = evidence(quoteId, workRef);
+        assertThat(used.get("resultType").s()).isEqualTo("NOT_FOUND");
+        assertThat(used.get("evidenceId").s()).isEqualTo(EvidenceRef.miss(workRef.value()).evidenceId());
+
+        assertThat(step("select-insurers", quoteId).get("insurers")).as("no insurer even if the step runs").isEqualTo(List.of());
+        Map<String, Object> consolidation = step("consolidate", quoteId);
+
+        assertThat(consolidation.get("outcome")).isEqualTo("NEEDS_INFORMATION");
+        assertThat(consolidation.get("outcomeReason")).isEqualTo("ENRICHMENT_NOT_FOUND");
+        JsonNode missing = objectMapper.readTree(version(quoteId).get("missingFields").s());
+        assertThat(missing).extracting(field -> field.get("path").asText())
+                .containsExactly("risk.vehicleRef", "risk.principalDriverRef");
+        assertThat(missing).extracting(field -> field.get("reasonCode").asText()).containsOnly("ENRICHMENT_NOT_FOUND");
+        assertThat(outboxDetail(QuoteEvents.completedEventId(quoteId, 1)).get("outcomeReason").asText())
+                .isEqualTo("ENRICHMENT_NOT_FOUND");
+        assertNoInsurerQueried(quoteId);
+    }
+
+    @Test
+    void t27_requiredEnrichmentFailureEndsAsTechnicalFailureWithoutInsurers() throws Exception {
+        String reported = eligibleQuote(Usage.PERSONAL);
+        WorkRef reportedRef = WorkRef.of(reported, 1, WorkRef.Kind.ENRICHMENT, null);
+        Task task = newTask();
+        dispatch.handleRequest(enrichmentRequest(reported, task), null);
+        resumer.handle(QuoteFixtures.enrichmentResult(reportedRef.value(), reported, "FAILED", 0,
+                UUID.randomUUID().toString()));
+        assertThat(succeededOutput(task).get("resultType").asText()).isEqualTo("FAILED");
+        JsonNode summary = objectMapper.readTree(evidence(reported, reportedRef).get("summary").s());
+        assertThat(summary.path("result").isObject()).as("no profile is invented").isFalse();
+        assertThat(summary.path("errorClass").asText()).isEqualTo("PROVIDER_UNAVAILABLE");
+
+        String timedOut = eligibleQuote(Usage.PERSONAL);
+        WorkRef timedOutRef = WorkRef.of(timedOut, 1, WorkRef.Kind.ENRICHMENT, null);
         Map<String, Object> recorded = steps.handleRequest(new StepRequest("record-enrichment-outcome", timedOut, 1,
                 null, null, objectMapper.readTree("{\"Error\":\"States.Timeout\"}")), null);
         assertThat(recorded.get("resultType")).isEqualTo("FAILED");
-        assertThat(step("consolidate", timedOut).get("outcomeReason")).isEqualTo("ENRICHMENT_FAILED");
+        assertThat(waiter(timedOutRef).get("status").s()).isEqualTo("EXPIRED");
+        assertThat(evidence(timedOut, timedOutRef)).isNull();
 
-        String notFound = newQuote(Usage.PERSONAL, 2021, false, "2012-03-15");
-        step("load-snapshot", notFound);
-        step("evaluate-eligibility", notFound);
-        Task task = newTask();
-        WorkRef workRef = WorkRef.of(notFound, 1, WorkRef.Kind.ENRICHMENT, null);
-        dispatch.handleRequest(new DispatchRequest(WorkRef.Kind.ENRICHMENT, notFound, 1, null, task.executionArn(),
-                task.token(), 20), null);
-        resumer.handle(QuoteFixtures.enrichmentResult(workRef.value(), notFound, "NOT_FOUND", 0,
-                UUID.randomUUID().toString()));
-        assertThat(succeededOutput(task).get("resultType").asText()).isEqualTo("NOT_FOUND");
-        Map<String, Object> consolidation = step("consolidate", notFound);
-        assertThat(consolidation.get("outcome")).isEqualTo("NEEDS_INFORMATION");
-        assertThat(consolidation.get("outcomeReason")).isEqualTo("ENRICHMENT_NOT_FOUND");
-        assertThat(version(notFound).get("missingFields").s()).contains("risk.vehicleRef");
-        assertThat(outboxOf(notFound, QuoteEvents.INSURER_QUOTE_REQUESTED)).isEmpty();
+        for (String quoteId : List.of(reported, timedOut)) {
+            assertThat(step("select-insurers", quoteId).get("insurers")).as("no insurer even if the step runs")
+                    .isEqualTo(List.of());
+            Map<String, Object> consolidation = step("consolidate", quoteId);
+            assertThat(consolidation.get("outcome")).isEqualTo("TECHNICAL_FAILURE");
+            assertThat(consolidation.get("outcomeReason")).isEqualTo("ENRICHMENT_FAILED");
+            assertThat(version(quoteId).get("missingFields").s()).isEqualTo("[]");
+            assertNoInsurerQueried(quoteId);
+        }
     }
 
     @Test
@@ -337,6 +416,14 @@ class QuoteFunctionsFlociIT {
         return quoteId;
     }
 
+    /** Cotação elegível, na fase {@code ENRICHING}, pronta para o pedido de enriquecimento. */
+    private String eligibleQuote(Usage usage) throws Exception {
+        String quoteId = newQuote(usage, 2021, false, "2012-03-15");
+        step("load-snapshot", quoteId);
+        assertThat(step("evaluate-eligibility", quoteId).get("decision")).isEqualTo("ELIGIBLE");
+        return quoteId;
+    }
+
     /** Leva a cotação até o {@code select-insurers}, com o enriquecimento resolvido por um token real. */
     private String quoteReadyToQuote(Usage usage) throws Exception {
         String quoteId = newQuote(usage, 2021, false, "2012-03-15");
@@ -364,6 +451,10 @@ class QuoteFunctionsFlociIT {
 
     private DispatchRequest insurerRequest(String quoteId, Task task) {
         return new DispatchRequest(WorkRef.Kind.INSURER, quoteId, 1, "alpha", task.executionArn(), task.token(), 20);
+    }
+
+    private DispatchRequest enrichmentRequest(String quoteId, Task task) {
+        return new DispatchRequest(WorkRef.Kind.ENRICHMENT, quoteId, 1, null, task.executionArn(), task.token(), 20);
     }
 
     private record Task(String token, String executionArn) {
@@ -420,6 +511,25 @@ class QuoteFunctionsFlociIT {
                 .expressionAttributeValues(Map.of(":waiter", AttributeValue.fromS("WAITER"),
                         ":quoteId", AttributeValue.fromS(quoteId)))).items()).isEmpty();
         assertThat(outboxOf(quoteId, QuoteEvents.QUOTE_COMPLETED)).hasSize(1);
+    }
+
+    /** Nenhuma seguradora selecionada, pedida ou aguardada (PRD §8, T25 e T27). */
+    private void assertNoInsurerQueried(String quoteId) {
+        assertThat(version(quoteId)).doesNotContainKeys("selectedInsurers", "selectionRuleVersion");
+        assertThat(query(quoteId, QuoteKeys.resultPrefix(1))).isEmpty();
+        assertThat(outboxOf(quoteId, QuoteEvents.INSURER_QUOTE_REQUESTED)).isEmpty();
+        assertThat(dynamoDb.scan(builder -> builder.tableName(FlociResource.TABLE)
+                .filterExpression("#type = :waiter AND quoteId = :quoteId AND kind = :insurer")
+                .expressionAttributeNames(Map.of("#type", "type"))
+                .expressionAttributeValues(Map.of(":waiter", AttributeValue.fromS("WAITER"),
+                        ":quoteId", AttributeValue.fromS(quoteId), ":insurer", AttributeValue.fromS("INSURER"))))
+                .items()).isEmpty();
+        assertThat(version(quoteId).get("phase").s()).isEqualTo("TERMINAL");
+        assertThat(outboxOf(quoteId, QuoteEvents.QUOTE_COMPLETED)).hasSize(1);
+    }
+
+    private Map<String, AttributeValue> evidence(String quoteId, WorkRef workRef) {
+        return item(QuoteKeys.quotePk(quoteId), QuoteKeys.evidenceSk(1, workRef));
     }
 
     private LambdaEvents.StreamEvent streamOf(Map<String, AttributeValue>... items) {

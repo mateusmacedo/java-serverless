@@ -12,6 +12,7 @@ import com.mmda.serverless.quote.domain.Insurers;
 import com.mmda.serverless.quote.domain.MissingField;
 import com.mmda.serverless.quote.domain.QuoteEvents;
 import com.mmda.serverless.quote.domain.QuoteKeys;
+import com.mmda.serverless.quote.domain.ReuseDecision;
 import com.mmda.serverless.quote.domain.WorkRef;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.io.UncheckedIOException;
@@ -24,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Pattern;
 import org.jboss.logging.Logger;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItem;
@@ -43,6 +45,10 @@ public class ResultResumer {
     private static final Logger LOG = Logger.getLogger(ResultResumer.class);
     private static final Set<InsurerStatus> REPORTED_STATUSES = Set.of(InsurerStatus.QUOTED, InsurerStatus.DECLINED,
             InsurerStatus.NEEDS_INFORMATION, InsurerStatus.UNAVAILABLE);
+    /** Padrões do {@code EnrichmentResolved} no AsyncAPI da provider. */
+    private static final Pattern QUERY_ID = Pattern.compile("^q_[0-9a-f]{32}$");
+    private static final Pattern EVIDENCE_ID = Pattern.compile("^ev_[0-9a-f]{32}$");
+    private static final Pattern POLICY_VERSION = Pattern.compile("^[A-Za-z0-9][A-Za-z0-9._-]*$");
 
     /** O que aconteceu com o evento. */
     public enum Disposition {
@@ -85,13 +91,16 @@ public class ResultResumer {
             return Disposition.UNKNOWN_WORK;
         }
         Waiter waiter = Waiter.of(found.get());
+        // WHY: conferido em toda entrega, o evento fora do contrato chega à DLQ; conferido só no prazo, a
+        // reentrega depois dele o gravaria como evidência tardia
+        EnrichmentDetail enrichment = waiter.kind() == WorkRef.Kind.ENRICHMENT ? EnrichmentDetail.of(detail) : null;
         Instant now = Instant.now(clock);
         if (waiter.expiresAt() != null && !now.isBefore(waiter.expiresAt())) {
             return recordLate(waiter, detail, eventId, "LATE", now);
         }
         Result result = waiter.kind() == WorkRef.Kind.INSURER
                 ? insurerResult(waiter, workRef, detail, now)
-                : enrichmentResult(waiter, workRef, detail, now);
+                : enrichmentResult(waiter, workRef, enrichment, detail, now);
         List<TransactWriteItem> writes = new ArrayList<>();
         writes.add(table.update(QuoteKeys.waiterPk(workRef), QuoteKeys.META,
                 "SET #status = :resuming, resultEventId = :eventId, resumePayload = :payload, "
@@ -208,8 +217,18 @@ public class ResultResumer {
         return item;
     }
 
-    private Result enrichmentResult(Waiter waiter, WorkRef workRef, JsonNode detail, Instant now) {
-        EnrichmentOutcome.ResultType resultType = EnrichmentOutcome.ResultType.valueOf(required(detail, "resultType"));
+    /**
+     * Evidência usada pela versão ({@code V#n#EVIDENCE#<workRef>}, §4 do desenho). {@code HIT}, {@code JOIN} e
+     * {@code MISS} gravam o mesmo item, com a referência da evidência da provider e o {@code policyVersion}
+     * que a produziu, ambos obrigatórios no AsyncAPI da provider.
+     */
+    private Result enrichmentResult(Waiter waiter, WorkRef workRef, EnrichmentDetail enrichment, JsonNode detail,
+            Instant now) {
+        EnrichmentOutcome.ResultType resultType = enrichment.resultType();
+        ReuseDecision reuseDecision = enrichment.reuseDecision();
+        String evidenceId = enrichment.evidenceId();
+        String queryId = enrichment.queryId();
+        String policyVersion = enrichment.policyVersion();
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("result", detail.get("result"));
         summary.put("notFoundRefs", detail.get("notFoundRefs"));
@@ -222,15 +241,15 @@ public class ResultResumer {
         evidence.put("resultType", s(resultType.name()));
         evidence.put("summary", s(table.toJson(summary)));
         evidence.put("receivedAt", s(now.toString()));
-        putIfPresent(evidence, "evidenceId", optional(detail, "evidenceId"));
-        putIfPresent(evidence, "queryId", optional(detail, "queryId"));
-        putIfPresent(evidence, "reuseDecision", optional(detail, "reuseDecision"));
-        putIfPresent(evidence, "policyVersion", optional(detail, "policyVersion"));
+        evidence.put("evidenceId", s(evidenceId));
+        evidence.put("queryId", s(queryId));
+        evidence.put("reuseDecision", s(reuseDecision.name()));
+        evidence.put("policyVersion", s(policyVersion));
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("resultType", resultType.name());
-        payload.put("evidenceId", optional(detail, "evidenceId"));
-        payload.put("queryId", optional(detail, "queryId"));
-        payload.put("reuseDecision", optional(detail, "reuseDecision"));
+        payload.put("evidenceId", evidenceId);
+        payload.put("queryId", queryId);
+        payload.put("reuseDecision", reuseDecision.name());
         return new Result(List.of(table.put(evidence, QuoteTable.NOT_EXISTS)), payload);
     }
 
@@ -248,6 +267,11 @@ public class ResultResumer {
         putIfPresent(late, "status", optional(detail, waiter.kind() == WorkRef.Kind.ENRICHMENT ? "resultType" : "status"));
         putIfPresent(late, "queryRef", queryId);
         putIfPresent(late, "attemptRef", optional(detail, "attemptRef"));
+        if (waiter.kind() == WorkRef.Kind.ENRICHMENT) {
+            putIfPresent(late, "evidenceId", optional(detail, "evidenceId"));
+            putIfPresent(late, "reuseDecision", optional(detail, "reuseDecision"));
+            putIfPresent(late, "policyVersion", optional(detail, "policyVersion"));
+        }
         JsonNode offer = detail.get("offer");
         if (offer != null && offer.isObject()) {
             putIfPresent(late, "rawResponseRef", optional(offer, "rawResponseRef"));
@@ -323,6 +347,47 @@ public class ResultResumer {
     }
 
     private record Result(List<TransactWriteItem> writes, Map<String, Object> payload) {
+    }
+
+    /** Campos do {@code EnrichmentResolved} que viram evidência, conferidos contra o AsyncAPI da provider. */
+    private record EnrichmentDetail(EnrichmentOutcome.ResultType resultType, ReuseDecision reuseDecision,
+            String evidenceId, String queryId, String policyVersion) {
+
+        static EnrichmentDetail of(JsonNode detail) {
+            EnrichmentOutcome.ResultType resultType =
+                    EnrichmentOutcome.ResultType.valueOf(required(detail, "resultType"));
+            ReuseDecision reuseDecision = ReuseDecision.valueOf(required(detail, "reuseDecision"));
+            if (reuseDecision == ReuseDecision.HIT && resultType == EnrichmentOutcome.ResultType.FAILED) {
+                throw new IllegalArgumentException("FAILED enrichment never comes from the reuse index");
+            }
+            if (resultType == EnrichmentOutcome.ResultType.FOUND && !detail.path("result").isObject()) {
+                throw new IllegalArgumentException("FOUND enrichment without result");
+            }
+            JsonNode notFoundRefs = detail.path("notFoundRefs");
+            if (!notFoundRefs.isMissingNode() && !notFoundRefs.isNull() && !notFoundRefs.isArray()) {
+                throw new IllegalArgumentException("enrichment with notFoundRefs that is not a list");
+            }
+            // WHY: NOT_FOUND só vale declarado pelo provedor (RN07), e sem as referências a versão terminaria
+            // NEEDS_INFORMATION sem nenhum campo a completar
+            if (resultType == EnrichmentOutcome.ResultType.NOT_FOUND && notFoundRefs.isEmpty()) {
+                throw new IllegalArgumentException("NOT_FOUND enrichment without notFoundRefs");
+            }
+            for (JsonNode ref : notFoundRefs) {
+                if (!ref.isTextual() || !EnrichmentOutcome.DECLARABLE_REFS.contains(ref.asText())) {
+                    throw new IllegalArgumentException("NOT_FOUND enrichment with an unknown reference " + ref);
+                }
+            }
+            return new EnrichmentDetail(resultType, reuseDecision, matching(detail, "evidenceId", EVIDENCE_ID),
+                    matching(detail, "queryId", QUERY_ID), matching(detail, "policyVersion", POLICY_VERSION));
+        }
+
+        private static String matching(JsonNode detail, String field, Pattern pattern) {
+            String value = required(detail, field);
+            if (!detail.get(field).isTextual() || !pattern.matcher(value).matches()) {
+                throw new IllegalArgumentException("event with " + field + " outside the contract");
+            }
+            return value;
+        }
     }
 
     /** Campos do waiter que a retomada usa. */

@@ -10,14 +10,23 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Stream;
 
-/** Consulta lida com {@code ConsistentRead}, com as tentativas, para decidir a reentrega (§8). */
-record QueryRecord(String queryId, QueryState state, String providerRequestId, List<Attempt> attempts) {
+/**
+ * Consulta lida com {@code ConsistentRead}, com as tentativas, para decidir a reentrega (§8).
+ * {@code queryKey} só existe no enriquecimento e {@code fencingVersion}, só na consulta de um líder.
+ */
+record QueryRecord(String queryId, QueryState state, String providerRequestId, String queryKey, Long fencingVersion,
+                   List<Attempt> attempts) {
 
     /** Folga para diferença de relógio entre as instâncias que gravaram e leram as tentativas. */
     static final Duration CLOCK_SKEW = Duration.ofSeconds(5);
 
     QueryRecord {
         attempts = List.copyOf(attempts);
+    }
+
+    /** A consulta liderou a {@code queryKey}; sem {@code fencingVersion}, como no M1, não há liderança. */
+    boolean isLeader() {
+        return fencingVersion != null && queryKey != null;
     }
 
     /** Tentativa gravada antes do HTTP e nunca concluída: o pedido pode ter chegado ao fornecedor. */

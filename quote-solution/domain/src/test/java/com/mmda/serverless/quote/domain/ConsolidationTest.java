@@ -75,6 +75,32 @@ class ConsolidationTest {
         }
 
         @Test
+        void t25_everyDeclaredReferenceBecomesAMissingField() {
+            ConsolidationResult result = Consolidation.consolidate(ELIGIBLE,
+                    EnrichmentOutcome.notFound(List.of("vehicleRef", "principalDriverRef")), null, List.of());
+
+            assertThat(result.missingFields()).containsExactly(
+                    new MissingField("risk.vehicleRef", "ENRICHMENT_NOT_FOUND"),
+                    new MissingField("risk.principalDriverRef", "ENRICHMENT_NOT_FOUND"));
+            assertThat(result.missingFields()).extracting(field -> MissingFieldLabels.labelOf(field.path()))
+                    .containsExactly("Veículo", "Condutor principal");
+        }
+
+        @Test
+        void enrichmentDecidesBeforeAnySelectionOrInsurerResultRecordedLater() {
+            ConsolidationResult notFound = Consolidation.consolidate(ELIGIBLE,
+                    EnrichmentOutcome.notFound(List.of("vehicleRef")), BOTH,
+                    List.of(result(Insurers.ALPHA, InsurerStatus.QUOTED)));
+            ConsolidationResult failed = Consolidation.consolidate(ELIGIBLE, EnrichmentOutcome.failed(), BOTH,
+                    List.of(result(Insurers.ALPHA, InsurerStatus.QUOTED)));
+
+            assertThat(notFound.outcome()).isEqualTo(Outcome.NEEDS_INFORMATION);
+            assertThat(notFound.outcomeReason()).isEqualTo(OutcomeReason.ENRICHMENT_NOT_FOUND);
+            assertThat(failed.outcome()).isEqualTo(Outcome.TECHNICAL_FAILURE);
+            assertThat(failed.outcomeReason()).isEqualTo(OutcomeReason.ENRICHMENT_FAILED);
+        }
+
+        @Test
         void t27_enrichmentFailureIsTechnicalFailureWithoutInventingData() {
             ConsolidationResult result = Consolidation.consolidate(ELIGIBLE, EnrichmentOutcome.failed(), null, List.of());
 

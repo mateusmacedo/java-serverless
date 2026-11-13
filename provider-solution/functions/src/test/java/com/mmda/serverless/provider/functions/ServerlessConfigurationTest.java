@@ -80,6 +80,50 @@ class ServerlessConfigurationTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"local", "dev"})
+    void enrichmentWorkerSeesALeaseLongerThanItsOwnTimeout(String stage) {
+        Map<String, Object> params = params(stage);
+
+        assertThat(resolveInt(environment().get("ENRICHMENT_LEASE_SECONDS"), params))
+                .isEqualTo(integer(params, "enrichmentLeaseSeconds"))
+                .isGreaterThan(timeout("enrichmentWorker", params));
+    }
+
+    /**
+     * WHY: a reentrega do líder refaz o fan-out pela lápide do {@code INFLIGHT#}, então ela dura mais que todas
+     * as entregas de um pedido na fila; o TTL da tabela é que a expira.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"local", "dev"})
+    void inflightTombstoneOutlivesEveryDeliveryOfTheLeaderAndExpiresByTheTableTtl(String stage) {
+        Map<String, Object> params = params(stage);
+        int tombstone = resolveInt(environment().get("INFLIGHT_TOMBSTONE_SECONDS"), params);
+        Map<String, Object> queue = properties(logicalId(sqsEvent("enrichmentWorker").get("arn")));
+        int visibility = resolveInt(queue.get("VisibilityTimeout"), params);
+        int receives = resolveInt(map(queue.get("RedrivePolicy")).get("maxReceiveCount"), params);
+
+        assertThat(tombstone).isEqualTo(integer(params, "inflightTombstoneSeconds"));
+        assertThat(tombstone).as("tombstone TTL >= VisibilityTimeout x maxReceiveCount of enrichment-requests")
+                .isGreaterThanOrEqualTo(visibility * receives)
+                .isGreaterThan(integer(params, "enrichmentLeaseSeconds"));
+        assertThat(properties("QueriesTable").get("TimeToLiveSpecification"))
+                .isEqualTo(Map.of("AttributeName", "ttl", "Enabled", true));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"local", "dev"})
+    void reusePolicyVersionIsAProviderParameterSeenByTheWorkers(String stage) {
+        Object value = environment().get("REUSE_POLICY_VERSION");
+        Matcher matcher = PARAM.matcher(String.valueOf(value));
+
+        assertThat(matcher.matches()).as("REUSE_POLICY_VERSION comes from a param").isTrue();
+        assertThat(params(stage).get(matcher.group(1)))
+                .as("a quoted string; YAML would turn 2 or 1.0 into a number and change the published value")
+                .isInstanceOfSatisfying(String.class,
+                        version -> assertThat(version).matches("^[A-Za-z0-9][A-Za-z0-9._-]*$"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"local", "dev"})
     void everyConsumedQueueHidesMessagesLongerThanItsConsumerRunsAndHasItsOwnReceiveLimit(String stage) {
         Map<String, Object> params = params(stage);
 
@@ -119,6 +163,10 @@ class ServerlessConfigurationTest {
             merged.putAll(map(all.get(stage)));
         }
         return merged;
+    }
+
+    private static Map<String, Object> environment() {
+        return map(map(serverless.get("provider")).get("environment"));
     }
 
     private static int timeout(String function, Map<String, Object> params) {

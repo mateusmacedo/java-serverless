@@ -1,7 +1,7 @@
 asyncapi: 3.1.0
 info:
   title: provider-solution eventos
-  version: 0.1.0
+  version: 0.2.0
   description: |
     Eventos que a `provider-solution`, em Spring, publica no barramento da plataforma
     `platform-{stage}-events` ([ADR 0013](../decisions/0013-barramento-da-plataforma.md)), com
@@ -21,15 +21,20 @@ info:
 
     O `eventId` é determinístico: UUID versão 5 no namespace URL da RFC 9562
     (`6ba7b811-9dad-11d1-80b4-00c04fd430c8`), o mesmo da quote-solution, com o nome indicado em cada
-    mensagem. O `queryId` é `q_` + os 32 primeiros hexadecimais do SHA-256 do `workRef` do pedido; o
+    mensagem. O `queryId` é `q_` + os 32 primeiros hexadecimais do SHA-256 do `workRef` do pedido que abriu a
+    consulta; num `EnrichmentResolved` com `HIT` ou `JOIN`, é o da consulta do líder, que produziu a evidência. O
     `attemptRef` é `<queryId>#<nnnn>`, a tentativa lógica que produziu o resultado.
 
     A provider consome `EnrichmentRequested` e `InsurerQuoteRequested`, descritos no AsyncAPI da
     `quote-solution`, pelas regras `source` `mmda.quote` com alvo nas filas
     `provider-solution-{stage}-enrichment-requests` e `provider-solution-{stage}-insurer-requests`. Os
-    pedidos são deduplicados pelo `workRef` (pela consulta derivada dele), não pelo `eventId`.
+    pedidos são deduplicados pelo `workRef`, não pelo `eventId` recebido: pela consulta derivada dele e, no
+    enriquecimento, pelo registro de consumo com a chave UUIDv5 do `workRef` (o `eventId` que o contrato da quote
+    atribui ao pedido), que cobre também os pedidos sem consulta própria (`HIT` e `JOIN`).
 
-    Os exemplos foram capturados no Floci, stage `local`, com pedidos publicados à mão no barramento.
+    Os exemplos foram capturados no Floci, stage `local`, com pedidos publicados à mão no barramento. Os
+    exemplos `hit` e `join` do `EnrichmentResolved` reutilizam a evidência do exemplo `found`, com os
+    identificadores calculados pelas regras acima.
 channels:
   platformEvents:
     address: platform-{stage}-events
@@ -62,10 +67,16 @@ operations:
     title: O enrichmentWorker resolve o enriquecimento pedido pela quote
     description: |
       A regra entrega o envelope na fila `enrichment-requests` (lote 1, falha parcial, DLQ depois de 3
-      recebimentos). O worker deriva a consulta do `workRef`, confere o `deadlineAt`, reserva a quota do
-      provedor, chama `POST /sim/enrichment/profiles` com `clientReference = queryId`, repete erros
-      transitórios até `workerRetries` e grava evidência e `EnrichmentResolved` numa só transação. No M1 toda
-      resolução é `MISS`.
+      recebimentos). O worker deriva a consulta do `workRef`, confere o `deadlineAt` e calcula a `queryKey`.
+      Evidência válida no índice de reuso, gravada pela política em vigor, resolve o pedido sem chamada
+      (`HIT`). Com outra consulta equivalente em voo, o pedido se registra como seguidor e recebe o resultado
+      dela (`JOIN`). Senão, o worker assume a liderança com escrita condicional, reserva a quota, chama
+      `POST /sim/enrichment/profiles` com `clientReference = queryId`, repete erros transitórios até
+      `workerRetries` e grava, numa transação, evidência, índice de reuso (só em `FOUND` e `NOT_FOUND`; `FAILED`
+      nunca entra nele), conclusão da liderança e o próprio `EnrichmentResolved` (`MISS`); depois publica um
+      `EnrichmentResolved` para cada seguidor. Com o `deadlineAt` vencido antes da chamada, ou com a quota
+      esgotada sem caber no prazo, o pedido conclui a própria consulta sem chamada e sem liderança, com `MISS` e
+      `FAILED` (`DEADLINE_EXCEEDED_BEFORE_CALL` ou `QUOTA_EXHAUSTED`).
     channel:
       $ref: '#/channels/platformEvents'
     messages:
@@ -141,6 +152,7 @@ components:
               queryId: q_d4392dcd44fa57aee4d5feed7aa86526
               evidenceId: ev_0f89e7a88012a89f201c0483e4e05cde
               reuseDecision: MISS
+              policyVersion: reuse-v1
               resultType: FOUND
               result:
                 vehicle:
@@ -168,6 +180,7 @@ components:
               queryId: q_7a7fb8618e1de015c9e386977365484d
               evidenceId: ev_73a6d3ad872b4087acb8d529c786a3a6
               reuseDecision: MISS
+              policyVersion: reuse-v1
               resultType: NOT_FOUND
               notFoundRefs:
                 - vehicleRef
@@ -186,8 +199,65 @@ components:
               queryId: q_1b4e5f847befbdd10a44722bd1bc66a9
               evidenceId: ev_10e5440b12704654ed92622b6901ef9e
               reuseDecision: MISS
+              policyVersion: reuse-v1
               resultType: FAILED
               errorClass: PROVIDER_UNAVAILABLE
+        - name: join
+          payload:
+            source: mmda.provider
+            detail-type: EnrichmentResolved
+            detail:
+              eventId: 1f8f0e46-e783-5422-88e6-0d9149b9dce2
+              occurredAt: '2026-11-11T19:31:15.061Z'
+              schemaVersion: '1'
+              workRef: wr_de761ff8b1a3cd5b50226c10cb5d5848
+              quoteId: m2chk-7c41e2-join-hatch-2021
+              version: 1
+              queryId: q_d4392dcd44fa57aee4d5feed7aa86526
+              evidenceId: ev_0f89e7a88012a89f201c0483e4e05cde
+              reuseDecision: JOIN
+              policyVersion: reuse-v1
+              resultType: FOUND
+              result:
+                vehicle:
+                  ref: vehicle-hatch-2021
+                  make: Volkswagen
+                  model: Polo
+                  year: 2021
+                  marketValue: '75000.00'
+                principalDriver:
+                  ref: driver-acme-ana
+                  licenseYears: 14
+                  claimsLast5Years: 1
+              reusableUntil: '2026-11-11T19:46:14.992Z'
+        - name: hit
+          payload:
+            source: mmda.provider
+            detail-type: EnrichmentResolved
+            detail:
+              eventId: b0dce761-24cf-5bfd-8cbc-022c7524c5a0
+              occurredAt: '2026-11-11T19:33:02.418Z'
+              schemaVersion: '1'
+              workRef: wr_165ece057a6748fc598b9b95ce8d579b
+              quoteId: m2chk-7c41e2-hit-hatch-2021
+              version: 1
+              queryId: q_d4392dcd44fa57aee4d5feed7aa86526
+              evidenceId: ev_0f89e7a88012a89f201c0483e4e05cde
+              reuseDecision: HIT
+              policyVersion: reuse-v1
+              resultType: FOUND
+              result:
+                vehicle:
+                  ref: vehicle-hatch-2021
+                  make: Volkswagen
+                  model: Polo
+                  year: 2021
+                  marketValue: '75000.00'
+                principalDriver:
+                  ref: driver-acme-ana
+                  licenseYears: 14
+                  claimsLast5Years: 1
+              reusableUntil: '2026-11-11T19:46:14.992Z'
     InsurerResultRecorded:
       name: InsurerResultRecorded
       title: Evento InsurerResultRecorded
@@ -379,9 +449,11 @@ components:
         - type: object
           description: |
             Um evento por pedido (`workRef`), inclusive para cada seguidor de uma consulta compartilhada
-            (`JOIN`, M2). `result` só existe em `FOUND`, `notFoundRefs` só em `NOT_FOUND` (declarado pelo
-            provedor, RN07) e `errorClass` só em `FAILED`. `reusableUntil` existe nos resultados
-            reutilizáveis (`FOUND` e `NOT_FOUND`).
+            (`JOIN`) e para quem reutiliza uma evidência válida (`HIT`); nesses casos, `queryId` e
+            `evidenceId` são os da consulta que produziu a evidência. `result` só existe em `FOUND`,
+            `notFoundRefs` só em `NOT_FOUND` (declarado pelo provedor, RN07) e `errorClass` só em `FAILED`.
+            `reusableUntil` existe nos resultados reutilizáveis (`FOUND` e `NOT_FOUND`); `FAILED` nunca entra
+            no índice de reuso.
           required:
             - workRef
             - quoteId
@@ -389,6 +461,7 @@ components:
             - queryId
             - evidenceId
             - reuseDecision
+            - policyVersion
             - resultType
           properties:
             workRef:
@@ -407,10 +480,22 @@ components:
               type: string
               pattern: '^ev_[0-9a-f]{32}$'
             reuseDecision:
+              description: |
+                `HIT` usou a evidência válida do índice de reuso, sem chamada externa; `JOIN` recebeu o
+                resultado da consulta de outro pedido equivalente; `MISS` teve consulta própria: liderou a
+                chamada ou concluiu sem chamada e sem liderança (prazo vencido ou quota esgotada, sempre
+                `FAILED`).
               enum:
                 - HIT
                 - JOIN
                 - MISS
+            policyVersion:
+              type: string
+              pattern: '^[A-Za-z0-9][A-Za-z0-9._-]*$'
+              description: |
+                Versão da política de reuso da provider (parâmetro `reusePolicyVersion` do serverless.yml)
+                que produziu a evidência. Ela vai também na evidência e no índice de reuso; um índice gravado
+                por outra versão não serve de `HIT`. A quote a grava na evidência usada da versão.
             resultType:
               enum:
                 - FOUND

@@ -2,12 +2,16 @@ package com.mmda.serverless.quote.domain;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Resultado do enriquecimento obrigatório como a consolidação o enxerga. {@code notFoundRefs} são as
  * referências que o provedor declarou não encontrar, como {@code vehicleRef} (RN07).
  */
 public record EnrichmentOutcome(ResultType resultType, List<String> notFoundRefs) {
+
+    /** Referências do {@code EnrichmentRequested} que o provedor pode declarar não encontradas. */
+    public static final Set<String> DECLARABLE_REFS = Set.of("vehicleRef", "principalDriverRef");
 
     public enum ResultType {
         FOUND,

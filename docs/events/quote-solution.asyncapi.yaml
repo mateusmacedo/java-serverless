@@ -25,8 +25,15 @@ info:
     Eventos que a quote consome (descritos no AsyncAPI da `provider-solution`): `EnrichmentResolved` e
     `InsurerResultRecorded`, pela regra `source` `mmda.provider` com alvo na fila
     `quote-solution-{stage}-results`. Do `EnrichmentResolved`, a quote lê `eventId`, `workRef`,
-    `resultType`, `evidenceId`, `queryId`, `reuseDecision`, `notFoundRefs`, `reusableUntil`, `errorClass`
-    e `result`; a regra de seleção `sel-1` usa `result.vehicle.year` quando existe. Do
+    `resultType`, `evidenceId`, `queryId`, `reuseDecision`, `policyVersion`, `notFoundRefs`,
+    `reusableUntil`, `errorClass` e `result`; a regra de seleção `sel-1` usa `result.vehicle.year` quando
+    existe. `HIT`, `JOIN` e `MISS` seguem o mesmo fluxo: a quote grava `evidenceId`, `queryId`,
+    `reuseDecision`, `resultType`, `policyVersion` e o resumo do resultado na evidência usada pela versão.
+    O `policyVersion` é a versão da política de reuso da provider e é obrigatório, como no AsyncAPI dela. Um
+    `EnrichmentResolved` sem `evidenceId`, `queryId`, `policyVersion` ou `reuseDecision` válido (com os
+    padrões do AsyncAPI da provider), um `HIT` com `FAILED`, um `FOUND` sem `result` ou um `NOT_FOUND` sem
+    a lista `notFoundRefs`, ou com referência fora de `vehicleRef` e `principalDriverRef`, volta à fila em
+    toda entrega, inclusive depois do prazo, e não vira evidência, nem tardia. Do
     `InsurerResultRecorded`, lê `eventId`, `workRef`, `queryId`, `attemptRef`, `status`, `reasonCode`,
     `missingFields` (`path` relativo ao snapshot e `reasonCode`) e, com `QUOTED`, `offer`
     (`externalOfferId`, `insurerName`, `premiumTotal`, `currency`, `installments`, `coverages`,
@@ -551,8 +558,10 @@ components:
           type: object
           description: |
             Resumo da evidência de enriquecimento usada pela versão; vazio se não houver. `evidenceId` e
-            `queryId` são os da provider (`EnrichmentResolved`): `q_` + 32 hexadecimais do SHA-256 do `workRef`
-            do enriquecimento e `ev_` + 32 hexadecimais do SHA-256 de `queryId|sequência da tentativa`.
+            `queryId` são os da provider (`EnrichmentResolved`), da consulta que produziu a evidência: num
+            `MISS`, `q_` + 32 hexadecimais do SHA-256 do `workRef` do enriquecimento da versão; num `HIT` ou
+            `JOIN`, os da consulta do líder. `evidenceId` é `ev_` + 32 hexadecimais do SHA-256 de
+            `queryId|sequência da tentativa`.
           properties:
             evidenceId:
               type: string
